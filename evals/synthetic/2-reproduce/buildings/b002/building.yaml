@@ -1,0 +1,66 @@
+building_id: 2
+building_code: b002
+zone_id: Z1
+building_name: 가온별채
+building_type: 원룸형 빌라
+built_year: 2003
+room_count: 28
+room_no_format: "2NN"
+manager:
+  resident: false
+  contact_hours: 평일 10:00~17:00
+
+specifics:
+  parking: 건물 옆 지정선 8면, 차량등록제
+  monthly_fee: 정액 월 35,000원
+  fee_includes: [공용전기, 수도]
+  laundry: 2층 공용 세탁실 (세탁기 1, 건조기 1), 07:00~22:00
+  parcel: 1층 선반 보관
+  entrance: 카드키 출입, 분실 시 재발급
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: false
+    file_type: PDF
+    intent: []
+    scope: building
+    note: v2로 바뀐 구버전
+  - file: documents/rule-001-생활수칙-v2.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 2
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_VERSION_REPLACE]
+    scope: building
+    note: 현재 적용 안내문
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/facility-001-공용시설안내.md
+    document_title: 공용시설 이용 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TABLE_WHOLE]
+    scope: building
+    note: 이용 요금 표는 한 덩어리로 읽어야 함
+  - file: documents/notice-002-정기점검.md
+    document_title: 정기점검 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building

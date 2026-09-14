@@ -1,0 +1,55 @@
+building_id: 5
+building_code: b005
+zone_id: Z2
+building_name: 다온마루
+building_type: 소규모 임대건물
+built_year: 2012
+room_count: 30
+room_no_format: "5NN"
+manager:
+  resident: true
+  contact_hours: 평일 10:00~17:00
+
+specifics:
+  parking: 건물 앞 기계식 10면, 예약제
+  monthly_fee: 정액 월 45,000원
+  fee_includes: [공용전기, 수도, 공용청소]
+  laundry: 1층 공용 세탁실 (세탁기 2), 08:00~21:00
+  parcel: 각 층 지정 선반
+  entrance: 카드키 출입, 매월 점검
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 생활수칙 안내
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/facility-001-공용시설안내.md
+    document_title: 공용시설 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-002-정기소독.md
+    document_title: 정기소독 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building

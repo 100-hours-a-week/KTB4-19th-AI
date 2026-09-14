@@ -1,0 +1,73 @@
+building_id: 6
+building_code: b006
+zone_id: Z2
+building_name: 푸른결채
+building_type: 원룸형 빌라
+built_year: 2022
+room_count: 42
+room_no_format: "6NN"
+manager:
+  resident: false
+  contact_hours: 평일 09:00~18:00
+
+specifics:
+  parking: 옥외 주차장 20면, 전기차 2면 포함
+  monthly_fee: 정액 월 70,000원
+  fee_includes: [공용전기, 수도, 인터넷, 공용청소]
+  laundry: 2층 공용 세탁실 (세탁기 4, 건조기 2), 05:00~24:00
+  parcel: 1층 무인 보관함 2대
+  entrance: 공동현관 비밀번호, 매월 변경
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/facility-001-세탁주차안내.md
+    document_title: 세탁·주차 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TABLE_WHOLE]
+    scope: building
+    note: 12행 이용 요금 표
+  - file: documents/notice-002-물탱크청소.md
+    document_title: 물탱크 청소 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [MASK_PII_DETECTED]
+    scope: building
+    note: 가상 연락처·성명·차량번호를 의도적으로 포함
+  - file: documents/notice-003-승강기점검.md
+    document_title: 승강기 점검 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-004-난방점검.md
+    document_title: 난방 점검 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building

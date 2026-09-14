@@ -1,0 +1,81 @@
+building_id: 10
+building_code: b010
+zone_id: Z4
+building_name: 온천파크
+building_type: 소규모 임대건물
+built_year: 2019
+room_count: 38
+room_no_format: "NNN"
+manager:
+  resident: false
+  contact_hours: 평일 09:00~18:00, 토 09:00~13:00
+
+specifics:
+  parking: 지하 1층 세대당 1면 배정
+  monthly_fee: 정액 월 55,000원
+  fee_includes: [공용전기, 수도, 인터넷, 무인택배함 운영비]
+  laundry: 1층 공용 세탁실 (세탁기 3, 건조기 2), 05:00~23:00
+  parcel: 1층 무인택배함 2기
+  entrance: 지문인식 출입
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: false
+    file_type: PDF
+    intent: [CHUNK_NO_SECTION]
+    scope: building
+    note: v2로 대체된 구버전
+
+  - file: documents/rule-001-생활수칙-v2.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 2
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_VERSION_REPLACE, MASK_FALSE_POSITIVE, CHUNK_OVERLAP]
+    scope: building
+    note: 101-538호 표기가 전화번호 정규식 오탐을 유발한다
+
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+    note: 내용 전부가 zones/z4.yaml과 일치. b009와도 글자 단위로 같아야 한다
+
+  - file: documents/notice-002-도시가스점검.md
+    document_title: 도시가스 안전점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TOO_SHORT, CLEAN_OVER_REMOVAL]
+    scope: building
+
+  - file: documents/facility-001-편의시설안내.md
+    document_title: 편의시설 이용 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TABLE_WHOLE]
+    scope: building
+    note: 15행 표
+
+  - file: documents/notice-003-소방시설점검.md
+    document_title: 소방시설 점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: jpg
+    intent: [PARSE_IMAGE_ONLY]
+    scope: building
+    note: 사진으로 찍은 공지. CONVERT.md 3절 절차로 생성
