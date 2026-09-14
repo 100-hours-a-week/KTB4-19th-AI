@@ -1,0 +1,65 @@
+building_id: 4
+building_code: b004
+zone_id: Z2
+building_name: 새결빌라
+building_type: 원룸형 빌라
+built_year: 2010
+room_count: 34
+room_no_format: "4NN"
+manager:
+  resident: false
+  contact_hours: 평일 09:00~18:00
+
+specifics:
+  parking: 지상 주차선 15면, 등록 차량 우선
+  monthly_fee: 정액 월 60,000원
+  fee_includes: [공용전기, 수도, 청소비]
+  laundry: 지하 공용 세탁실 (세탁기 3, 건조기 1), 06:00~24:00
+  parcel: 1층 보관실 선반
+  entrance: 공동현관 비밀번호, 반기별 변경
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: false
+    file_type: PDF
+    intent: []
+    scope: building
+    note: 개정판으로 대체된 구버전
+  - file: documents/rule-001-생활수칙-v2.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 2
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_VERSION_REPLACE]
+    scope: building
+    note: 현재 적용 안내문
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/facility-001-공용시설안내.md
+    document_title: 공용시설 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-002-소방점검.md
+    document_title: 소방점검 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building

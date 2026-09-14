@@ -1,0 +1,80 @@
+building_id: 8
+building_code: b008
+zone_id: Z3
+building_name: 서원하이츠
+building_type: 원룸형 빌라
+built_year: 2011
+room_count: 32
+room_no_format: "NNN"
+manager:
+  resident: false
+  contact_hours: 평일 10:00~19:00
+
+specifics:
+  parking: 지하 기계식 6면, 월 정기만
+  monthly_fee: 기본 20,000원 + 사용량 별도
+  fee_includes: [공용전기]
+  laundry: 호실 내 개별 세탁기 (공용 세탁실 없음)
+  parcel: 공동현관 앞 택배 보관대
+  entrance: 카드키 출입, 재발급 20,000원·최대 3개
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_NO_SECTION, CHUNK_OVERLAP]
+    scope: building
+
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+    note: 내용 전부가 zones/z3.yaml과 일치
+
+  - file: documents/notice-002-동파주의.md
+    document_title: 수도 계량기 동파
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [MASK_PII_DETECTED, CLEAN_REPEATED_HEADER]
+    scope: building
+    note: 관리인 휴대폰·405호 성명·차량번호 3종을 의도적으로 심었다
+
+  - file: documents/notice-003-소방점검.md
+    document_title: 소방시설 정기점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TOO_SHORT, CLEAN_OVER_REMOVAL]
+    scope: building
+
+  - file: documents/facility-001-공용시설안내.md
+    document_title: 공용시설 이용 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TABLE_WHOLE]
+    scope: building
+    note: 15행 표
+
+  - file: documents/notice-004-승강기검사.md
+    document_title: 승강기 검사필증
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [PARSE_NO_TEXT_LAYER]
+    scope: building
+    note: 스캔본. CONVERT.md 2절 절차로 생성

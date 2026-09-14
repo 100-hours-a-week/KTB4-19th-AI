@@ -1,0 +1,51 @@
+building_id: 9
+building_code: b009
+zone_id: Z4
+building_name: 온천주택
+building_type: 다가구주택
+built_year: 2003
+room_count: 18
+room_no_format: "NNN"
+manager:
+  resident: true
+  contact_hours: 상시 (1층 주인댁)
+
+specifics:
+  parking: 주차 불가, 인근 공영주차장 이용
+  monthly_fee: 정액 월 25,000원
+  fee_includes: [공용전기, 수도]
+  laundry: 호실 내 개별 세탁기
+  parcel: 대문 앞 직접 수령, 우천 시 주인댁 보관
+  entrance: 공동현관 없음, 호실별 도어록
+  elevator: false
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_NO_SECTION]
+    scope: building
+
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+    note: 내용 전부가 zones/z4.yaml과 일치
+
+  - file: documents/notice-002-정화조청소.md
+    document_title: 정화조 청소 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [MASK_PII_DETECTED, CLEAN_REPEATED_HEADER]
+    scope: building
+    note: 주인 휴대폰·203호 성명을 의도적으로 심었다
