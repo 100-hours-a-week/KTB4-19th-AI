@@ -5,6 +5,7 @@ description = "Document indexing API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "docling",
     "fastapi>=0.115",
     "pydantic>=2,<3",
     "uvicorn>=0.53.0",
