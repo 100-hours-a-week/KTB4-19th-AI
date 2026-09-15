@@ -18,3 +18,7 @@ class InMemoryJobStore:
             return self._statuses[job_id]
         except KeyError as exc:
             raise JobNotFoundError(job_id) from exc
+
+    def set_status(self, job_id: str, status: JobStatus) -> None:
+        self.get_status(job_id)
+        self._statuses[job_id] = status
