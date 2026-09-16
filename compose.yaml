@@ -1,0 +1,31 @@
+# Local development only. Credentials are shared with the team for local use.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  zipsai-api:
+    build: .
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-documents}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TZ: Asia/Seoul
+    ports:
+      - "127.0.0.1:${AI_PORT:-8000}:8000"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  qdrant-data:
