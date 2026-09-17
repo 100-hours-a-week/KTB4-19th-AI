@@ -16,8 +16,10 @@ _INTENT_SYSTEM_PROMPT = (
     "submitted to report facility problems).\n"
     "3. If there is text with no image and no user_action, classify by content using the "
     "definitions above.\n"
-    "4. If current_route is not 없음, treat it as a bias toward the same route — only switch if the "
-    "new text clearly and unambiguously indicates the other route.\n"
+    "4. If current_route is complaint or knowledge, treat it as a bias toward the same route — only "
+    "switch if the new text clearly and unambiguously indicates the other route. If current_route "
+    "is clarify, do not preserve clarify; classify again from the current text and conversation "
+    "history.\n"
     "5. If none of the above give a confident answer, output clarify. Never guess between complaint "
     "and knowledge — prefer clarify over a wrong guess.\n\n"
     "Examples:\n"
@@ -42,5 +44,25 @@ INTENT_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", _INTENT_SYSTEM_PROMPT),
         ("user", _INTENT_USER_TEMPLATE),
+    ]
+)
+
+
+_CLARIFY_SYSTEM_PROMPT = (
+    "You are helping a residential-building assistant recover from an ambiguous conversation. "
+    "The previous route clarification did not resolve the user's intent. Using the conversation "
+    "history and current turn, ask exactly one short Korean follow-up question that helps the user "
+    "clearly choose between reporting a facility complaint and asking for building information. "
+    "Do not answer the request, do not mention internal route names, and do not add explanations."
+)
+
+_CLARIFY_USER_TEMPLATE = (
+    "이전 대화:\n{conversation_history}\n\n현재 발화: {message_text}"
+)
+
+CLARIFY_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", _CLARIFY_SYSTEM_PROMPT),
+        ("user", _CLARIFY_USER_TEMPLATE),
     ]
 )

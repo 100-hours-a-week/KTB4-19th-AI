@@ -52,10 +52,12 @@ def test_agent_state_keeps_request_route_response_and_conversation_state():
         "route": None,
         "conversation_state": ConversationState.COLLECTING,
         "response": None,
+        "reply": None,
     }
 
     assert state["request"] is request
     assert state["route"] is None
     assert state["conversation_state"] is ConversationState.COLLECTING
     assert state["response"] is None
+    assert state["reply"] is None
     assert "conversation_state" in AgentState.__annotations__

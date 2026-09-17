@@ -21,6 +21,7 @@ def _build_state(text: str) -> AgentState:
         "route": None,
         "conversation_state": None,
         "response": None,
+        "reply": None,
     }
 
 

@@ -13,3 +13,4 @@ class AgentState(TypedDict):
     route: Route | None
     conversation_state: ConversationState | None
     response: ConverseData | None
+    reply: str | None

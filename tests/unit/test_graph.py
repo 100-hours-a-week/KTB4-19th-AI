@@ -25,6 +25,7 @@ def _make_state(route: Route | None) -> AgentState:
         "route": route,
         "conversation_state": ConversationState.COLLECTING,
         "response": None,
+        "reply": None,
     }
 
 
@@ -77,6 +78,8 @@ def test_graph_finishes_on_clarify_route(monkeypatch: pytest.MonkeyPatch):
     result = build_graph().invoke(_make_state(None))
 
     assert result["route"] is Route.CLARIFY
+    assert result["conversation_state"] is ConversationState.COLLECTING
+    assert result["reply"] is not None
 
 
 def test_graph_propagates_intent_classification_failure(
