@@ -48,3 +48,13 @@ def ensure_collection(
         ),
         wait=True,
     )
+    # doc_id는 문서 교체 시 delete 필터에 쓰인다.
+    # 서버 Qdrant strict mode는 미인덱스 필드 필터를 거부하므로 인덱스를 만든다.
+    client.create_payload_index(
+        collection_name=collection,
+        field_name="doc_id",
+        field_schema=models.KeywordIndexParams(
+            type=models.KeywordIndexType.KEYWORD,
+        ),
+        wait=True,
+    )
