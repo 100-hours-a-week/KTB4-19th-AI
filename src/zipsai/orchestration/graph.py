@@ -14,13 +14,11 @@ def select_next_node(state: AgentState) -> str:
 
 
 def _run_complaint(state: AgentState) -> dict[str, object]:
-    handle_complaint(state["request"])
-    return {}
+    return handle_complaint(state["request"])
 
 
 def _run_knowledge(state: AgentState) -> dict[str, object]:
-    handle_knowledge(state["request"])
-    return {}
+    return handle_knowledge(state["request"])
 
 
 def build_graph() -> CompiledStateGraph:

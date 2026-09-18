@@ -1,16 +1,16 @@
 from typing import TypedDict
 
 from zipsai.contracts.converse import (
-    ConversationState,
-    ConverseData,
+    ComplaintState,
     ConverseRequest,
     Route,
+    RouteResult,
 )
 
 
 class AgentState(TypedDict):
     request: ConverseRequest
     route: Route | None
-    conversation_state: ConversationState | None
-    response: ConverseData | None
+    complaint_state: ComplaintState | None
     reply: str | None
+    result: RouteResult

@@ -1,7 +1,7 @@
 import pytest
 
 import zipsai.orchestration.graph as graph_module
-from zipsai.contracts.converse import ConversationState, ConverseRequest, Route
+from zipsai.contracts.converse import ComplaintState, ConverseRequest, Route
 from zipsai.errors import LlmUnavailableError
 from zipsai.orchestration.graph import build_graph, select_next_node
 from zipsai.orchestration.state import AgentState
@@ -11,10 +11,19 @@ def _make_request() -> ConverseRequest:
     return ConverseRequest.model_validate(
         {
             "building_id": 1,
-            "resident_context": {"unit_id": 57, "resident_id": "linda"},
+            "room_no": "301",
+            "resident_id": "linda",
             "conversation_id": "conv-001",
             "trace_id": "trace-001",
-            "message": {"message_id": "msg-001", "text": "도와주세요"},
+            "current_route": None,
+            "current_complaint_state": None,
+            "message": {
+                "message_id": "msg-001",
+                "text": "도와주세요",
+                "image_urls": [],
+            },
+            "conversation_history": [],
+            "complaint_draft": None,
         }
     )
 
@@ -23,8 +32,7 @@ def _make_state(route: Route | None) -> AgentState:
     return {
         "request": _make_request(),
         "route": route,
-        "conversation_state": ConversationState.COLLECTING,
-        "response": None,
+        "complaint_state": ComplaintState.COLLECTING,
         "reply": None,
     }
 
@@ -78,8 +86,20 @@ def test_graph_finishes_on_clarify_route(monkeypatch: pytest.MonkeyPatch):
     result = build_graph().invoke(_make_state(None))
 
     assert result["route"] is Route.CLARIFY
-    assert result["conversation_state"] is ConversationState.COLLECTING
+    assert result["complaint_state"] is None
     assert result["reply"] is not None
+
+
+@pytest.mark.parametrize("route", [Route.KNOWLEDGE, Route.CLARIFY])
+def test_graph_clears_complaint_state_for_non_complaint_route(
+    monkeypatch: pytest.MonkeyPatch,
+    route: Route,
+):
+    monkeypatch.setattr(graph_module, "classify_intent", _stub_classify_intent)
+
+    result = build_graph().invoke(_make_state(route))
+
+    assert result["complaint_state"] is None
 
 
 def test_graph_propagates_intent_classification_failure(

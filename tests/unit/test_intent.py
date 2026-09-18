@@ -7,20 +7,28 @@ from zipsai.orchestration.intent import classify_intent, parse_route
 from zipsai.orchestration.state import AgentState
 
 
-def _build_state(text: str) -> AgentState:
+def _build_state(text: str, image_urls: list[str] | None = None) -> AgentState:
     return {
         "request": ConverseRequest.model_validate(
             {
                 "building_id": 1,
-                "resident_context": {"unit_id": 57, "resident_id": "linda"},
+                "room_no": "301",
+                "resident_id": "linda",
                 "conversation_id": "conv-001",
                 "trace_id": "trace-001",
-                "message": {"message_id": "msg-001", "text": text},
+                "current_route": None,
+                "current_complaint_state": None,
+                "message": {
+                    "message_id": "msg-001",
+                    "text": text,
+                    "image_urls": image_urls or [],
+                },
+                "conversation_history": [],
+                "complaint_draft": None,
             }
         ),
         "route": None,
-        "conversation_state": None,
-        "response": None,
+        "complaint_state": None,
         "reply": None,
     }
 
@@ -67,3 +75,17 @@ def test_classify_intent_propagates_llm_failure(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(LlmUnavailableError):
         classify_intent(_build_state("화장실에서 물이 새요"))
+
+
+def test_classify_intent_normalizes_blank_text_with_an_image(monkeypatch):
+    received_prompts: list[tuple[str, str]] = []
+
+    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+        received_prompts.append((system_prompt, user_prompt))
+        return "complaint"
+
+    monkeypatch.setattr(intent_module, "generate_text", fake_generate_text)
+
+    classify_intent(_build_state("   ", ["https://example.com/leak.jpg"]))
+
+    assert "현재 발화: 없음" in received_prompts[0][1]

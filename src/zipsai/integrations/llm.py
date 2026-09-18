@@ -1,8 +1,19 @@
 from functools import lru_cache
 
-from openai import APIError, OpenAI
+from openai import (
+    APIError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 
-from zipsai.errors import LlmUnavailableError
+from zipsai.errors import (
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    LlmUpstreamError,
+)
 from zipsai.settings import get_settings
 
 
@@ -18,6 +29,16 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
                 {"role": "user", "content": user_prompt},
             ],
         )
+    except RateLimitError as error:
+        raise LlmRateLimitedError(
+            "LLM rate limit exceeded", retry_after_seconds=_retry_after(error)
+        ) from error
+    except APITimeoutError as error:
+        raise LlmTimeoutError("LLM request timed out") from error
+    except APIStatusError as error:
+        if error.status_code >= 500:
+            raise LlmUpstreamError("LLM provider returned an upstream error") from error
+        raise LlmUnavailableError("LLM request failed") from error
     except APIError as error:
         raise LlmUnavailableError("LLM request failed") from error
 
@@ -30,3 +51,11 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
 @lru_cache
 def _get_client(api_key: str, base_url: str | None, timeout_seconds: float) -> OpenAI:
     return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+
+
+def _retry_after(error: RateLimitError) -> int | None:
+    header = error.response.headers.get("retry-after")
+    try:
+        return int(float(header)) if header is not None else None
+    except ValueError:
+        return None
