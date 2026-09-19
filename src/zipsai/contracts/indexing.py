@@ -13,7 +13,6 @@ class SourceType(str, Enum):
 class JobStatus(str, Enum):
     ACCEPTED = "accepted"
     RUNNING = "running"
-    NEEDS_REVIEW = "needs_review"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 

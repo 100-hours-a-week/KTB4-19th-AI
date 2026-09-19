@@ -180,7 +180,7 @@ def test_download_failure_marks_job_failed(
     assert stored_points(qdrant) == 0
 
 
-def test_empty_document_holds_the_job_and_keeps_existing_vectors(
+def test_empty_document_fails_the_job_and_keeps_existing_vectors(
     monkeypatch: pytest.MonkeyPatch,
     qdrant: QdrantClient,
     job: tuple[InMemoryJobStore, str],
@@ -211,6 +211,7 @@ def test_empty_document_holds_the_job_and_keeps_existing_vectors(
         client=qdrant,
     )
 
-    assert result is JobStatus.NEEDS_REVIEW
-    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
+    assert result is JobStatus.FAILED
+    assert store.get_status(job_id) is JobStatus.FAILED
+    # 실패로 끝나도 기존 문서는 남아야 한다. upsert가 delete보다 먼저 거절한다.
     assert stored_points(qdrant) == before
