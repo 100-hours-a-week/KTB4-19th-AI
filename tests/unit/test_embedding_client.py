@@ -4,13 +4,19 @@ import httpx
 import pytest
 
 from zipsai.errors import EmbeddingError
-from zipsai.integrations.embedding_client import BATCH_SIZE, HttpEncoder
+from zipsai.integrations.embedding_client import (
+    ATTEMPTS,
+    BATCH_SIZE,
+    HttpEncoder,
+)
 
 
 def encoder_returning(handler) -> HttpEncoder:
+    # 테스트가 재시도 대기에 묶이지 않게 지연을 없앤다.
     return HttpEncoder(
         base_url="http://embedding:8000",
         transport=httpx.MockTransport(handler),
+        retry_delay=0,
     )
 
 
@@ -104,3 +110,45 @@ def test_encode_rejects_a_batch_whose_counts_do_not_match_the_request() -> None:
 
     # 첫 배치에서 걸려야 한다. 둘째 배치까지 갔다면 배치별 검증이 아니다.
     assert seen == [BATCH_SIZE]
+
+
+def test_encode_retries_once_and_succeeds_when_the_server_was_restarting() -> None:
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) == 1:
+            return httpx.Response(503, json={"detail": "Model is still loading"})
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    dense, _ = encoder_returning(handler).encode(["청크"])
+
+    assert dense == [[0.1]]
+    assert len(attempts) == ATTEMPTS
+
+
+def test_encode_gives_up_after_the_retry() -> None:
+    attempts: list[int] = []
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(503, json={"detail": "Model is still loading"})
+
+    with pytest.raises(EmbeddingError):
+        encoder_returning(handler).encode(["청크"])
+
+    assert len(attempts) == ATTEMPTS
+
+
+def test_encode_does_not_retry_a_rejected_request() -> None:
+    # 422는 같은 요청을 다시 보내도 같은 거절이 온다.
+    attempts: list[int] = []
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(422, json={"detail": "texts must hold at most 32 items"})
+
+    with pytest.raises(EmbeddingError):
+        encoder_returning(handler).encode(["청크"])
+
+    assert len(attempts) == 1
