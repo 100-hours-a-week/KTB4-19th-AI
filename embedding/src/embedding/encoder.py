@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Any
 
 MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "BAAI/bge-m3")
@@ -23,6 +24,7 @@ class BgeM3Encoder:
     def __init__(self, model_id: str = MODEL_ID) -> None:
         self.model_id = model_id
         self._model = None
+        self._lock = threading.Lock()
 
     @property
     def ready(self) -> bool:
@@ -39,12 +41,17 @@ class BgeM3Encoder:
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         if self._model is None:
             raise ModelNotLoadedError(f"Model '{self.model_id}' is not loaded")
-        output = self._model.encode(
-            texts,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False,
-        )
+
+        # FastAPI가 동기 핸들러를 스레드풀에서 돌리므로 요청이 겹치면 추론도 겹친다.
+        # CPU에서는 서로 코어를 뺏어 느려지기만 하니 한 번에 한 배치만 돌린다.
+        # 처리량이 모자라면 요청을 모아 한 번에 추론하는 배치 큐로 바꾼다.
+        with self._lock:
+            output = self._model.encode(
+                texts,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False,
+            )
         return _normalize(output)
 
 

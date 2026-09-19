@@ -1,8 +1,10 @@
+import json
+
 import httpx
 import pytest
 
 from zipsai.errors import EmbeddingError
-from zipsai.integrations.embedding_client import HttpEncoder
+from zipsai.integrations.embedding_client import BATCH_SIZE, HttpEncoder
 
 
 def encoder_returning(handler) -> HttpEncoder:
@@ -53,3 +55,26 @@ def test_encode_raises_typed_error_on_malformed_response(body: object) -> None:
 
     with pytest.raises(EmbeddingError):
         encoder_returning(handler).encode(["text"])
+
+
+def test_encode_splits_texts_into_server_sized_batches() -> None:
+    batch_sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        texts = json.loads(request.read())["texts"]
+        batch_sizes.append(len(texts))
+        return httpx.Response(
+            200,
+            json={
+                "dense": [[float(len(text))] for text in texts],
+                "sparse": [{} for _ in texts],
+            },
+        )
+
+    texts = [f"청크 {index}" for index in range(BATCH_SIZE + 5)]
+
+    dense, sparse = encoder_returning(handler).encode(texts)
+
+    assert batch_sizes == [BATCH_SIZE, 5]
+    assert dense == [[float(len(text))] for text in texts]
+    assert len(sparse) == len(texts)
