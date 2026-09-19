@@ -89,6 +89,18 @@ def test_same_doc_id_isolated_by_building_id(client: QdrantClient) -> None:
     ) == [("1", "건물 1 교체"), ("2", "건물 2 유지")]
 
 
+def test_same_building_isolated_by_doc_id(client: QdrantClient) -> None:
+    # delete 필터에서 doc_id가 빠지면 문서 하나를 고칠 때 건물 전체가 지워진다.
+    upsert_document(client, request(101, "doc-a"), [chunk("문서 A 이전")])
+    upsert_document(client, request(101, "doc-b"), [chunk("문서 B 유지")])
+
+    upsert_document(client, request(101, "doc-a"), [chunk("문서 A 교체")])
+
+    assert sorted(
+        (point.payload["doc_id"], point.payload["text"]) for point in points(client)
+    ) == [("doc-a", "문서 A 교체"), ("doc-b", "문서 B 유지")]
+
+
 def test_replacing_document_removes_old_chunks(client: QdrantClient) -> None:
     job = request()
     upsert_document(client, job, [chunk("old-1"), chunk("old-2"), chunk("old-3")])
