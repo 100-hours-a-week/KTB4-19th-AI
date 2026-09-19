@@ -7,6 +7,7 @@ from qdrant_client import QdrantClient
 from zipsai.contracts.indexing import (
     IndexingJobRequest,
     IndexingJobResponse,
+    JobStatus,
 )
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.store import InMemoryJobStore
@@ -28,7 +29,14 @@ def _dependencies() -> tuple[QdrantClient, HttpEncoder]:
 
 
 def _run_job(job_id: str, payload: IndexingJobRequest) -> None:
-    client, encoder = _dependencies()
+    try:
+        client, encoder = _dependencies()
+    except Exception:
+        # 배경 실행이라 여기서 터지면 작업이 accepted로 굳는다.
+        logger.exception("indexing_job_setup_failed job_id=%s", job_id)
+        job_store.set_status(job_id, JobStatus.FAILED)
+        return
+
     run_indexing_job(
         job_store,
         job_id,

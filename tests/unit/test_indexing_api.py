@@ -6,6 +6,9 @@ import pytest
 from zipsai.api import indexing
 from zipsai.main import app
 
+# 자동 fixture가 대체하기 전의 원본. 실제 실행 경로를 보는 테스트가 쓴다.
+REAL_RUN_JOB = indexing._run_job
+
 
 @pytest.fixture(autouse=True)
 def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -107,6 +110,8 @@ def test_missing_required_field_returns_422() -> None:
         ("building_id", "101"),
         ("source_type", "other"),
         ("published_at", "not-a-datetime"),
+        # 빈 doc_id는 같은 building의 다른 문서와 교체 필터가 겹친다.
+        ("doc_id", ""),
     ],
 )
 def test_invalid_field_returns_422(field: str, value: str) -> None:
@@ -141,3 +146,18 @@ def test_rejected_payload_schedules_nothing(scheduled_jobs: list[str]) -> None:
     request("POST", "/api/v3/ai/indexing/jobs", payload)
 
     assert scheduled_jobs == []
+
+
+def test_dependency_failure_marks_the_job_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> tuple[object, object]:
+        raise RuntimeError("qdrant unreachable")
+
+    monkeypatch.setattr(indexing, "_run_job", REAL_RUN_JOB)
+    monkeypatch.setattr(indexing, "_dependencies", broken)
+
+    _, created = request("POST", "/api/v3/ai/indexing/jobs", valid_payload())
+    _, current = request("GET", f"/api/v3/ai/indexing/jobs/{created['job_id']}")
+
+    assert current["status"] == "failed"
