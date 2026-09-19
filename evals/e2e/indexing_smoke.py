@@ -15,7 +15,7 @@ from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import clean_pages
 from zipsai.indexing.embed import embed_chunks
 from zipsai.indexing.mask import mask_pages
-from zipsai.indexing.parse import parse_pdf
+from zipsai.indexing.parse import parse_document
 from zipsai.indexing.upsert import upsert_document
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
@@ -54,7 +54,7 @@ def count_building(client, building_id: int) -> int:
 
 
 def main() -> None:
-    pages = parse_pdf(FIXTURE)
+    pages = parse_document(FIXTURE)
     cleaned = clean_pages(pages)
     masked = mask_pages(cleaned.pages)
     assert not masked.detections, f"예상 밖 PII 탐지: {masked.detections}"

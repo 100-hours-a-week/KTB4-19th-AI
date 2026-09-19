@@ -10,7 +10,7 @@ from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
-from zipsai.indexing.parse import parse_pdf
+from zipsai.indexing.parse import parse_document
 from zipsai.indexing.store import InMemoryJobStore
 from zipsai.indexing.upsert import upsert_document
 
@@ -32,7 +32,7 @@ def run_indexing_job(
     try:
         with tempfile.TemporaryDirectory() as workdir:
             source = download(request.file_key, Path(workdir))
-            pages = parse_pdf(source)
+            pages = parse_document(source)
 
             masking = apply_masking(job_id, pages)
             cleaning = apply_cleaning(job_id, masking.pages)

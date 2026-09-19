@@ -103,7 +103,7 @@ def test_pii_is_masked_and_still_indexed(
     store, job_id = job
     monkeypatch.setattr(
         pipeline,
-        "parse_pdf",
+        "parse_document",
         stub_parse([{"page": 1, "text": "문의는 admin@example.com 으로 주세요."}]),
     )
 
@@ -133,7 +133,7 @@ def test_excessive_cleaning_indexes_the_original_text(
     repeated = "공동주택 관리사무소 알림 머리글"
     monkeypatch.setattr(
         pipeline,
-        "parse_pdf",
+        "parse_document",
         stub_parse(
             [
                 {"page": number, "text": f"{repeated}\n본문{number}"}
@@ -200,7 +200,9 @@ def test_empty_document_fails_the_job_and_keeps_existing_vectors(
     assert before > 0
 
     # 본문이 빈 문서로 재색인을 시도한다.
-    monkeypatch.setattr(pipeline, "parse_pdf", stub_parse([{"page": 1, "text": "   "}]))
+    monkeypatch.setattr(
+        pipeline, "parse_document", stub_parse([{"page": 1, "text": "   "}])
+    )
 
     result = run_indexing_job(
         store,
