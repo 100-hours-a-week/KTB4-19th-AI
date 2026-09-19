@@ -274,12 +274,13 @@ def test_converse_returns_baseline_reply_for_knowledge(monkeypatch):
     )
 
 
-def test_converse_clears_complaint_state_when_route_changes_to_clarify(monkeypatch):
-    monkeypatch.setattr(
-        graph_module,
-        "classify_intent",
-        lambda _: {"route": Route.CLARIFY},
-    )
+def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_progress(
+    monkeypatch,
+):
+    def failing_classify_intent(_state: object) -> dict[str, object]:
+        raise AssertionError("classify_intent must not run mid-complaint")
+
+    monkeypatch.setattr(graph_module, "classify_intent", failing_classify_intent)
     monkeypatch.setattr(
         converse_module,
         "get_settings",
@@ -294,8 +295,7 @@ def test_converse_clears_complaint_state_when_route_changes_to_clarify(monkeypat
     )
 
     assert response.status_code == 200
-    assert response.json()["data"]["route"] == "clarify"
-    assert response.json()["data"]["next_complaint_state"] is None
+    assert response.json()["data"]["route"] == "complaint"
 
 
 def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
