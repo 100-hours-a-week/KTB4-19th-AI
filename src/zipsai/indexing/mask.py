@@ -93,7 +93,8 @@ _DETECTORS = (
     ),
     (
         PiiKind.RESIDENT_ID,
-        re.compile(r"(?<![\d-])\d{6}-[1-4]\d{6}(?![\d-])"),
+        # 뒷자리 첫 숫자: 1~4 내국인, 5~8 외국인 등록번호. 둘 다 탐지한다.
+        re.compile(r"(?<![\d-])\d{6}-[1-8]\d{6}(?![\d-])"),
     ),
     (
         PiiKind.PHONE,
