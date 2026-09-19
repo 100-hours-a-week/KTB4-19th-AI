@@ -124,7 +124,10 @@ def test_excessive_cleaning_holds_job_without_storing_vectors(
         pipeline,
         "parse_pdf",
         stub_parse(
-            [{"page": number, "text": f"{repeated}\n본문{number}"} for number in (1, 2, 3)]
+            [
+                {"page": number, "text": f"{repeated}\n본문{number}"}
+                for number in (1, 2, 3)
+            ]
         ),
     )
 
