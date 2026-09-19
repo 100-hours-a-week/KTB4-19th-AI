@@ -45,6 +45,15 @@ class HttpEncoder:
             raise EmbeddingError(f"Embedding request failed: {exc}") from exc
 
         try:
-            return body["dense"], body["sparse"]
+            dense, sparse = body["dense"], body["sparse"]
         except (KeyError, TypeError) as exc:
             raise EmbeddingError(f"Malformed embedding response: {body!r}") from exc
+
+        # 총합만 맞고 배치별로 어긋나면 청크와 벡터가 조용히 뒤섞인다.
+        # ai-api와 embedding은 이미지 태그가 따로라 계약이 어긋날 수 있다.
+        if len(dense) != len(texts) or len(sparse) != len(texts):
+            raise EmbeddingError(
+                f"Embedding response returned {len(dense)} dense and "
+                f"{len(sparse)} sparse vectors for {len(texts)} texts"
+            )
+        return dense, sparse

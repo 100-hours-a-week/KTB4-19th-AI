@@ -78,3 +78,19 @@ def test_encode_splits_texts_into_server_sized_batches() -> None:
     assert batch_sizes == [BATCH_SIZE, 5]
     assert dense == [[float(len(text))] for text in texts]
     assert len(sparse) == len(texts)
+
+
+def test_encode_rejects_a_batch_whose_counts_do_not_match_the_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        texts = json.loads(request.read())["texts"]
+        # dense 하나가 빠진 응답. 총합만 보면 지나칠 수 있다.
+        return httpx.Response(
+            200,
+            json={
+                "dense": [[0.1] for _ in texts][:-1],
+                "sparse": [{} for _ in texts],
+            },
+        )
+
+    with pytest.raises(EmbeddingError):
+        encoder_returning(handler).encode(["첫", "둘"])
