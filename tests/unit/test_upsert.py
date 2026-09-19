@@ -4,6 +4,7 @@ import pytest
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, SourceType
+from zipsai.errors import EmptyDocumentError
 from zipsai.indexing.embed import EmbeddedChunk
 from zipsai.indexing.upsert import upsert_document
 from zipsai.integrations.qdrant import (
@@ -97,14 +98,39 @@ def test_replacing_document_removes_old_chunks(client: QdrantClient) -> None:
     assert {point.payload["text"] for point in points(client)} == {"new-1", "new-2"}
 
 
-def test_empty_upsert_deletes_existing_document(client: QdrantClient) -> None:
+def test_empty_upsert_keeps_the_existing_document(client: QdrantClient) -> None:
     job = request()
 
-    assert upsert_document(client, job, []) == 0
+    with pytest.raises(EmptyDocumentError):
+        upsert_document(client, job, [])
     assert len(points(client)) == 0
+
     assert upsert_document(client, job, [chunk("one"), chunk("two")]) == 2
-    assert upsert_document(client, job, []) == 0
-    assert len(points(client)) == 0
+
+    # 넣을 게 없다고 기존 문서를 지우면 검색에서 문서가 조용히 사라진다.
+    with pytest.raises(EmptyDocumentError):
+        upsert_document(client, job, [])
+    assert len(points(client)) == 2
+
+
+def test_unconvertible_sparse_key_keeps_the_existing_document(
+    client: QdrantClient,
+) -> None:
+    job = request()
+    assert upsert_document(client, job, [chunk("one"), chunk("two")]) == 2
+
+    broken = chunk("three")
+    broken = type(broken)(
+        text=broken.text,
+        page=broken.page,
+        section=broken.section,
+        dense=broken.dense,
+        sparse={"not-a-token-id": 0.5},
+    )
+
+    with pytest.raises(ValueError):
+        upsert_document(client, job, [broken])
+    assert len(points(client)) == 2
 
 
 def test_to_sparse_vector_preserves_index_value_alignment() -> None:
@@ -123,3 +149,42 @@ def test_ensure_collection_is_idempotent() -> None:
     ensure_collection(client)
 
     assert client.collection_exists(collection_name=QDRANT_COLLECTION)
+
+
+def test_ensure_collection_adds_indexes_to_a_collection_made_without_them() -> None:
+    from qdrant_client import models
+
+    from zipsai.integrations.qdrant import DENSE_VECTOR, SPARSE_VECTOR
+
+    client = QdrantClient(":memory:")
+    # doc_id 인덱스가 없던 시절의 컬렉션을 흉내 낸다.
+    client.create_collection(
+        collection_name="legacy",
+        vectors_config={
+            DENSE_VECTOR: models.VectorParams(
+                size=1024, distance=models.Distance.COSINE
+            )
+        },
+        sparse_vectors_config={SPARSE_VECTOR: models.SparseVectorParams()},
+    )
+
+    ensure_collection(client, "legacy")
+    ensure_collection(client, "legacy")
+
+    # 교체 필터가 쓰는 두 필드로 실제 삭제가 거부되지 않아야 한다.
+    client.delete(
+        collection_name="legacy",
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="building_id", match=models.MatchValue(value="101")
+                    ),
+                    models.FieldCondition(
+                        key="doc_id", match=models.MatchValue(value="notice-001")
+                    ),
+                ]
+            )
+        ),
+        wait=True,
+    )

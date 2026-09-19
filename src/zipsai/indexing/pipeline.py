@@ -6,6 +6,7 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
+from zipsai.errors import EmptyDocumentError
 from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, embed_chunks
@@ -47,7 +48,13 @@ def run_indexing_job(
                 return JobStatus.NEEDS_REVIEW
 
             chunks = embed_chunks(chunk_pages(cleaning.pages), encoder)
-            stored = upsert_document(client, request, chunks)
+            try:
+                stored = upsert_document(client, request, chunks)
+            except EmptyDocumentError:
+                # 본문이 비면 기존 벡터를 지우지 않고 관리자 확인으로 넘긴다.
+                logger.info("indexing_job_held job_id=%s reason=empty_document", job_id)
+                store.set_status(job_id, JobStatus.NEEDS_REVIEW)
+                return JobStatus.NEEDS_REVIEW
     except Exception:
         # 백그라운드 실행이라 예외를 삼키면 작업이 accepted로 굳는다.
         logger.exception(

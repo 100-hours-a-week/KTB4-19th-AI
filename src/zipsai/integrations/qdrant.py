@@ -26,9 +26,14 @@ def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:
 def ensure_collection(
     client: QdrantClient, collection: str = QDRANT_COLLECTION
 ) -> None:
-    if client.collection_exists(collection_name=collection):
-        return
+    if not client.collection_exists(collection_name=collection):
+        _create_collection(client, collection)
+    # 인덱스는 컬렉션 생성 여부와 따로 보장한다. doc_id 인덱스가 없던 시절에
+    # 만들어진 컬렉션을 그대로 쓰면 교체 필터가 거부된다. 재생성은 멱등이다.
+    _ensure_payload_indexes(client, collection)
 
+
+def _create_collection(client: QdrantClient, collection: str) -> None:
     client.create_collection(
         collection_name=collection,
         vectors_config={
@@ -39,6 +44,9 @@ def ensure_collection(
         },
         sparse_vectors_config={SPARSE_VECTOR: models.SparseVectorParams()},
     )
+
+
+def _ensure_payload_indexes(client: QdrantClient, collection: str) -> None:
     client.create_payload_index(
         collection_name=collection,
         field_name="building_id",

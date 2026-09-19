@@ -165,3 +165,39 @@ def test_download_failure_marks_job_failed(
     assert result is JobStatus.FAILED
     assert store.get_status(job_id) is JobStatus.FAILED
     assert stored_points(qdrant) == 0
+
+
+def test_empty_document_holds_the_job_and_keeps_existing_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant: QdrantClient,
+    job: tuple[InMemoryJobStore, str],
+) -> None:
+    store, job_id = job
+
+    # 먼저 같은 doc_id로 정상 적재해 기존 벡터를 만든다.
+    run_indexing_job(
+        store,
+        store.create(),
+        make_request(),
+        download=copy_fixture,
+        encoder=FakeEncoder(),
+        client=qdrant,
+    )
+    before = stored_points(qdrant)
+    assert before > 0
+
+    # 본문이 빈 문서로 재색인을 시도한다.
+    monkeypatch.setattr(pipeline, "parse_pdf", stub_parse([{"page": 1, "text": "   "}]))
+
+    result = run_indexing_job(
+        store,
+        job_id,
+        make_request(),
+        download=stub_download,
+        encoder=FakeEncoder(),
+        client=qdrant,
+    )
+
+    assert result is JobStatus.NEEDS_REVIEW
+    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
+    assert stored_points(qdrant) == before

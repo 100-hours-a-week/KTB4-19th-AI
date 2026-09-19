@@ -14,3 +14,7 @@ class JobNotFoundError(LookupError):
 
 class DocumentFetchError(ValueError):
     pass
+
+
+class EmptyDocumentError(ValueError):
+    pass
