@@ -5,22 +5,18 @@ description = "Document indexing API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "boto3",
     "docling",
-    "FlagEmbedding>=1.3",
     "fastapi>=0.115",
+    "httpx>=0.28",
     "pydantic>=2,<3",
     "qdrant-client==1.19.0",
     "uvicorn>=0.53.0",
 ]
 
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["zipsai*"]
-namespaces = true
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -30,3 +26,10 @@ dev = [
 
 [tool.ruff]
 exclude = ["evals"]
+
+[tool.ruff.lint.isort]
+# embedding은 같은 저장소의 형제 프로젝트다.
+known-first-party = ["zipsai", "embedding"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
