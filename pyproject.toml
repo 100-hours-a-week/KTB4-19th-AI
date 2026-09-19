@@ -1,0 +1,49 @@
+[project]
+name = "zipsai"
+version = "0.1.0"
+description = "Document indexing API"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3",
+    "docling",
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "pydantic>=2,<3",
+    "qdrant-client==1.19.0",
+    # CPU 전용 휠로 고정하려고 직접 선언한다. docling이 끌고 오는 기본
+    # torch는 CUDA 런타임(nvidia-*, triton)을 함께 받아온다.
+    "torch",
+    "torchvision",
+    "uvicorn>=0.53.0",
+]
+
+[tool.uv.sources]
+# macOS 휠은 원래 CPU 전용이라 리눅스에서만 인덱스를 바꾼다.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff]
+exclude = ["evals"]
+
+[tool.ruff.lint.isort]
+# embedding은 같은 저장소의 형제 프로젝트다.
+known-first-party = ["zipsai", "embedding"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
