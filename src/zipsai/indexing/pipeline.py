@@ -35,23 +35,16 @@ def run_indexing_job(
             source = download(request.file_key, Path(workdir))
             pages = parse_pdf(source)
 
-            masking = apply_masking(store, job_id, pages)
-            if store.get_status(job_id) is JobStatus.NEEDS_REVIEW:
-                # 보류 문서는 적재하지 않는다. 기존 버전의 벡터를 지우지 않아야
-                # 관리자가 확인할 때까지 검색 결과에 공백이 생기지 않는다.
-                logger.info("indexing_job_held job_id=%s reason=pii", job_id)
-                return JobStatus.NEEDS_REVIEW
-
-            cleaning = apply_cleaning(store, job_id, masking.pages)
-            if store.get_status(job_id) is JobStatus.NEEDS_REVIEW:
-                logger.info("indexing_job_held job_id=%s reason=cleaning", job_id)
-                return JobStatus.NEEDS_REVIEW
+            masking = apply_masking(job_id, pages)
+            cleaning = apply_cleaning(job_id, masking.pages)
 
             chunks = embed_chunks(chunk_pages(cleaning.pages), encoder)
             try:
-                stored = upsert_document(client, request, chunks)
+                stored = upsert_document(
+                    client, request, chunks, masked=bool(masking.detections)
+                )
             except EmptyDocumentError:
-                # 본문이 비면 기존 벡터를 지우지 않고 관리자 확인으로 넘긴다.
+                # 넣을 게 없는데 진행하면 기존 문서만 지워진다. 여기서만 멈춘다.
                 logger.info("indexing_job_held job_id=%s reason=empty_document", job_id)
                 store.set_status(job_id, JobStatus.NEEDS_REVIEW)
                 return JobStatus.NEEDS_REVIEW

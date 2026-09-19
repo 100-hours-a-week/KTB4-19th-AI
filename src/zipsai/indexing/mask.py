@@ -4,8 +4,6 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 
-from zipsai.contracts.indexing import JobStatus
-
 logger = logging.getLogger(__name__)
 
 
@@ -174,12 +172,10 @@ def mask_pages(pages: list[dict[str, int | str]]) -> MaskingResult:
     return MaskingResult(pages=masked_pages, detections=detections)
 
 
-def apply_masking(
-    store, job_id: str, pages: list[dict[str, int | str]]
-) -> MaskingResult:
+def apply_masking(job_id: str, pages: list[dict[str, int | str]]) -> MaskingResult:
+    # 탐지돼도 멈추지 않는다. 라벨로 치환된 본문을 그대로 색인하고
+    # 무엇이 걸렸는지는 로그로만 남긴다.
     result = mask_pages(pages)
-    if result.detections:
-        store.set_status(job_id, JobStatus.NEEDS_REVIEW)
     counts = Counter(detection.kind.value for detection in result.detections)
     logger.info("pii_masking job_id=%s counts=%s", job_id, dict(counts))
     return result

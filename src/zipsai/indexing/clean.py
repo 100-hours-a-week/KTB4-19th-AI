@@ -3,8 +3,6 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 
-from zipsai.contracts.indexing import JobStatus
-
 logger = logging.getLogger(__name__)
 
 HOLD_RATIO = 0.30
@@ -103,11 +101,17 @@ def clean_pages(pages: list[dict[str, int | str]]) -> CleaningResult:
     return CleaningResult(pages=cleaned_pages, removed_ratio=removed_ratio)
 
 
-def apply_cleaning(
-    store, job_id: str, pages: list[dict[str, int | str]]
-) -> CleaningResult:
+def apply_cleaning(job_id: str, pages: list[dict[str, int | str]]) -> CleaningResult:
     result = clean_pages(pages)
     if result.removed_ratio > HOLD_RATIO:
-        store.set_status(job_id, JobStatus.NEEDS_REVIEW)
+        # 너무 많이 지웠으면 정제를 포기한다. 쪽번호가 섞이는 편이
+        # 본문이 잘린 채 색인되는 것보다 낫다.
+        logger.info(
+            "cleaning_skipped job_id=%s removed_ratio=%.3f",
+            job_id,
+            result.removed_ratio,
+        )
+        return CleaningResult(pages=[dict(page) for page in pages], removed_ratio=0.0)
+
     logger.info("cleaning job_id=%s removed_ratio=%.3f", job_id, result.removed_ratio)
     return result

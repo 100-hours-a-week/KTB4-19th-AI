@@ -3,10 +3,7 @@ import logging
 
 import pytest
 
-from zipsai.contracts.indexing import JobStatus
-from zipsai.errors import JobNotFoundError
 from zipsai.indexing.clean import HOLD_RATIO, apply_cleaning, clean_pages
-from zipsai.indexing.store import InMemoryJobStore
 
 
 def test_drops_repeated_line_seen_on_three_pages() -> None:
@@ -103,32 +100,36 @@ def test_whitespace_normalization_is_not_counted_as_removal() -> None:
     assert result.removed_ratio == 0.0
 
 
-def test_apply_cleaning_holds_job_when_removal_exceeds_threshold() -> None:
-    store = InMemoryJobStore()
-    job_id = store.create()
+def test_apply_cleaning_falls_back_to_the_original_when_removal_is_excessive() -> None:
+    # 너무 많이 지우면 정제를 포기한다. 잘린 본문이 색인되면 안 된다.
+    original = "불필요\n- 3 -\n본문"
+    assert clean_pages([{"page": 1, "text": original}]).removed_ratio > HOLD_RATIO
 
-    result = apply_cleaning(store, job_id, [{"page": 1, "text": "불필요\n- 3 -\n본문"}])
+    result = apply_cleaning("job-1", [{"page": 1, "text": original}])
 
-    assert result.removed_ratio > HOLD_RATIO
-    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
+    assert result.pages[0]["text"] == original
+    assert result.removed_ratio == 0.0
 
 
-def test_apply_cleaning_unknown_job_raises_job_not_found() -> None:
-    with pytest.raises(JobNotFoundError):
-        apply_cleaning(InMemoryJobStore(), "missing", [{"page": 1, "text": "- 3 -"}])
+def test_apply_cleaning_keeps_the_cleaned_pages_below_the_threshold() -> None:
+    pages = [{"page": 1, "text": "본문입니다\n본문이 이어집니다\n- 3 -"}]
+    cleaned = clean_pages(pages)
+    assert 0 < cleaned.removed_ratio <= HOLD_RATIO
+
+    result = apply_cleaning("job-1", pages)
+
+    assert result.pages[0]["text"] == cleaned.pages[0]["text"]
 
 
 def test_logs_job_id_and_ratio_without_body_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store = InMemoryJobStore()
-    job_id = store.create()
     body = "비밀본문"
 
     with caplog.at_level(logging.INFO, logger="zipsai.indexing.clean"):
-        apply_cleaning(store, job_id, [{"page": 1, "text": body}])
+        apply_cleaning("job-abc", [{"page": 1, "text": body}])
 
-    assert f"cleaning job_id={job_id} removed_ratio=0.000" in caplog.text
+    assert "cleaning job_id=job-abc removed_ratio=0.000" in caplog.text
     assert body not in caplog.text
 
 

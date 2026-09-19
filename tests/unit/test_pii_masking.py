@@ -2,10 +2,7 @@ import logging
 
 import pytest
 
-from zipsai.contracts.indexing import JobStatus
-from zipsai.errors import JobNotFoundError
 from zipsai.indexing.mask import PiiKind, apply_masking, mask_pages
-from zipsai.indexing.store import InMemoryJobStore
 
 
 @pytest.mark.parametrize(
@@ -85,47 +82,32 @@ def test_does_not_mutate_input_pages() -> None:
     assert result.pages == [{"page": 1, "text": "[전화번호]", "source": "index"}]
 
 
-def test_clean_pages_keep_accepted_status() -> None:
-    store = InMemoryJobStore()
-    job_id = store.create()
-
-    result = apply_masking(store, job_id, [{"page": 1, "text": "공지사항"}])
+def test_apply_masking_without_pii_returns_no_detections() -> None:
+    result = apply_masking("job-1", [{"page": 1, "text": "공지사항"}])
 
     assert result.detections == []
-    assert store.get_status(job_id) is JobStatus.ACCEPTED
 
 
-def test_pii_on_page_two_holds_job_for_review() -> None:
-    store = InMemoryJobStore()
-    job_id = store.create()
-
+def test_pii_is_replaced_and_indexing_continues() -> None:
+    # v1은 탐지돼도 멈추지 않는다. 치환된 본문이 그대로 다음 단계로 간다.
     result = apply_masking(
-        store,
-        job_id,
+        "job-1",
         [{"page": 1, "text": "공지사항"}, {"page": 2, "text": "010-6183-4275"}],
     )
 
     assert result.detections[0].page == 2
-    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
-
-
-def test_unknown_job_with_pii_raises_job_not_found() -> None:
-    with pytest.raises(JobNotFoundError):
-        apply_masking(
-            InMemoryJobStore(), "missing", [{"page": 2, "text": "010-6183-4275"}]
-        )
+    assert result.pages[1]["text"] == "[전화번호]"
 
 
 def test_logs_job_id_and_counts_without_matched_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store = InMemoryJobStore()
-    job_id = store.create()
-
     with caplog.at_level(logging.INFO, logger="zipsai.indexing.mask"):
-        apply_masking(store, job_id, [{"page": 1, "text": "person@example.com"}])
+        apply_masking(
+            "job-abc",
+            [{"page": 1, "text": "person@example.com 과 other@example.com"}],
+        )
 
-    assert job_id in caplog.text
-    assert "이메일" in caplog.text
-    assert "1" in caplog.text
+    assert "job_id=job-abc" in caplog.text
+    assert "'이메일': 2" in caplog.text
     assert "person@example.com" not in caplog.text

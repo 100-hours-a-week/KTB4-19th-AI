@@ -87,11 +87,19 @@ def test_success_path_upserts_chunks_and_marks_succeeded(
     assert stored_points(qdrant) > 0
 
 
-def test_pii_detection_holds_job_without_storing_vectors(
+def payloads(client: QdrantClient) -> list[dict]:
+    records, _ = client.scroll(
+        collection_name=QDRANT_COLLECTION, limit=100, with_payload=True
+    )
+    return [record.payload for record in records]
+
+
+def test_pii_is_masked_and_still_indexed(
     monkeypatch: pytest.MonkeyPatch,
     qdrant: QdrantClient,
     job: tuple[InMemoryJobStore, str],
 ) -> None:
+    # v1은 보류하지 않는다. 치환본을 적재하고 masked 표시만 남긴다.
     store, job_id = job
     monkeypatch.setattr(
         pipeline,
@@ -108,16 +116,19 @@ def test_pii_detection_holds_job_without_storing_vectors(
         client=qdrant,
     )
 
-    assert result is JobStatus.NEEDS_REVIEW
-    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
-    assert stored_points(qdrant) == 0
+    assert result is JobStatus.SUCCEEDED
+    stored = payloads(qdrant)
+    assert stored and all(payload["masked"] is True for payload in stored)
+    assert all("admin@example.com" not in payload["text"] for payload in stored)
+    assert any("[이메일]" in payload["text"] for payload in stored)
 
 
-def test_excessive_cleaning_holds_job_without_storing_vectors(
+def test_excessive_cleaning_indexes_the_original_text(
     monkeypatch: pytest.MonkeyPatch,
     qdrant: QdrantClient,
     job: tuple[InMemoryJobStore, str],
 ) -> None:
+    # 정제가 과하면 정제를 포기한다. 지워졌던 머리글이 본문에 남아야 한다.
     store, job_id = job
     repeated = "공동주택 관리사무소 알림 머리글"
     monkeypatch.setattr(
@@ -140,9 +151,11 @@ def test_excessive_cleaning_holds_job_without_storing_vectors(
         client=qdrant,
     )
 
-    assert result is JobStatus.NEEDS_REVIEW
-    assert store.get_status(job_id) is JobStatus.NEEDS_REVIEW
-    assert stored_points(qdrant) == 0
+    assert result is JobStatus.SUCCEEDED
+    stored = payloads(qdrant)
+    assert stored
+    assert any(repeated in payload["text"] for payload in stored)
+    assert all(payload["masked"] is False for payload in stored)
 
 
 def test_download_failure_marks_job_failed(
