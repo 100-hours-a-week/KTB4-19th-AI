@@ -1,7 +1,8 @@
 """서버 Qdrant 대상 인덱싱 e2e 스모크.
 
 파싱 → 정제 → 마스킹 → 청킹 → BGE-M3 실인코딩 → 적재 → 격리·교체·인덱스 확인.
-전용 컬렉션(documents_e2e)을 만들고 끝나면 지운다. 사전 조건: localhost:6333 Qdrant.
+전용 컬렉션(documents_e2e)을 만들고 끝나면 지운다.
+사전 조건: localhost:6333 Qdrant, localhost:8000 embedding 서비스.
 """
 
 from datetime import UTC, datetime
@@ -16,10 +17,11 @@ from zipsai.indexing.embed import embed_chunks
 from zipsai.indexing.mask import mask_pages
 from zipsai.indexing.parse import parse_pdf
 from zipsai.indexing.upsert import upsert_document
-from zipsai.integrations.bge_m3 import BgeM3Encoder
+from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
 
 QDRANT_URL = "http://localhost:6333"
+EMBEDDING_URL = "http://localhost:8000"
 COLLECTION = "documents_e2e"
 FIXTURE = Path(__file__).parents[2] / "tests" / "fixtures" / "two-pages.pdf"
 
@@ -57,7 +59,7 @@ def main() -> None:
     masked = mask_pages(cleaned.pages)
     assert not masked.detections, f"예상 밖 PII 탐지: {masked.detections}"
     chunks = chunk_pages(masked.pages)
-    embedded = embed_chunks(chunks, BgeM3Encoder())
+    embedded = embed_chunks(chunks, HttpEncoder(base_url=EMBEDDING_URL))
 
     client = create_client(QDRANT_URL)
     if client.collection_exists(collection_name=COLLECTION):
