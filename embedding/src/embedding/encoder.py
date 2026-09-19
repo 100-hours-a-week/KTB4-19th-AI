@@ -1,6 +1,11 @@
+import os
 from typing import Any
 
-from zipsai.settings import EMBEDDING_MODEL_ID
+MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "BAAI/bge-m3")
+
+
+class ModelNotLoadedError(RuntimeError):
+    pass
 
 
 def _normalize(
@@ -15,17 +20,25 @@ def _normalize(
 
 
 class BgeM3Encoder:
-    def __init__(self, model_id: str = EMBEDDING_MODEL_ID) -> None:
+    def __init__(self, model_id: str = MODEL_ID) -> None:
         self.model_id = model_id
         self._model = None
+
+    @property
+    def ready(self) -> bool:
+        return self._model is not None
+
+    def load(self) -> None:
+        # CPU 전용 컨테이너라 fp16을 쓰지 않는다.
+        from FlagEmbedding import BGEM3FlagModel
+
+        self._model = BGEM3FlagModel(self.model_id, use_fp16=False)
 
     def encode(
         self, texts: list[str]
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         if self._model is None:
-            from FlagEmbedding import BGEM3FlagModel
-
-            self._model = BGEM3FlagModel(self.model_id, use_fp16=False)
+            raise ModelNotLoadedError(f"Model '{self.model_id}' is not loaded")
         output = self._model.encode(
             texts,
             return_dense=True,
@@ -33,3 +46,7 @@ class BgeM3Encoder:
             return_colbert_vecs=False,
         )
         return _normalize(output)
+
+
+# 라우터와 기동 코드가 같은 인스턴스를 본다.
+encoder = BgeM3Encoder()
