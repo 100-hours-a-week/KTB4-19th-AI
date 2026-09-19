@@ -3,7 +3,20 @@ import json
 
 import pytest
 
+from zipsai.api import indexing
 from zipsai.main import app
+
+
+@pytest.fixture(autouse=True)
+def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    # 배경 작업이 실제 S3·Embedding에 붙지 않게 막고 예약 여부만 기록한다.
+    runs: list[str] = []
+
+    def record(job_id: str, payload: object) -> None:
+        runs.append(job_id)
+
+    monkeypatch.setattr(indexing, "_run_job", record)
+    return runs
 
 
 def request(method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
@@ -111,3 +124,20 @@ def test_unknown_job_returns_404() -> None:
     )
 
     assert status_code == 404
+
+
+def test_accepted_job_schedules_the_indexing_pipeline(
+    scheduled_jobs: list[str],
+) -> None:
+    _, created = request("POST", "/api/v3/ai/indexing/jobs", valid_payload())
+
+    assert scheduled_jobs == [created["job_id"]]
+
+
+def test_rejected_payload_schedules_nothing(scheduled_jobs: list[str]) -> None:
+    payload = valid_payload()
+    del payload["title"]
+
+    request("POST", "/api/v3/ai/indexing/jobs", payload)
+
+    assert scheduled_jobs == []
