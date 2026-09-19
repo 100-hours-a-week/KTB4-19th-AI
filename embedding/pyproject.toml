@@ -5,6 +5,7 @@ description = "BGE-M3 embedding service"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "docling",
     "fastapi>=0.141.1",
     "uvicorn>=0.53.0",
     "FlagEmbedding>=1.3",
