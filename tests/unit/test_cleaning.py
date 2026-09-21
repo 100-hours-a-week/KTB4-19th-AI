@@ -105,7 +105,7 @@ def test_apply_cleaning_falls_back_to_the_original_when_removal_is_excessive() -
     original = "불필요\n- 3 -\n본문"
     assert clean_pages([{"page": 1, "text": original}]).removed_ratio > HOLD_RATIO
 
-    result = apply_cleaning("job-1", [{"page": 1, "text": original}])
+    result = apply_cleaning("doc-1", [{"page": 1, "text": original}])
 
     assert result.pages[0]["text"] == original
     assert result.removed_ratio == 0.0
@@ -116,20 +116,20 @@ def test_apply_cleaning_keeps_the_cleaned_pages_below_the_threshold() -> None:
     cleaned = clean_pages(pages)
     assert 0 < cleaned.removed_ratio <= HOLD_RATIO
 
-    result = apply_cleaning("job-1", pages)
+    result = apply_cleaning("doc-1", pages)
 
     assert result.pages[0]["text"] == cleaned.pages[0]["text"]
 
 
-def test_logs_job_id_and_ratio_without_body_text(
+def test_logs_doc_id_and_ratio_without_body_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     body = "비밀본문"
 
     with caplog.at_level(logging.INFO, logger="zipsai.indexing.clean"):
-        apply_cleaning("job-abc", [{"page": 1, "text": body}])
+        apply_cleaning("doc-abc", [{"page": 1, "text": body}])
 
-    assert "cleaning job_id=job-abc removed_ratio=0.000" in caplog.text
+    assert "cleaning doc_id=doc-abc removed_ratio=0.000" in caplog.text
     assert body not in caplog.text
 
 

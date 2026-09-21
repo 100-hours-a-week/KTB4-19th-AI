@@ -83,7 +83,7 @@ def test_does_not_mutate_input_pages() -> None:
 
 
 def test_apply_masking_without_pii_returns_no_detections() -> None:
-    result = apply_masking("job-1", [{"page": 1, "text": "공지사항"}])
+    result = apply_masking("doc-1", [{"page": 1, "text": "공지사항"}])
 
     assert result.detections == []
 
@@ -91,7 +91,7 @@ def test_apply_masking_without_pii_returns_no_detections() -> None:
 def test_pii_is_replaced_and_indexing_continues() -> None:
     # v1은 탐지돼도 멈추지 않는다. 치환된 본문이 그대로 다음 단계로 간다.
     result = apply_masking(
-        "job-1",
+        "doc-1",
         [{"page": 1, "text": "공지사항"}, {"page": 2, "text": "010-6183-4275"}],
     )
 
@@ -99,15 +99,15 @@ def test_pii_is_replaced_and_indexing_continues() -> None:
     assert result.pages[1]["text"] == "[전화번호]"
 
 
-def test_logs_job_id_and_counts_without_matched_text(
+def test_logs_doc_id_and_counts_without_matched_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.INFO, logger="zipsai.indexing.mask"):
         apply_masking(
-            "job-abc",
+            "doc-abc",
             [{"page": 1, "text": "person@example.com 과 other@example.com"}],
         )
 
-    assert "job_id=job-abc" in caplog.text
+    assert "doc_id=doc-abc" in caplog.text
     assert "'이메일': 2" in caplog.text
     assert "person@example.com" not in caplog.text

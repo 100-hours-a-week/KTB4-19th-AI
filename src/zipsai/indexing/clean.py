@@ -101,17 +101,17 @@ def clean_pages(pages: list[dict[str, int | str]]) -> CleaningResult:
     return CleaningResult(pages=cleaned_pages, removed_ratio=removed_ratio)
 
 
-def apply_cleaning(job_id: str, pages: list[dict[str, int | str]]) -> CleaningResult:
+def apply_cleaning(doc_id: str, pages: list[dict[str, int | str]]) -> CleaningResult:
     result = clean_pages(pages)
     if result.removed_ratio > HOLD_RATIO:
         # 너무 많이 지웠으면 정제를 포기한다. 쪽번호가 섞이는 편이
         # 본문이 잘린 채 색인되는 것보다 낫다.
         logger.info(
-            "cleaning_skipped job_id=%s removed_ratio=%.3f",
-            job_id,
+            "cleaning_skipped doc_id=%s removed_ratio=%.3f",
+            doc_id,
             result.removed_ratio,
         )
         return CleaningResult(pages=[dict(page) for page in pages], removed_ratio=0.0)
 
-    logger.info("cleaning job_id=%s removed_ratio=%.3f", job_id, result.removed_ratio)
+    logger.info("cleaning doc_id=%s removed_ratio=%.3f", doc_id, result.removed_ratio)
     return result
