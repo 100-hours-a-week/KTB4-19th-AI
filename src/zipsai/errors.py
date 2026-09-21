@@ -1,3 +1,18 @@
+class PdfParseError(ValueError):
+    pass
+
+
+class EmbeddingError(ValueError):
+    pass
+
+
+class DocumentFetchError(ValueError):
+    pass
+
+
+class EmptyDocumentError(ValueError):
+    pass
+  
 class IntentClassificationError(ValueError):
     """Raised when the LLM returns an unsupported intent route."""
 
