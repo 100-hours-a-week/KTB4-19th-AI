@@ -1,6 +1,5 @@
 FROM python:3.12-slim AS build
 WORKDIR /app
-ENV HF_HOME=/app/.cache/huggingface
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-install-project --no-dev
@@ -9,7 +8,7 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+ENV PATH="/app/.venv/bin:$PATH"
 RUN groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /app /app
 USER app
