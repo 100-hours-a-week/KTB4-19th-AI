@@ -1,28 +1,38 @@
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+  from collections.abc import AsyncIterator
+  from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+  from fastapi import FastAPI
+  from fastapi.exceptions import RequestValidationError
 
-from zipsai.api.indexing import router
-from zipsai.settings import API_PREFIX, missing_required_settings
+  from zipsai.api.converse import router as converse_router
+  from zipsai.api.error_responses import (
+      request_validation_error_handler,
+      unhandled_exception_handler,
+  )
+  from zipsai.api.health import router as health_router
+  from zipsai.api.indexing import router as indexing_router
+  from zipsai.settings import API_PREFIX, missing_required_settings
 
-# 설정이 없으면 파이썬이 WARNING 이상만 내보내서 단계 로그가 전부 묻힌다.
-# 컨테이너 표준 출력이 곧 로그 수집 입력이라 파일로 쓰지 않는다.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    missing = missing_required_settings()
-    if missing:
-        # 뜬 다음 첫 색인에서 실패하면 원인을 찾느라 로그를 뒤져야 한다.
-        raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
-    yield
+  logging.basicConfig(
+      level=logging.INFO,
+      format="%(asctime)s %(levelname)s %(name)s %(message)s",
+  )
 
 
-app = FastAPI(title="zipsai", lifespan=lifespan)
-app.include_router(router, prefix=API_PREFIX)
+  @asynccontextmanager
+  async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+      missing = missing_required_settings()
+      if missing:
+          raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
+      yield
+
+
+  app = FastAPI(title="zipsai", lifespan=lifespan)
+  app.include_router(converse_router)
+  app.include_router(health_router)
+  app.include_router(indexing_router, prefix=API_PREFIX)
+  app.add_exception_handler(RequestValidationError,
+  request_validation_error_handler)
+  app.add_exception_handler(Exception, unhandled_exception_handler)
+  
