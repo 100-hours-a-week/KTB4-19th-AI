@@ -1,12 +1,10 @@
-from datetime import UTC, datetime
-
 import pytest
 from qdrant_client import QdrantClient
 
-from zipsai.contracts.indexing import IndexingJobRequest, SourceType
+from zipsai.contracts.indexing import IndexingJobRequest
 from zipsai.errors import EmptyDocumentError
 from zipsai.indexing.embed import EmbeddedChunk
-from zipsai.indexing.upsert import upsert_document
+from zipsai.indexing.upsert import delete_missing_documents, upsert_document
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
     SPARSE_VECTOR,
@@ -27,11 +25,8 @@ def request(building_id: int = 101, doc_id: str = "doc-1") -> IndexingJobRequest
     return IndexingJobRequest(
         building_id=building_id,
         doc_id=doc_id,
-        source_type=SourceType.RULE,
         title="관리규약",
-        published_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
         file_key="documents/doc.pdf",
-        trace_id="trace-1",
     )
 
 
@@ -64,9 +59,7 @@ def test_round_trip_stores_payload_and_named_dense_sparse_vectors(
     assert point.payload == {
         "building_id": "101",
         "doc_id": "doc-1",
-        "source_type": "rule",
         "title": "관리규약",
-        "published_at": "2026-01-02T03:04:05+00:00",
         "masked": True,
         "page": 2,
         "section": "제1조",
@@ -200,3 +193,36 @@ def test_ensure_collection_adds_indexes_to_a_collection_made_without_them() -> N
         ),
         wait=True,
     )
+
+
+def test_reconcile_deletes_documents_missing_from_the_valid_list(
+    client: QdrantClient,
+) -> None:
+    upsert_document(client, request(101, "doc-a"), [chunk("A")])
+    upsert_document(client, request(101, "doc-b"), [chunk("B")])
+    upsert_document(client, request(101, "doc-c"), [chunk("C")])
+
+    delete_missing_documents(client, 101, ["doc-a", "doc-c"])
+
+    assert sorted(point.payload["doc_id"] for point in points(client)) == [
+        "doc-a",
+        "doc-c",
+    ]
+
+
+def test_reconcile_leaves_other_buildings_alone(client: QdrantClient) -> None:
+    # building_id 조건이 빠지면 한 건물 정리가 전체 색인을 지운다.
+    upsert_document(client, request(101, "doc-a"), [chunk("건물 101")])
+    upsert_document(client, request(202, "doc-a"), [chunk("건물 202")])
+
+    delete_missing_documents(client, 101, ["doc-z"])
+
+    assert [point.payload["building_id"] for point in points(client)] == ["202"]
+
+
+def test_reconcile_refuses_an_empty_valid_list(client: QdrantClient) -> None:
+    upsert_document(client, request(101, "doc-a"), [chunk("A")])
+
+    with pytest.raises(ValueError):
+        delete_missing_documents(client, 101, [])
+    assert len(points(client)) == 1

@@ -1,71 +1,67 @@
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter, BackgroundTasks, status
+from fastapi import APIRouter, BackgroundTasks, Response, status
 from qdrant_client import QdrantClient
 
-from zipsai.contracts.indexing import (
-    IndexingJobRequest,
-    IndexingJobResponse,
-    JobStatus,
-)
+from zipsai.contracts.indexing import IndexingJobRequest
 from zipsai.indexing.pipeline import run_indexing_job
-from zipsai.indexing.store import InMemoryJobStore
+from zipsai.indexing.upsert import delete_missing_documents
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
 from zipsai.integrations.s3 import download
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-job_store = InMemoryJobStore()
+
+ACCEPTED = status.HTTP_202_ACCEPTED
 
 
 @lru_cache(maxsize=1)
 def _dependencies() -> tuple[QdrantClient, HttpEncoder]:
-    # 첫 작업이 들어올 때 만든다. 임포트 시점에 Qdrant·Embedding에 붙지 않는다.
+    # 첫 요청이 들어올 때 만든다. 임포트 시점에 Qdrant·Embedding에 붙지 않는다.
     client = create_client()
     ensure_collection(client)
     return client, HttpEncoder()
 
 
-def _run_job(job_id: str, payload: IndexingJobRequest) -> None:
+def _run_job(payload: IndexingJobRequest) -> None:
     try:
         client, encoder = _dependencies()
     except Exception:
-        # 배경 실행이라 여기서 터지면 작업이 accepted로 굳는다.
-        logger.exception("indexing_job_setup_failed job_id=%s", job_id)
-        job_store.set_status(job_id, JobStatus.FAILED)
+        # 응답은 이미 202로 나갔다. 여기서 터지면 로그가 유일한 흔적이다.
+        logger.exception("indexing_job_setup_failed doc_id=%s", payload.doc_id)
         return
 
-    run_indexing_job(
-        job_store,
-        job_id,
-        payload,
-        download=download,
-        encoder=encoder,
-        client=client,
+    # 색인이 먼저다. 정리가 앞서면 이번에 넣을 문서가 잠깐 검색에서 빠진다.
+    if payload.has_document:
+        run_indexing_job(payload, download=download, encoder=encoder, client=client)
+
+    if payload.valid_doc_ids is None:
+        return
+
+    try:
+        delete_missing_documents(client, payload.building_id, payload.valid_doc_ids)
+    except Exception:
+        logger.exception("reconcile_failed building_id=%s", payload.building_id)
+        return
+
+    logger.info(
+        "reconcile_succeeded building_id=%s kept=%d",
+        payload.building_id,
+        len(payload.valid_doc_ids),
     )
 
 
-@router.post(
-    "/jobs",
-    response_model=IndexingJobResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/jobs", status_code=ACCEPTED, response_class=Response)
 def create_job(
     payload: IndexingJobRequest, background_tasks: BackgroundTasks
-) -> IndexingJobResponse:
-    job_id = job_store.create()
+) -> Response:
     logger.info(
-        "indexing_job_accepted job_id=%s trace_id=%s doc_id=%s",
-        job_id,
-        payload.trace_id,
+        "indexing_job_accepted building_id=%s doc_id=%s reconcile=%s",
+        payload.building_id,
         payload.doc_id,
+        len(payload.valid_doc_ids) if payload.valid_doc_ids else 0,
     )
-    background_tasks.add_task(_run_job, job_id, payload)
-    return IndexingJobResponse(job_id=job_id, status="accepted")
-
-
-@router.get("/jobs/{job_id}", response_model=IndexingJobResponse)
-def get_job(job_id: str) -> IndexingJobResponse:
-    return IndexingJobResponse(job_id=job_id, status=job_store.get_status(job_id))
+    background_tasks.add_task(_run_job, payload)
+    return Response(status_code=ACCEPTED)
