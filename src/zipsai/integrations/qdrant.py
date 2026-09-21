@@ -10,10 +10,14 @@ DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
 
 
-def create_client(url: str = QDRANT_URL) -> QdrantClient:
-    if url == ":memory:":
+def create_client(url: str | None = None) -> QdrantClient:
+    target = url or QDRANT_URL
+    if not target:
+        raise RuntimeError("QDRANT_URL is not configured")
+    # ":memory:"는 서버가 아니라 프로세스 안의 임시 저장소다. 테스트만 이 값을 넘긴다.
+    if target == ":memory:":
         return QdrantClient(":memory:")
-    return QdrantClient(url=url)
+    return QdrantClient(url=target)
 
 
 def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:
