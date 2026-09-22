@@ -17,6 +17,10 @@ class IntentClassificationError(ValueError):
     """Raised when the LLM returns an unsupported intent route."""
 
 
+class ComplaintExtractionError(ValueError):
+    """Raised when the LLM returns an unparseable or invalid complaint draft."""
+
+
 class LlmUnavailableError(RuntimeError):
     """Raised when an LLM request cannot be completed."""
 
