@@ -7,10 +7,10 @@ FROM base AS build
 WORKDIR /app
 ENV HF_HOME=/app/.cache/huggingface
 RUN pip install --no-cache-dir uv
-COPY pyproject.toml uv.lock README.md ./
+COPY ai/pyproject.toml ai/uv.lock ai/README.md ./
 RUN uv sync --frozen --no-install-project --no-dev
-COPY src ./src
-COPY scripts ./scripts
+COPY ai/src ./src
+COPY ai/scripts ./scripts
 RUN uv sync --frozen --no-dev
 RUN /app/.venv/bin/python scripts/prefetch_models.py
 
