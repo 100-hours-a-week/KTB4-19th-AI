@@ -1,0 +1,57 @@
+building_id: 3
+building_code: b003
+zone_id: Z1
+building_name: 누리담채
+building_type: 다가구주택
+built_year: 2007
+room_count: 22
+room_no_format: "3NN"
+manager:
+  resident: true
+  contact_hours: 평일 09:00~16:00
+
+specifics:
+  parking: 앞마당 선착순 6면, 야간만
+  monthly_fee: 정액 월 28,000원
+  fee_includes: [공용전기]
+  laundry: 없음 (개별 세탁기 사용)
+  parcel: 경비실 옆 수령대
+  entrance: 열쇠 출입, 복제 전 관리자 확인
+  elevator: false
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 생활수칙 안내
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/notice-002-물탱크안내.md
+    document_title: 물탱크 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [MASK_PII_DETECTED]
+    scope: building
+    note: 가상 연락처·성명·차량번호를 의도적으로 포함
+  - file: documents/notice-003-소방시설점검.md
+    document_title: 소방시설 점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [PARSE_NO_TEXT_LAYER]
+    scope: building
+    note: 스캔본이라 md 본문 없음

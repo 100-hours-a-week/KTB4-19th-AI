@@ -1,0 +1,105 @@
+building_id: 1
+building_code: b001
+zone_id: Z1
+building_name: 한빛빌라
+building_type: 원룸형 빌라
+built_year: 2015
+room_count: 30
+room_no_format: "NNN"
+manager:
+  resident: false
+  contact_hours: 평일 09:00~18:00
+
+specifics:
+  parking: 건물 뒤편 선착순 12면
+  monthly_fee: 정액 월 50,000원
+  fee_includes: [공용전기, 수도, 인터넷]
+  laundry: 지하 공용 세탁실 (세탁기 2, 건조기 1), 06:00~23:00
+  parcel: 1층 무인택배함
+  entrance: 공동현관 비밀번호, 분기별 변경
+  elevator: true
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 1
+    is_valid: false
+    file_type: PDF
+    intent: [CHUNK_NO_SECTION, CHUNK_OVERLAP]
+    scope: building
+    note: v2로 대체된 구버전. 재색인 시 청크가 삭제되어야 한다
+
+  - file: documents/rule-001-생활수칙-v2.md
+    document_title: 입주자 생활수칙
+    doc_type: rule
+    version: 2
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_VERSION_REPLACE, MASK_FALSE_POSITIVE, CHUNK_OVERLAP]
+    scope: building
+    note: 2026-4호·500원·15,000원이 전화번호 오탐을 유발할 수 있다
+
+  - file: documents/notice-001-물탱크청소.md
+    document_title: 물탱크 청소 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [MASK_PII_DETECTED, CLEAN_REPEATED_HEADER]
+    scope: building
+    note: 관리인 휴대폰·302호 성명·차량번호 3종을 의도적으로 심었다
+
+  - file: documents/notice-002-승강기점검.md
+    document_title: 승강기 정기점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TOO_SHORT, CLEAN_OVER_REMOVAL]
+    scope: building
+    note: 전체 154자, 반복 머리말 비중 40%대
+
+  - file: documents/notice-003-분리수거경고.md
+    document_title: 분리수거 배출 경고
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+    note: 내용 전부가 zones/z1.yaml과 일치. 다른 건물 문서로 답해도 맞아버린다
+
+  - file: documents/facility-001-세탁실안내.md
+    document_title: 세탁실·주차 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TABLE_WHOLE]
+    scope: building
+    note: >-
+      17행 표. 중간에서 잘리면 안 된다.
+      이용 요금 섹션이 462자라 400자 겹침 분할 규칙과 표 통째 유지 규칙이 동시에 해당한다.
+      어느 쪽이 이기는지 P1 설계가 답하지 않은 지점이며, 이 문서가 그 충돌을 노출시킨다.
+
+  - file: documents/notice-004-소방시설점검.md
+    document_title: 소방시설 점검
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [PARSE_NO_TEXT_LAYER]
+    scope: building
+    note: 스캔본. CONVERT.md 2절 절차로 생성
+
+  - file: documents/notice-005-관리비인상.md
+    document_title: 관리비 인상 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: jpg
+    intent: [PARSE_IMAGE_ONLY]
+    scope: building
+    note: 사진으로 찍은 공지. CONVERT.md 3절 절차로 생성

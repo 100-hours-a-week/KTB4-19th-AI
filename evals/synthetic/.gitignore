@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+
+# 1-dataset/build 는 완성물이므로 추적한다

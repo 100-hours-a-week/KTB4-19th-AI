@@ -1,3 +1,6 @@
+# Git worktrees
+.worktrees/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -151,6 +154,7 @@ activemq-data/
 
 # Environments
 .env
+.env.properties
 .envrc
 .venv
 env/
@@ -218,3 +222,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 합성데이터 완성물은 추적한다
+!evals/synthetic/1-dataset/build/

@@ -1,0 +1,23 @@
+zone_id: Z2
+zone_name: 신정 구역
+buildings: [b004, b005, b006]
+waste:
+  general_days: [화, 목, 토]
+  recycle_days: [월, 금]
+  food_days: [매일]
+  time: 저녁 8시 ~ 새벽 2시
+  place: 골목 입구 공동 집하장
+  bag_shops: [신정마트, 24시편의점 신정점]
+recycle_rules:
+  - 페트병은 라벨을 떼고 찌그러뜨려 투명봉투에 따로
+  - 종이박스는 테이프와 송장을 제거하고 접어서
+  - 비닐류는 이물질을 헹궈 따로 모아서
+  - 형광등과 건전지는 집하장 전용함에
+food_waste:
+  container: 종량제 납부필증 스티커 부착 후 전용 봉투
+  excluded: [양파껍질, 달걀껍데기, 뼈다귀, 조개껍데기]
+bulk_waste:
+  method: 주민센터 신고 후 스티커 부착
+  fee: 품목당 4,000원부터
+  pickup: 신고일 기준 5일 이내
+notes: 공동 집하장은 CCTV가 설치돼 있어 요일 위반 시 과태료가 부과될 수 있다

@@ -1,0 +1,22 @@
+zone_id: Z4
+zone_name: 온천 구역
+buildings: [b009, b010]
+waste:
+  general_days: [화, 금]
+  recycle_days: [월, 목]
+  food_days: [매일]
+  time: 저녁 7시 ~ 밤 10시
+  place: 전봇대 옆 지정 구역
+  bag_shops: [온천마트]
+recycle_rules:
+  - 페트병은 라벨을 떼고 찌그러뜨려 투명봉투에 따로
+  - 종이박스는 테이프와 송장을 제거하고 접어서
+  - 캔과 고철은 같은 봉투에 묶어서
+food_waste:
+  container: 전용 수거통 (건물별 비치)
+  excluded: [양파껍질, 달걀껍데기, 뼈다귀]
+bulk_waste:
+  method: 주민센터 방문 신고만 가능 (온라인 불가)
+  fee: 품목당 5,000원부터
+  pickup: 신고일 기준 일주일 이내
+notes: 배출 시간이 밤 10시까지로 다른 구역보다 짧다

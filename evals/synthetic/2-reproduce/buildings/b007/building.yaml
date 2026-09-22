@@ -1,0 +1,56 @@
+building_id: 7
+building_code: b007
+zone_id: Z3
+building_name: 솔담하우스
+building_type: 다가구주택
+built_year: 2005
+room_count: 26
+room_no_format: "7NN"
+manager:
+  resident: true
+  contact_hours: 평일 09:00~15:00
+
+specifics:
+  parking: 대문 옆 선착순 9면, 소형차 우선
+  monthly_fee: 정액 월 40,000원
+  fee_includes: [공용전기, 수도]
+  laundry: 옥상 세탁실 (세탁기 1), 07:00~20:00
+  parcel: 1층 관리인 수령대
+  entrance: 열쇠 출입, 밤 11시 잠금
+  elevator: false
+  heating: 개별 도시가스 보일러
+
+documents:
+  - file: documents/rule-001-생활수칙.md
+    document_title: 생활수칙 안내
+    doc_type: rule
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-001-분리배출안내.md
+    document_title: 분리배출 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [INDEX_ZONE_SHARED]
+    scope: zone
+  - file: documents/facility-001-공용시설안내.md
+    document_title: 공용시설 안내
+    doc_type: facility
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: []
+    scope: building
+  - file: documents/notice-002-정기안내.md
+    document_title: 정기 안내
+    doc_type: notice
+    version: 1
+    is_valid: true
+    file_type: PDF
+    intent: [CHUNK_TOO_SHORT]
+    scope: building
+    note: 본문 400자 미만의 짧은 공지
