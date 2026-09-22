@@ -144,6 +144,12 @@ def test_converse_maps_llm_error_to_api_response(
         lambda: _FakeGraph(error),
         raising=False,
     )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+        raising=False,
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
 
@@ -373,6 +379,12 @@ def test_converse_returns_generic_error_for_unexpected_exception(monkeypatch):
         graph_module,
         "classify_intent",
         lambda _: (_ for _ in ()).throw(RuntimeError("completely unexpected bug")),
+    )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+        raising=False,
     )
 
     response = TestClient(app, raise_server_exceptions=False).post(

@@ -92,7 +92,7 @@ def test_job_status_lookup_is_gone() -> None:
 def test_building_id_is_the_only_always_required_field() -> None:
     status_code, _ = post("/api/v3/ai/indexing/jobs", {"doc_id": "d"})
 
-    assert status_code == 422
+    assert status_code == 400
 
 
 @pytest.mark.parametrize("missing", ["doc_id", "title", "file_key"])
