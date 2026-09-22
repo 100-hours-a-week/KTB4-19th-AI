@@ -1,0 +1,244 @@
+name: AI CI
+
+# PR에서는 변경된 서비스만 Test·Docker Build로 검증한다.
+# main 병합 후에는 변경된 서비스 Image만 ECR에 Commit SHA 앞 7자리 Tag로 Push한다.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com
+
+# 같은 PR에 새 Commit이 올라오면 이전 검증은 취소한다.
+# main Image Push는 각 Commit Image를 남겨야 하므로 취소하지 않는다.
+concurrency:
+  group: ai-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Changed service 확인
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      embedding: ${{ steps.filter.outputs.embedding }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 모노레포에서 실제 변경된 서비스만 Build·Push 대상으로 고른다.
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'ai/**'
+              - '.dockerignore'
+              - '.github/workflows/ai-ci.yml'
+            embedding:
+              - 'embedding/**'
+              - '.github/workflows/ai-ci.yml'
+
+  validate-api:
+    name: AI API Test and Docker Build
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv cache
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai/uv.lock
+
+      - name: Run AI API tests
+        run: |
+          uv sync --frozen --all-groups
+          uv run pytest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # API Dockerfile은 ai/에 있지만 Build Context는 Repository Root여야 한다.
+      - name: Build AI API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ai/Dockerfile
+          push: false
+          tags: zipsai-ai-api:validation
+          cache-from: type=gha,scope=ai-api
+          cache-to: type=gha,mode=max,scope=ai-api
+
+  validate-embedding:
+    name: Embedding Test and Docker Build
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.embedding == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: embedding
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv cache
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: embedding/uv.lock
+
+      - name: Run Embedding tests
+        run: |
+          uv sync --frozen --all-groups
+          uv run pytest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Embedding image
+        uses: docker/build-push-action@v6
+        with:
+          context: embedding
+          push: false
+          tags: zipsai-embedding:validation
+          cache-from: type=gha,scope=embedding
+          cache-to: type=gha,mode=max,scope=embedding
+
+  publish-api:
+    name: AI API ECR Push
+    needs: changes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_AI_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set short ECR image tag
+        id: image-tag
+        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Immutable Repository에서 같은 Commit CI를 다시 실행해도 실패하지 않도록 한다.
+      - name: Check existing AI API image
+        id: image-exists
+        env:
+          IMAGE_TAG: ${{ steps.image-tag.outputs.value }}
+        run: |
+          if aws ecr describe-images \
+            --repository-name zipsai-ai-api \
+            --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.image-exists.outputs.push == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        if: steps.image-exists.outputs.push == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push AI API image
+        if: steps.image-exists.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ai/Dockerfile
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/zipsai-ai-api:${{ steps.image-tag.outputs.value }}
+          cache-from: type=gha,scope=ai-api
+          cache-to: type=gha,mode=max,scope=ai-api
+
+  publish-embedding:
+    name: Embedding ECR Push
+    needs: changes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.embedding == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_AI_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set short ECR image tag
+        id: image-tag
+        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Immutable Repository에서 같은 Commit CI를 다시 실행해도 실패하지 않도록 한다.
+      - name: Check existing Embedding image
+        id: image-exists
+        env:
+          IMAGE_TAG: ${{ steps.image-tag.outputs.value }}
+        run: |
+          if aws ecr describe-images \
+            --repository-name zipsai-embedding \
+            --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.image-exists.outputs.push == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        if: steps.image-exists.outputs.push == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Embedding image
+        if: steps.image-exists.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: embedding
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/zipsai-embedding:${{ steps.image-tag.outputs.value }}
+          cache-from: type=gha,scope=embedding
+          cache-to: type=gha,mode=max,scope=embedding
