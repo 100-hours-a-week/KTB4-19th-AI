@@ -1,7 +1,7 @@
 import pytest
 
 import zipsai.complaint.node as node_module
-from zipsai.complaint.node import extract_complaint_fields
+from zipsai.complaint.node import extract_complaint_fields, handle_complaint
 from zipsai.contracts.converse import ComplaintDraft, ConverseRequest
 from zipsai.errors import ComplaintExtractionError
 
@@ -81,3 +81,28 @@ def test_extract_complaint_fields_raises_on_invalid_issue_type(
 
     with pytest.raises(ComplaintExtractionError):
         extract_complaint_fields(_make_request("아무 말"))
+
+
+def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("화장실로 정정할게요.")
+    request.complaint_draft = ComplaintDraft(
+        issue_type="water_supply",
+        location="주방",
+        symptom="온수가 나오지 않음",
+    )
+    monkeypatch.setattr(
+        node_module,
+        "extract_complaint_fields",
+        lambda _: ComplaintDraft(location="화장실"),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft == ComplaintDraft(
+        issue_type="water_supply",
+        location="화장실",
+        symptom="온수가 나오지 않음",
+    )
+    assert result.missing_fields == []

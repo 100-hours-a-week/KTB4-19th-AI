@@ -105,7 +105,7 @@ class Citation(BaseModel):
 
 
 class RouteResult(BaseModel):
-    draft_patch: ComplaintDraft | None = None
+    complaint_draft: ComplaintDraft | None = None
     qa_card_draft: QaCardDraft | None = None
     missing_fields: list[MissingField] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)

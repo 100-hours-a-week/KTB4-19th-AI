@@ -34,8 +34,21 @@ def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
         ) from error
 
 
+def _merge_complaint_draft(
+    current: ComplaintDraft | None, extracted: ComplaintDraft
+) -> ComplaintDraft:
+    updates = {
+        field: getattr(extracted, field)
+        for field in ("issue_type", "location", "symptom")
+        if getattr(extracted, field) is not None
+    }
+    return (current or ComplaintDraft()).model_copy(update=updates)
+
+
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
-    draft = request.complaint_draft
+    draft = _merge_complaint_draft(
+        request.complaint_draft, extract_complaint_fields(request)
+    )
     missing_fields = [
         field
         for field in ("location", "symptom")
@@ -48,5 +61,5 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     return {
         "complaint_state": ComplaintState.COLLECTING,
         "reply": reply,
-        "result": RouteResult(missing_fields=missing_fields),
+        "result": RouteResult(complaint_draft=draft, missing_fields=missing_fields),
     }

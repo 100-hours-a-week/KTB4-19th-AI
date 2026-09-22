@@ -2,8 +2,9 @@ from langchain_core.prompts import ChatPromptTemplate
 
 COMPLAINT_SYSTEM_PROMPT = (
     "You extract facility-complaint details from a resident's CURRENT turn in a residential-building "
-    "assistant. Extract ONLY information stated in the current message — do not repeat, infer, or carry "
-    "over values from the existing draft or conversation history; those are merged separately.\n\n"
+    "assistant. Use the existing draft and conversation history only to interpret a correction in the "
+    "current message. Extract ONLY values explicitly stated or corrected in the current message; do not "
+    "repeat unchanged values. Those are merged separately.\n\n"
     "issue_type taxonomy (pick exactly one, or null if the current turn doesn't clearly indicate one):\n"
     "- water_supply: water supply is missing or insufficient (no water, low pressure, no hot water).\n"
     "- drain: drainage is blocked or malfunctioning (clogged drain, backflow, sewage smell).\n"
