@@ -139,7 +139,7 @@ jobs:
               | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
             compose() {
-              sudo docker compose --profile ai --env-file "$APP_DIR/.env" -f "$APP_DIR/compose.yaml" "$@"
+              sudo docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/compose.yaml" "$@"
             }
 
             if [ "$API_REQUESTED" = true ] && [ "$EMBEDDING_REQUESTED" = true ]; then
@@ -193,7 +193,9 @@ jobs:
 
           if ! aws ssm wait command-executed \
             --command-id "$command_id" \
-            --instance-id "$INSTANCE_ID"; then
+            --instance-id "$INSTANCE_ID" \
+            --cli-waiter-delay 5 \
+            --cli-waiter-max-attempts 180; then
             aws ssm get-command-invocation \
               --command-id "$command_id" \
               --instance-id "$INSTANCE_ID" \
