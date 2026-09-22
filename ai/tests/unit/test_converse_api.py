@@ -342,7 +342,7 @@ def test_converse_returns_standard_error_for_contract_violation():
     assert response.json() == {
         "message": "ai_response_error",
         "error": {
-            "code": "VALIDATION_FAILED",
+            "code": "VALIDATION_ERROR",
             "detail": "Request validation failed",
             "retryable": False,
         },

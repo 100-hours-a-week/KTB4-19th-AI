@@ -90,7 +90,7 @@ async def request_validation_error_handler(
     trace_id = body.get("trace_id") if isinstance(body, dict) else None
     return error_response(
         status_code=400 if bad_request else 422,
-        code="MISSING_REQUIRED_FIELD" if bad_request else "VALIDATION_FAILED",
+        code="MISSING_REQUIRED_FIELD" if bad_request else "VALIDATION_ERROR",
         detail="Request validation failed",
         trace_id=trace_id if isinstance(trace_id, str) else None,
         retryable=False,
