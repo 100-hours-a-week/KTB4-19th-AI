@@ -93,35 +93,95 @@ jobs:
 
           # GitHub는 SSM으로 배포 명령만 전달한다.
           # ECR Login과 Docker Compose 실행은 EC2 Instance Role 및 EC2 내부에서 수행한다.
+          # 긴 Shell 명령을 jq 문자열로 조립하면 따옴표가 충돌할 수 있다.
+          # 배포 스크립트를 만들고 Base64 한 줄 명령으로 SSM에 전달한다.
+          {
+            printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+            printf 'APP_DIR=%q\n' "$APP_DIR"
+            printf 'AWS_REGION=%q\n' "$AWS_REGION"
+            printf 'ECR_REGISTRY=%q\n' "$ECR_REGISTRY"
+            printf 'API_TAG=%q\n' "$API_TAG"
+            printf 'EMBEDDING_TAG=%q\n' "$EMBEDDING_TAG"
+            printf 'API_REQUESTED=%q\n' "$API_REQUESTED"
+            printf 'EMBEDDING_REQUESTED=%q\n' "$EMBEDDING_REQUESTED"
+            cat <<'REMOTE_SCRIPT'
+            sudo test -f "$APP_DIR/.env"
+
+            current_api="$(sudo sed -n 's/^AI_API_IMAGE_TAG=//p' "$APP_DIR/.env" | tail -n 1 || true)"
+            current_embedding="$(sudo sed -n 's/^EMBEDDING_IMAGE_TAG=//p' "$APP_DIR/.env" | tail -n 1 || true)"
+
+            target_api="$API_TAG"
+            [ -n "$target_api" ] || target_api="$current_api"
+            target_embedding="$EMBEDDING_TAG"
+            [ -n "$target_embedding" ] || target_embedding="$current_embedding"
+
+            if [ -z "$target_api" ] || [ -z "$target_embedding" ]; then
+              echo "최초 AI 배포에서는 AI API와 Embedding Commit SHA를 모두 입력해야 합니다." >&2
+              exit 1
+            fi
+
+            set_env() {
+              key="$1"
+              value="$2"
+              if sudo grep -q "^${key}=" "$APP_DIR/.env"; then
+                sudo sed -i "s|^${key}=.*|${key}=${value}|" "$APP_DIR/.env"
+              else
+                printf '%s=%s\n' "$key" "$value" | sudo tee -a "$APP_DIR/.env" > /dev/null
+              fi
+            }
+
+            set_env AI_API_IMAGE_TAG "$target_api"
+            set_env EMBEDDING_IMAGE_TAG "$target_embedding"
+            sudo chown root:root "$APP_DIR/.env"
+            sudo chmod 600 "$APP_DIR/.env"
+
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+            compose() {
+              sudo docker compose --profile ai --env-file "$APP_DIR/.env" -f "$APP_DIR/compose.yaml" "$@"
+            }
+
+            if [ "$API_REQUESTED" = true ] && [ "$EMBEDDING_REQUESTED" = true ]; then
+              compose pull ai-api embedding
+              compose up -d qdrant embedding ai-api
+            elif [ "$API_REQUESTED" = true ]; then
+              compose pull ai-api
+              compose up -d --no-deps ai-api
+            else
+              compose pull embedding
+              compose up -d --no-deps embedding
+            fi
+
+            wait_healthy() {
+              service="$1"
+              for _ in $(seq 1 36); do
+                container_id="$(compose ps -q "$service")"
+                if [ -n "$container_id" ]; then
+                  status="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
+                  echo "$service: $status"
+                  [ "$status" = healthy ] && return 0
+                fi
+                sleep 5
+              done
+              echo "$service Health Check timed out." >&2
+              return 1
+            }
+
+            if [ "$API_REQUESTED" = true ]; then
+              wait_healthy ai-api
+            fi
+
+            if [ "$EMBEDDING_REQUESTED" = true ]; then
+              wait_healthy embedding
+            fi
+          REMOTE_SCRIPT
+          } > remote-deploy.sh
+
+          encoded_script="$(base64 < remote-deploy.sh | tr -d '\n')"
           jq -n \
-            --arg app_dir "$APP_DIR" \
-            --arg aws_region "$AWS_REGION" \
-            --arg ecr_registry "$ECR_REGISTRY" \
-            --arg api_tag "$API_TAG" \
-            --arg embedding_tag "$EMBEDDING_TAG" \
-            --arg api_requested "$API_REQUESTED" \
-            --arg embedding_requested "$EMBEDDING_REQUESTED" \
-            '{
-              commands: [
-                "set -euo pipefail",
-                ("sudo test -f " + $app_dir + "/.env"),
-                ("current_api=$(sudo sed -n \\"s/^AI_API_IMAGE_TAG=//p\\" " + $app_dir + "/.env | tail -n 1 || true)"),
-                ("current_embedding=$(sudo sed -n \\"s/^EMBEDDING_IMAGE_TAG=//p\\" " + $app_dir + "/.env | tail -n 1 || true)"),
-                ("target_api=\\\"" + $api_tag + "\\\"; [ -n \\"$target_api\\" ] || target_api=\\\"$current_api\\\""),
-                ("target_embedding=\\\"" + $embedding_tag + "\\\"; [ -n \\"$target_embedding\\" ] || target_embedding=\\\"$current_embedding\\\""),
-                "if [ -z \\"$target_api\\" ] || [ -z \\"$target_embedding\\" ]; then echo \\"최초 AI 배포에서는 AI API와 Embedding Commit SHA를 모두 입력해야 합니다.\\" >&2; exit 1; fi",
-                ("set_env() { key=\\\"$1\\\"; value=\\\"$2\\\"; if sudo grep -q \\"^${key}=\\" " + $app_dir + "/.env; then sudo sed -i \\"s|^${key}=.*|${key}=${value}|\\" " + $app_dir + "/.env; else printf \\"%s=%s\\\\n\\" \\"$key\\" \\"$value\\" | sudo tee -a " + $app_dir + "/.env > /dev/null; fi; }"),
-                "set_env AI_API_IMAGE_TAG \\"$target_api\\"",
-                "set_env EMBEDDING_IMAGE_TAG \\"$target_embedding\\"",
-                ("sudo chown root:root " + $app_dir + "/.env && sudo chmod 600 " + $app_dir + "/.env"),
-                ("aws ecr get-login-password --region " + $aws_region + " | sudo docker login --username AWS --password-stdin " + $ecr_registry),
-                ("compose() { sudo docker compose --profile ai --env-file " + $app_dir + "/.env -f " + $app_dir + "/compose.yaml \\"$@\\"; }"),
-                ("if [ \\"" + $api_requested + "\\" = true ] && [ \\"" + $embedding_requested + "\\" = true ]; then compose pull ai-api embedding; compose up -d qdrant embedding ai-api; elif [ \\"" + $api_requested + "\\" = true ]; then compose pull ai-api; compose up -d --no-deps ai-api; else compose pull embedding; compose up -d --no-deps embedding; fi"),
-                ("wait_healthy() { service=\\\"$1\\\"; for _ in $(seq 1 36); do container_id=$(compose ps -q \\"$service\\"); if [ -n \\"$container_id\\" ]; then status=$(sudo docker inspect --format '\''{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}'\'' \\"$container_id\\"); echo \\"$service: $status\\"; [ \\"$status\\" = healthy ] && return 0; fi; sleep 5; done; echo \\"$service Health Check timed out.\\" >&2; return 1; }"),
-                ("if [ \\"" + $api_requested + "\\" = true ]; then wait_healthy ai-api; fi"),
-                ("if [ \\"" + $embedding_requested + "\\" = true ]; then wait_healthy embedding; fi")
-              ]
-            }' > ssm-parameters.json
+            --arg command "echo '$encoded_script' | base64 --decode | bash" \
+            '{commands: [$command]}' > ssm-parameters.json
 
           command_id="$(aws ssm send-command \
             --document-name AWS-RunShellScript \
