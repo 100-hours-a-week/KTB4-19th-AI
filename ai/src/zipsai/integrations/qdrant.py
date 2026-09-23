@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from qdrant_client import QdrantClient, models
 
 from zipsai.settings import (
@@ -22,10 +24,25 @@ def create_client(url: str | None = None) -> QdrantClient:
     return QdrantClient(url=target, api_key=QDRANT_API_KEY)
 
 
+@lru_cache(maxsize=1)
+def get_client() -> QdrantClient:
+    # 첫 요청이 들어올 때 만든다. 임포트 시점에 Qdrant로 붙지 않는다.
+    return create_client()
+
+
 def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:
     return models.SparseVector(
         indices=[int(index) for index in weights],
         values=list(weights.values()),
+    )
+
+
+def building_condition(building_id: int) -> models.FieldCondition:
+    # is_tenant 키워드 인덱스에 맞추기 위해 문자열로 저장하고 문자열로 찾는다.
+    # int로 넘기면 예외 없이 0건이 나온다.
+    return models.FieldCondition(
+        key="building_id",
+        match=models.MatchValue(value=str(building_id)),
     )
 
 

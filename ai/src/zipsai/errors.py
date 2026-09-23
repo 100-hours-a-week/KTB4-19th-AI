@@ -12,7 +12,12 @@ class DocumentFetchError(ValueError):
 
 class EmptyDocumentError(ValueError):
     pass
-  
+
+
+class VectorStoreError(RuntimeError):
+    """Raised when the vector store cannot serve a request."""
+
+
 class IntentClassificationError(ValueError):
     """Raised when the LLM returns an unsupported intent route."""
 
