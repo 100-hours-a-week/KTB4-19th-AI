@@ -12,6 +12,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.errors import (
+    ComplaintExtractionError,
     IntentClassificationError,
     LlmRateLimitedError,
     LlmTimeoutError,
@@ -56,6 +57,7 @@ def converse(
         LlmUpstreamError,
         LlmUnavailableError,
         IntentClassificationError,
+        ComplaintExtractionError,
     ) as error:
         return agent_error_response(error, request.trace_id)
 

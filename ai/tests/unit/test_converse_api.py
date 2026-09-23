@@ -6,6 +6,7 @@ import zipsai.complaint.node as complaint_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
+    ComplaintExtractionError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -130,6 +131,16 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
                 "retryable": True,
             },
             id="upstream",
+        ),
+        pytest.param(
+            ComplaintExtractionError("LLM returned an invalid complaint draft"),
+            502,
+            {
+                "code": "MODEL_UPSTREAM_ERROR",
+                "detail": "AI model returned an invalid complaint draft",
+                "retryable": True,
+            },
+            id="complaint-extraction",
         ),
     ],
 )

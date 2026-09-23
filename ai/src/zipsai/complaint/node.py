@@ -22,8 +22,10 @@ from zipsai.errors import (
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
 
-
 _KST = ZoneInfo("Asia/Seoul")
+# 일시적인 JSON/스키마 오류만 한 번 더 시도한다. rate limit·timeout 등 LLM 레벨 오류는
+# generate_text가 별도 예외로 던지므로 여기서 재시도하지 않고 API 계층까지 그대로 올려보낸다.
+_EXTRACTION_ATTEMPTS = 2
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
@@ -41,28 +43,37 @@ def _extract_complaint_fields_and_reply(
         message_text=request.message.text,
     )
 
-    raw = generate_text(system_message.content, user_message.content)
-    try:
-        data = json.loads(strip_json_code_fence(raw))
-    except json.JSONDecodeError as error:
-        raise ComplaintExtractionError("LLM returned invalid JSON") from error
+    last_error: Exception | None = None
+    for _attempt in range(_EXTRACTION_ATTEMPTS):
+        raw = generate_text(system_message.content, user_message.content)
+        try:
+            data = json.loads(strip_json_code_fence(raw))
+        except json.JSONDecodeError as error:
+            last_error = error
+            continue
 
-    reply = data.pop("reply", "")
-    if not isinstance(reply, str):
-        reply = ""
+        reply = data.pop("reply", "")
+        if not isinstance(reply, str):
+            reply = ""
 
-    llm_missing = data.pop("missing", [])
-    if not isinstance(llm_missing, list):
-        llm_missing = []
-    llm_missing = {field for field in llm_missing if field in ("location", "symptom")}
+        llm_missing = data.pop("missing", [])
+        if not isinstance(llm_missing, list):
+            llm_missing = []
+        llm_missing = {
+            field for field in llm_missing if field in ("location", "symptom")
+        }
 
-    try:
-        draft = ComplaintDraft(**data)
-    except ValidationError as error:
-        raise ComplaintExtractionError(
-            "LLM returned an invalid complaint draft"
-        ) from error
-    return draft, reply.strip(), llm_missing
+        try:
+            draft = ComplaintDraft(**data)
+        except ValidationError as error:
+            last_error = error
+            continue
+
+        return draft, reply.strip(), llm_missing
+
+    raise ComplaintExtractionError(
+        "LLM returned an invalid complaint draft after retry"
+    ) from last_error
 
 
 def _merge_complaint_draft(

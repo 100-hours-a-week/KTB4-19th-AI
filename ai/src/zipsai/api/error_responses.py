@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from zipsai.errors import (
+    ComplaintExtractionError,
     IntentClassificationError,
     LlmRateLimitedError,
     LlmTimeoutError,
@@ -39,6 +40,11 @@ _AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str, str]] = {
         502,
         "MODEL_UPSTREAM_ERROR",
         "AI model returned an unsupported route",
+    ),
+    ComplaintExtractionError: (
+        502,
+        "MODEL_UPSTREAM_ERROR",
+        "AI model returned an invalid complaint draft",
     ),
 }
 

@@ -122,6 +122,44 @@ def test_extract_complaint_fields_raises_on_invalid_issue_type(
         extract_complaint_fields(_make_request("아무 말"))
 
 
+def test_extract_complaint_fields_retries_once_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[int] = []
+
+    def flaky_generate_text(system_prompt: str, user_prompt: str) -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            return "not json"
+        return '{"issue_type": "leak", "location": "화장실", "symptom": "물이 새요"}'
+
+    monkeypatch.setattr(node_module, "generate_text", flaky_generate_text)
+
+    result = extract_complaint_fields(_make_request("화장실에서 물이 새요"))
+
+    assert len(calls) == 2
+    assert result == ComplaintDraft(
+        issue_type="leak", location="화장실", symptom="물이 새요"
+    )
+
+
+def test_extract_complaint_fields_gives_up_after_exhausting_retries(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[int] = []
+
+    def always_broken(system_prompt: str, user_prompt: str) -> str:
+        calls.append(1)
+        return "not json"
+
+    monkeypatch.setattr(node_module, "generate_text", always_broken)
+
+    with pytest.raises(ComplaintExtractionError):
+        extract_complaint_fields(_make_request("아무 말"))
+
+    assert len(calls) == node_module._EXTRACTION_ATTEMPTS
+
+
 def test_extract_complaint_fields_parses_occurred_at(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         node_module,
