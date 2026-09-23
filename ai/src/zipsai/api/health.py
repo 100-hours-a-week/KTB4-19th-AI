@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 
 import httpx
@@ -8,6 +9,7 @@ from zipsai.errors import LlmUnavailableError
 from zipsai.integrations.qdrant import create_client
 from zipsai.settings import EMBEDDING_API_URL, get_settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PROMPT_VERSION = "v1.2"
@@ -24,6 +26,7 @@ def _vector_store_ready() -> bool:
         _qdrant_client().get_collections()
         return True
     except Exception:
+        logger.exception("health_check_vector_store_failed")
         return False
 
 
@@ -54,6 +57,4 @@ def health() -> dict[str, object] | JSONResponse:
     }
     if vector_store_ready and models_ready:
         return {"message": "ok", "data": data}
-    return JSONResponse(
-        status_code=503, content={"message": "not_ready", "data": data}
-    )
+    return JSONResponse(status_code=503, content={"message": "not_ready", "data": data})

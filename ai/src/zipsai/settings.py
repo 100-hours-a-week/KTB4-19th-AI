@@ -21,6 +21,11 @@ AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
 # 인증을 켜지 않은 Qdrant에는 키가 없다. 필수로 두면 로컬과 테스트가 기동하지 못한다.
 QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
 
+# LLM_MODEL과 달리 없어도 기동은 된다. 민원 이미지 분석만 이 값을 쓴다.
+# compose가 빈 문자열로 넘길 수 있다. getenv의 기본값은 "키가 아예 없을 때"만
+# 쓰이므로 빈 문자열이 그대로 모델명이 된다. or로 막는다.
+VLM_MODEL: Final = os.getenv("VLM_MODEL") or "z-ai/glm-5.3-flash"
+
 REQUIRED_SETTINGS: Final = ("QDRANT_URL", "S3_BUCKET")
 
 
@@ -38,7 +43,7 @@ class Settings:
     llm_base_url: str | None
     llm_model: str
     llm_timeout_seconds: float
-    vlm_model: str = "z-ai/glm-5.3-flash"
+    vlm_model: str = VLM_MODEL
 
 
 @lru_cache
@@ -57,5 +62,4 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL"),
         llm_model=model,
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
-        vlm_model=os.getenv("VLM_MODEL", "z-ai/glm-5.3-flash"),
     )
