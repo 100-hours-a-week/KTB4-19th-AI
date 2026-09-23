@@ -1,4 +1,3 @@
-# ci: trigger check
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
