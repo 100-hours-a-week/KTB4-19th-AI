@@ -27,6 +27,15 @@ def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:
     )
 
 
+def building_condition(building_id: int) -> models.FieldCondition:
+    # is_tenant 키워드 인덱스에 맞추기 위해 문자열로 저장하고 문자열로 찾는다.
+    # int로 넘기면 예외 없이 0건이 나온다.
+    return models.FieldCondition(
+        key="building_id",
+        match=models.MatchValue(value=str(building_id)),
+    )
+
+
 def ensure_collection(
     client: QdrantClient, collection: str = QDRANT_COLLECTION
 ) -> None:
