@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from qdrant_client import QdrantClient, models
 
 from zipsai.settings import (
@@ -18,6 +20,12 @@ def create_client(url: str | None = None) -> QdrantClient:
     if target == ":memory:":
         return QdrantClient(":memory:")
     return QdrantClient(url=target)
+
+
+@lru_cache(maxsize=1)
+def get_client() -> QdrantClient:
+    # 첫 요청이 들어올 때 만든다. 임포트 시점에 Qdrant로 붙지 않는다.
+    return create_client()
 
 
 def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:

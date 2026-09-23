@@ -1,7 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
+from qdrant_client import models
 
 import zipsai.api.converse as converse_module
+import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
@@ -11,7 +13,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.main import app
-from zipsai.settings import Settings
+from zipsai.settings import EMBEDDING_DIM, Settings
 
 
 class _FakeGraph:
@@ -259,7 +261,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     }
 
 
-def test_converse_returns_baseline_reply_for_knowledge(monkeypatch):
+def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
@@ -270,14 +272,36 @@ def test_converse_returns_baseline_reply_for_knowledge(monkeypatch):
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
     )
+    monkeypatch.setattr(knowledge_node, "get_client", lambda: object())
+    monkeypatch.setattr(knowledge_node, "query_encoder", lambda: object())
+    monkeypatch.setattr(
+        knowledge_node,
+        "encode_question",
+        lambda _question, *, encoder: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
+    )
+    monkeypatch.setattr(
+        knowledge_node,
+        "search_chunks",
+        lambda *_args, **_kwargs: [
+            models.ScoredPoint(
+                id=1,
+                version=0,
+                score=0.9,
+                payload={"title": "세탁실 이용", "text": "세탁실은 22시까지입니다."},
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        knowledge_node,
+        "generate_text",
+        lambda **_kwargs: "22시까지 이용할 수 있습니다.",
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
 
     assert response.status_code == 200
     assert response.json()["data"]["route"] == "knowledge"
-    assert response.json()["data"]["reply"] == (
-        "현재 건물 문서 검색 기능을 준비 중입니다."
-    )
+    assert response.json()["data"]["reply"] == "22시까지 이용할 수 있습니다."
 
 
 def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_progress(
