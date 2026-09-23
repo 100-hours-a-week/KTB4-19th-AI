@@ -36,3 +36,19 @@ COMPLAINT_PROMPT = ChatPromptTemplate.from_messages(
         ("user", COMPLAINT_USER_TEMPLATE),
     ]
 )
+
+VLM_ANALYSIS_PROMPT = (
+    "You are inspecting a resident-submitted photo of a residential facility issue "
+    "(plumbing, electrical, appliance, structural).\n\n"
+    "Output raw JSON only. Do NOT wrap the output in markdown, code fences, or backticks. "
+    "Do NOT add any text before or after the JSON object.\n\n"
+    "Schema (exact keys, no extras):\n"
+    '{"images":[{"summary":"string or null","ocr_text":"string or null"}]}\n\n'
+    "Rules:\n"
+    "- One object per image, in the exact order the images were given.\n"
+    "- summary: 한글 1~2문장. 기기 종류, 에러/이상 여부, 화면·표시등에 보이는 핵심 수치만 담는다. "
+    "부가 설명이나 나열식 서술은 넣지 않는다.\n"
+    "- ocr_text: 이미지에 보이는 텍스트를 그대로 옮긴다. 보이지 않으면 null.\n"
+    "- Use JSON null when an observation is unavailable.\n"
+    "- Do not infer or guess anything that is not visible in the image."
+)

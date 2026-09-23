@@ -21,6 +21,10 @@ class ComplaintExtractionError(ValueError):
     """Raised when the LLM returns an unparseable or invalid complaint draft."""
 
 
+class ImageAnalysisError(ValueError):
+    """Raised when the VLM returns an unparseable or invalid image analysis."""
+
+
 class LlmUnavailableError(RuntimeError):
     """Raised when an LLM request cannot be completed."""
 

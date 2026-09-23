@@ -1,8 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 
 class Route(str, Enum):
@@ -23,6 +24,19 @@ def _require_complaint_state_only_for_complaint_route(
     if route is not Route.COMPLAINT and complaint_state is not None:
         raise ValueError(f"{field_name} requires route=complaint")
 
+
+_ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+
+
+def _check_image_extensions(urls: list[str]) -> list[str]:
+    for url in urls:
+        extension = urlparse(url).path.rsplit(".", 1)[-1].lower()
+        if extension not in _ALLOWED_IMAGE_EXTENSIONS:
+            raise ValueError(f"Unsupported image extension: {url}")
+    return urls
+
+
+ImageUrls = Annotated[list[str], AfterValidator(_check_image_extensions)]
 
 IssueType = Literal[
     "water_supply",
@@ -48,19 +62,29 @@ class ComplaintDraft(BaseModel):
     image_urls: list[str] = Field(default_factory=list)
 
 
+class ImageObservation(BaseModel):
+    url: str
+    summary: str | None
+    ocr_text: str | None
+
+
+class ImageAnalysis(BaseModel):
+    images: list[ImageObservation]
+
+
 class IncomingMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message_id: str
     text: str | None
-    image_urls: list[str]
+    image_urls: ImageUrls
 
 
 class HistoryTurn(BaseModel):
     message_id: str
     role: Literal["user", "assistant"]
     text: str | None
-    image_urls: list[str]
+    image_urls: ImageUrls
 
 
 class ConverseRequest(BaseModel):
@@ -110,7 +134,7 @@ class RouteResult(BaseModel):
     missing_fields: list[MissingField] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     has_sufficient_evidence: bool | None = None
-    image_analysis: dict[str, Any] | None = None
+    image_analysis: ImageAnalysis | None = None
 
 
 class ConverseData(BaseModel):
