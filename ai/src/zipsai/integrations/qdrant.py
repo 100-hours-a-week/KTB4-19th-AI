@@ -2,6 +2,7 @@ from qdrant_client import QdrantClient, models
 
 from zipsai.settings import (
     EMBEDDING_DIM,
+    QDRANT_API_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
 )
@@ -17,7 +18,8 @@ def create_client(url: str | None = None) -> QdrantClient:
     # ":memory:"는 서버가 아니라 프로세스 안의 임시 저장소다. 테스트만 이 값을 넘긴다.
     if target == ":memory:":
         return QdrantClient(":memory:")
-    return QdrantClient(url=target)
+    # 인증을 켜지 않은 Qdrant면 키가 None이고, 그때는 헤더 없이 붙는다.
+    return QdrantClient(url=target, api_key=QDRANT_API_KEY)
 
 
 def to_sparse_vector(weights: dict[str, float]) -> models.SparseVector:
