@@ -171,7 +171,9 @@ def test_extract_complaint_fields_parses_occurred_at(monkeypatch: pytest.MonkeyP
 
     result = extract_complaint_fields(_make_request("어제부터 그랬어요"))
 
-    assert result.occurred_at == datetime(2026, 9, 22)
+    # ComplaintDraft.occurred_at은 naive datetime이다(LLM이 "2026-09-22" 날짜만 준다).
+    # tzinfo를 붙이면 실제 파싱 결과와 달라져 비교가 깨진다.
+    assert result.occurred_at == datetime(2026, 9, 22)  # noqa: DTZ001
 
 
 def test_extract_complaint_fields_passes_todays_kst_date_to_prompt(
@@ -579,7 +581,7 @@ def test_handle_complaint_merges_occurred_at_without_erasing_existing_value(
         issue_type="water_supply",
         location="주방",
         symptom="온수가 나오지 않음",
-        occurred_at=datetime(2026, 9, 20),
+        occurred_at=datetime(2026, 9, 20),  # noqa: DTZ001
     )
     monkeypatch.setattr(
         node_module,
@@ -589,4 +591,4 @@ def test_handle_complaint_merges_occurred_at_without_erasing_existing_value(
 
     result = handle_complaint(request)["result"]
 
-    assert result.complaint_draft.occurred_at == datetime(2026, 9, 20)
+    assert result.complaint_draft.occurred_at == datetime(2026, 9, 20)  # noqa: DTZ001

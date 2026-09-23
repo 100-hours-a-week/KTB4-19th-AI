@@ -26,12 +26,12 @@ COMPLAINT_SYSTEM_PROMPT = (
     "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
     "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
     "date and omit finer precision. null if not stated in this turn.\n"
-    "- missing: an array listing which of \"location\"/\"symptom\" are still unknown overall — look "
+    '- missing: an array listing which of "location"/"symptom" are still unknown overall — look '
     "at the EXISTING draft below together with what you just extracted this turn, not just this "
-    "turn's message. Empty array if both are known. Only \"location\" and/or \"symptom\" are valid "
+    'turn\'s message. Empty array if both are known. Only "location" and/or "symptom" are valid '
     "entries; never include issue_type or occurred_at.\n"
     "- reply: a short, natural Korean follow-up question for the resident, asking ONLY about the "
-    "field(s) listed in `missing`. Empty string \"\" if `missing` is empty. One short, friendly "
+    'field(s) listed in `missing`. Empty string "" if `missing` is empty. One short, friendly '
     "sentence, no lists. Never ask about issue_type or occurred_at.\n\n"
     "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"

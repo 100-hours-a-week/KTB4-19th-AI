@@ -18,6 +18,8 @@ S3_BUCKET: Final = os.getenv("S3_BUCKET")
 QDRANT_COLLECTION: Final = os.getenv("QDRANT_COLLECTION", "documents")
 EMBEDDING_API_URL: Final = os.getenv("EMBEDDING_API_URL", "http://embedding:8000")
 AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
+# 인증을 켜지 않은 Qdrant에는 키가 없다. 필수로 두면 로컬과 테스트가 기동하지 못한다.
+QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
 
 REQUIRED_SETTINGS: Final = ("QDRANT_URL", "S3_BUCKET")
 

@@ -32,8 +32,10 @@ class HttpEncoder:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         transport: httpx.BaseTransport | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
+        attempts: int = ATTEMPTS,
     ) -> None:
         self._retry_delay = retry_delay
+        self._attempts = attempts
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -53,7 +55,7 @@ class HttpEncoder:
 
     def _post_with_retry(self, texts: list[str]) -> dict:
         last: httpx.HTTPError | None = None
-        for attempt in range(ATTEMPTS):
+        for attempt in range(self._attempts):
             try:
                 response = self._client.post("/embed", json={"texts": texts})
                 response.raise_for_status()
@@ -62,10 +64,10 @@ class HttpEncoder:
                 if not _is_transient(exc):
                     raise EmbeddingError(f"Embedding request failed: {exc}") from exc
                 last = exc
-                if attempt + 1 < ATTEMPTS:
+                if attempt + 1 < self._attempts:
                     time.sleep(self._retry_delay)
         raise EmbeddingError(
-            f"Embedding request failed after {ATTEMPTS} attempts: {last}"
+            f"Embedding request failed after {self._attempts} attempts: {last}"
         ) from last
 
     def _encode_batch(self, texts: list[str]) -> EncodeOutput:

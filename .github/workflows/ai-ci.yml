@@ -39,6 +39,9 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          # AI Repository의 기본 Branch가 dev여도, main Push는 이전 main Commit과 비교한다.
+          # Pull Request Event에서는 이 값이 무시되고 PR의 대상 Branch 기준으로 비교된다.
+          base: main
           filters: |
             api:
               - 'ai/**'
