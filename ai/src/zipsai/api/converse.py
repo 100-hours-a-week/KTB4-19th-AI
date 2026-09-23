@@ -12,11 +12,13 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.errors import (
+    EmbeddingError,
     IntentClassificationError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
     LlmUpstreamError,
+    VectorStoreError,
 )
 from zipsai.orchestration.graph import build_graph
 from zipsai.settings import get_settings
@@ -56,6 +58,8 @@ def converse(
         LlmUpstreamError,
         LlmUnavailableError,
         IntentClassificationError,
+        EmbeddingError,
+        VectorStoreError,
     ) as error:
         return agent_error_response(error, request.trace_id)
 

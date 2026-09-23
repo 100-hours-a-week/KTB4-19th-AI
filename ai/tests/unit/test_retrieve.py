@@ -1,7 +1,10 @@
 from uuid import uuid4
 
+import pytest
 from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import ResponseHandlingException
 
+from zipsai.errors import VectorStoreError
 from zipsai.integrations.embedding_client import DEFAULT_TIMEOUT_SECONDS
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
@@ -135,6 +138,21 @@ def test_search_runs_hybrid_query_when_gate_passes() -> None:
 
     assert [hit.payload["doc_id"] for hit in hits] == ["b001-parking"]
     assert client.query_calls == 2
+
+
+def test_search_converts_vector_store_failure_into_our_error() -> None:
+    # 그대로 새어 나가면 API 층이 500으로 내보낸다. 위키 §9는 503을 요구한다.
+    class DeadClient:
+        def query_points(self, **_kwargs: object) -> object:
+            raise ResponseHandlingException("connection refused")
+
+    with pytest.raises(VectorStoreError):
+        search_chunks(
+            (_dense(1.0), {"7": 0.5}),
+            1,
+            client=DeadClient(),
+            collection=TEST_COLLECTION,
+        )
 
 
 def test_search_returns_at_most_top_k_chunks() -> None:

@@ -2,7 +2,9 @@ import logging
 from functools import lru_cache
 
 from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import ApiException
 
+from zipsai.errors import VectorStoreError
 from zipsai.indexing.embed import Encoder
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import (
@@ -30,13 +32,23 @@ QueryVector = tuple[list[float], dict[str, float]]
 @lru_cache(maxsize=1)
 def query_encoder() -> HttpEncoder:
     # 첫 질의가 들어올 때 만든다. 임포트 시점에 embedding 컨테이너로 붙지 않는다.
-    return HttpEncoder(timeout=QUERY_TIMEOUT_SECONDS)
+    # 재시도는 배치용이다. 온라인에서 5초 자고 한 번 더 부르면 백엔드가 먼저 끊는다.
+    # 여기서는 바로 503을 돌려주고 다시 시도할지는 백엔드가 정한다.
+    return HttpEncoder(timeout=QUERY_TIMEOUT_SECONDS, attempts=1)
 
 
 def encode_question(question: str, *, encoder: Encoder) -> QueryVector:
     """질문 하나를 색인과 같은 bge-m3로 dense·sparse 벡터로 만든다."""
     dense, sparse = encoder.encode([question])
     return dense[0], sparse[0]
+
+
+def _query(client: QdrantClient, **kwargs: object) -> models.QueryResponse:
+    """Qdrant 예외를 우리 예외로 바꾼다. 안 바꾸면 API 층이 500으로 내보낸다."""
+    try:
+        return client.query_points(**kwargs)
+    except ApiException as error:
+        raise VectorStoreError(f"Vector store query failed: {error}") from error
 
 
 def search_chunks(
@@ -53,7 +65,8 @@ def search_chunks(
     # 게이트를 먼저 통과시킨다. 실패가 성공보다 빠르고 싸야 하므로,
     # dense 한 건도 임계값을 못 넘으면 하이브리드도 LLM도 돌리지 않는다.
     # RRF 점수는 코사인이 아니라서 융합 뒤에는 이 임계값을 걸 수 없다.
-    gate = client.query_points(
+    gate = _query(
+        client,
         collection_name=collection,
         query=dense,
         using=DENSE_VECTOR,
@@ -70,7 +83,8 @@ def search_chunks(
         )
         return []
 
-    hits = client.query_points(
+    hits = _query(
+        client,
         collection_name=collection,
         prefetch=[
             models.Prefetch(

@@ -4,11 +4,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from zipsai.errors import (
+    EmbeddingError,
     IntentClassificationError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
     LlmUpstreamError,
+    VectorStoreError,
 )
 
 
@@ -39,6 +41,16 @@ _AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str, str]] = {
         502,
         "MODEL_UPSTREAM_ERROR",
         "AI model returned an unsupported route",
+    ),
+    EmbeddingError: (
+        503,
+        "DEPENDENCY_NOT_READY",
+        "Embedding service is unavailable",
+    ),
+    VectorStoreError: (
+        503,
+        "DEPENDENCY_NOT_READY",
+        "Vector store is unavailable",
     ),
 }
 

@@ -7,10 +7,12 @@ import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
+    EmbeddingError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
     LlmUpstreamError,
+    VectorStoreError,
 )
 from zipsai.main import app
 from zipsai.settings import EMBEDDING_DIM, Settings
@@ -131,6 +133,27 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
                 "retryable": True,
             },
             id="upstream",
+        ),
+        # 위키 §9 — 의존 컨테이너가 죽으면 500이 아니라 503이 나가야 한다.
+        pytest.param(
+            EmbeddingError("Embedding request failed"),
+            503,
+            {
+                "code": "DEPENDENCY_NOT_READY",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="embedding-down",
+        ),
+        pytest.param(
+            VectorStoreError("Vector store query failed"),
+            503,
+            {
+                "code": "DEPENDENCY_NOT_READY",
+                "detail": "Vector store is unavailable",
+                "retryable": True,
+            },
+            id="qdrant-down",
         ),
     ],
 )
