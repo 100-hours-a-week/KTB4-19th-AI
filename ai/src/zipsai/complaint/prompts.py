@@ -21,13 +21,28 @@ COMPLAINT_SYSTEM_PROMPT = (
     "source is a pipe or the water system.\n\n"
     "Other fields:\n"
     "- location: where the problem is (e.g. 화장실, 주방). null if not stated in this turn.\n"
-    "- symptom: what's wrong, in the resident's own words. null if not stated in this turn.\n\n"
-    "Output contract: output ONLY a JSON object with exactly these three keys, nothing else. No "
+    "- symptom: what's wrong, in the resident's own words. null if not stated in this turn.\n"
+    "- occurred_at: when the problem started or was first noticed, only if stated in this turn. "
+    "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
+    "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
+    "date and omit finer precision. null if not stated in this turn.\n"
+    "- missing: an array listing which of \"location\"/\"symptom\" are still unknown overall — look "
+    "at the EXISTING draft below together with what you just extracted this turn, not just this "
+    "turn's message. Empty array if both are known. Only \"location\" and/or \"symptom\" are valid "
+    "entries; never include issue_type or occurred_at.\n"
+    "- reply: a short, natural Korean follow-up question for the resident, asking ONLY about the "
+    "field(s) listed in `missing`. Empty string \"\" if `missing` is empty. One short, friendly "
+    "sentence, no lists. Never ask about issue_type or occurred_at.\n\n"
+    "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"
-    '{{"issue_type": null, "location": null, "symptom": null}}'
+    '{{"issue_type": null, "location": null, "symptom": null, "occurred_at": null, "missing": [], '
+    '"reply": ""}}'
 )
 
-COMPLAINT_USER_TEMPLATE = "이전 대화:\n{conversation_history}\n\n현재 민원 초안: {complaint_draft}\n\n현재 발화: {message_text}"
+COMPLAINT_USER_TEMPLATE = (
+    "오늘 날짜(Asia/Seoul): {today}\n\n"
+    "이전 대화:\n{conversation_history}\n\n현재 민원 초안: {complaint_draft}\n\n현재 발화: {message_text}"
+)
 
 
 COMPLAINT_PROMPT = ChatPromptTemplate.from_messages(

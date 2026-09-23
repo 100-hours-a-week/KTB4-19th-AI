@@ -16,6 +16,7 @@ class ComplaintState(str, Enum):
     COLLECTING = "collecting"
     GUIDING = "guiding"
     CLARIFYING = "clarifying"
+    READY_TO_CONFIRM = "ready_to_confirm"
 
 
 def _require_complaint_state_only_for_complaint_route(
