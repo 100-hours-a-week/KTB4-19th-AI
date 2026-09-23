@@ -42,10 +42,21 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
     except APIError as error:
         raise LlmUnavailableError("LLM request failed") from error
 
+    if not response.choices:
+        raise LlmUnavailableError("LLM returned an empty response")
+
     content = response.choices[0].message.content
     if not content:
         raise LlmUnavailableError("LLM returned an empty response")
     return content
+
+
+def strip_json_code_fence(content: str) -> str:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.removeprefix("```json").removeprefix("```").strip()
+        stripped = stripped.removesuffix("```").strip()
+    return stripped
 
 
 @lru_cache

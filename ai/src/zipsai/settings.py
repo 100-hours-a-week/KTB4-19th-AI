@@ -38,6 +38,7 @@ class Settings:
     llm_base_url: str | None
     llm_model: str
     llm_timeout_seconds: float
+    vlm_model: str = "z-ai/glm-5.3-flash"
 
 
 @lru_cache
@@ -56,4 +57,5 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL"),
         llm_model=model,
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+        vlm_model=os.getenv("VLM_MODEL", "z-ai/glm-5.3-flash"),
     )

@@ -3,10 +3,12 @@ from fastapi.testclient import TestClient
 from qdrant_client import models
 
 import zipsai.api.converse as converse_module
+import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
+    ComplaintExtractionError,
     EmbeddingError,
     LlmRateLimitedError,
     LlmTimeoutError,
@@ -73,7 +75,7 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
             "next_complaint_state": None,
             "reply": "민원/시설 문제인가요, 건물 정보 질문인가요?",
             "result": {
-                "draft_patch": None,
+                "complaint_draft": None,
                 "qa_card_draft": None,
                 "missing_fields": [],
                 "citations": [],
@@ -133,6 +135,16 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
                 "retryable": True,
             },
             id="upstream",
+        ),
+        pytest.param(
+            ComplaintExtractionError("LLM returned an invalid complaint draft"),
+            502,
+            {
+                "code": "MODEL_UPSTREAM_ERROR",
+                "detail": "AI model returned an invalid complaint draft",
+                "retryable": True,
+            },
+            id="complaint-extraction",
         ),
         # 위키 §9 — 의존 컨테이너가 죽으면 500이 아니라 503이 나가야 한다.
         pytest.param(
@@ -252,6 +264,11 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
     )
+    monkeypatch.setattr(
+        complaint_node,
+        "generate_text",
+        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
+    )
     payload = _payload()
     payload["current_route"] = "complaint"
     payload["current_complaint_state"] = "collecting"
@@ -270,7 +287,13 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "next_complaint_state": "collecting",
         "reply": "민원 접수를 위해 발생 위치와 불편 증상을 알려주세요.",
         "result": {
-            "draft_patch": None,
+            "complaint_draft": {
+                "issue_type": None,
+                "location": None,
+                "symptom": None,
+                "occurred_at": None,
+                "image_urls": [],
+            },
             "qa_card_draft": None,
             "missing_fields": ["location", "symptom"],
             "citations": [],
@@ -338,6 +361,11 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
         converse_module,
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
+    )
+    monkeypatch.setattr(
+        complaint_node,
+        "generate_text",
+        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
     )
     payload = _payload()
     payload["current_route"] = "complaint"

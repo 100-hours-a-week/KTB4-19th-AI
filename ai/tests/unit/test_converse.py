@@ -99,6 +99,33 @@ def test_complaint_state_rejects_removed_action_selection_state():
         ComplaintState("action_selection")
 
 
+def test_incoming_message_accepts_presigned_s3_url_with_allowed_extension():
+    message = IncomingMessage.model_validate(
+        {
+            "message_id": "msg-001",
+            "text": None,
+            "image_urls": [
+                (
+                    "https://zipsai-dev-uploads.s3.ap-northeast-2.amazonaws.com/"
+                    "leak.PNG?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300"
+                )
+            ],
+        }
+    )
+    assert message.image_urls[0].endswith("X-Amz-Expires=300")
+
+
+def test_incoming_message_rejects_unsupported_image_extension():
+    with pytest.raises(ValidationError):
+        IncomingMessage.model_validate(
+            {
+                "message_id": "msg-001",
+                "text": None,
+                "image_urls": ["https://example.com/leak.gif"],
+            }
+        )
+
+
 def test_converse_data_rejects_complaint_state_for_non_complaint_route():
     with pytest.raises(ValidationError):
         ConverseData(

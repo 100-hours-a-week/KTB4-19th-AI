@@ -32,6 +32,5 @@ app = FastAPI(title="zipsai", lifespan=lifespan)
 app.include_router(converse_router)
 app.include_router(health_router)
 app.include_router(indexing_router, prefix=API_PREFIX)
-app.add_exception_handler(RequestValidationError,
-request_validation_error_handler)
+app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)

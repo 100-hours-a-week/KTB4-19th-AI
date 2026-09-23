@@ -12,6 +12,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.errors import (
+    ComplaintExtractionError,
     EmbeddingError,
     IntentClassificationError,
     LlmRateLimitedError,
@@ -58,6 +59,7 @@ def converse(
         LlmUpstreamError,
         LlmUnavailableError,
         IntentClassificationError,
+        ComplaintExtractionError,
         EmbeddingError,
         VectorStoreError,
     ) as error:
