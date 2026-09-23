@@ -33,11 +33,18 @@ services:
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-documents}
       S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET in .env}
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      # 배포 환경은 EC2 인스턴스 프로파일에서 자격증명을 받는다(s3.py 참고). 로컬에는
+      # 프로파일이 없어 색인이 S3에서 막히므로, 비어 있으면 무시되는 형태로만 넘긴다.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       EMBEDDING_API_URL: ${EMBEDDING_API_URL:-http://embedding:8000}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      # 비어 있으면 settings.py의 DEFAULT_VLM_MODEL로 떨어진다.
+      VLM_MODEL: ${VLM_MODEL:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       TZ: Asia/Seoul
     ports:
