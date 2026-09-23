@@ -1,17 +1,23 @@
 import pytest
 from fastapi.testclient import TestClient
+from qdrant_client import models
 
 import zipsai.api.converse as converse_module
+import zipsai.complaint.node as complaint_node
+import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
+    ComplaintExtractionError,
+    EmbeddingError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
     LlmUpstreamError,
+    VectorStoreError,
 )
 from zipsai.main import app
-from zipsai.settings import Settings
+from zipsai.settings import EMBEDDING_DIM, Settings
 
 
 class _FakeGraph:
@@ -69,7 +75,7 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
             "next_complaint_state": None,
             "reply": "민원/시설 문제인가요, 건물 정보 질문인가요?",
             "result": {
-                "draft_patch": None,
+                "complaint_draft": None,
                 "qa_card_draft": None,
                 "missing_fields": [],
                 "citations": [],
@@ -129,6 +135,37 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
                 "retryable": True,
             },
             id="upstream",
+        ),
+        pytest.param(
+            ComplaintExtractionError("LLM returned an invalid complaint draft"),
+            502,
+            {
+                "code": "MODEL_UPSTREAM_ERROR",
+                "detail": "AI model returned an invalid complaint draft",
+                "retryable": True,
+            },
+            id="complaint-extraction",
+        ),
+        # 위키 §9 — 의존 컨테이너가 죽으면 500이 아니라 503이 나가야 한다.
+        pytest.param(
+            EmbeddingError("Embedding request failed"),
+            503,
+            {
+                "code": "DEPENDENCY_NOT_READY",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="embedding-down",
+        ),
+        pytest.param(
+            VectorStoreError("Vector store query failed"),
+            503,
+            {
+                "code": "DEPENDENCY_NOT_READY",
+                "detail": "Vector store is unavailable",
+                "retryable": True,
+            },
+            id="qdrant-down",
         ),
     ],
 )
@@ -227,6 +264,11 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
     )
+    monkeypatch.setattr(
+        complaint_node,
+        "generate_text",
+        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
+    )
     payload = _payload()
     payload["current_route"] = "complaint"
     payload["current_complaint_state"] = "collecting"
@@ -245,7 +287,13 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "next_complaint_state": "collecting",
         "reply": "민원 접수를 위해 발생 위치와 불편 증상을 알려주세요.",
         "result": {
-            "draft_patch": None,
+            "complaint_draft": {
+                "issue_type": None,
+                "location": None,
+                "symptom": None,
+                "occurred_at": None,
+                "image_urls": [],
+            },
             "qa_card_draft": None,
             "missing_fields": ["location", "symptom"],
             "citations": [],
@@ -259,7 +307,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     }
 
 
-def test_converse_returns_baseline_reply_for_knowledge(monkeypatch):
+def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
@@ -270,14 +318,36 @@ def test_converse_returns_baseline_reply_for_knowledge(monkeypatch):
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
     )
+    monkeypatch.setattr(knowledge_node, "get_client", lambda: object())
+    monkeypatch.setattr(knowledge_node, "query_encoder", lambda: object())
+    monkeypatch.setattr(
+        knowledge_node,
+        "encode_question",
+        lambda _question, *, encoder: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
+    )
+    monkeypatch.setattr(
+        knowledge_node,
+        "search_chunks",
+        lambda *_args, **_kwargs: [
+            models.ScoredPoint(
+                id=1,
+                version=0,
+                score=0.9,
+                payload={"title": "세탁실 이용", "text": "세탁실은 22시까지입니다."},
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        knowledge_node,
+        "generate_text",
+        lambda **_kwargs: "22시까지 이용할 수 있습니다.",
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
 
     assert response.status_code == 200
     assert response.json()["data"]["route"] == "knowledge"
-    assert response.json()["data"]["reply"] == (
-        "현재 건물 문서 검색 기능을 준비 중입니다."
-    )
+    assert response.json()["data"]["reply"] == "22시까지 이용할 수 있습니다."
 
 
 def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_progress(
@@ -291,6 +361,11 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
         converse_module,
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
+    )
+    monkeypatch.setattr(
+        complaint_node,
+        "generate_text",
+        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
     )
     payload = _payload()
     payload["current_route"] = "complaint"

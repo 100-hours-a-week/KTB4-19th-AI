@@ -8,17 +8,10 @@ from zipsai.indexing.embed import EmbeddedChunk
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
     SPARSE_VECTOR,
+    building_condition,
     to_sparse_vector,
 )
 from zipsai.settings import QDRANT_COLLECTION
-
-
-def _building_condition(building_id: int) -> models.FieldCondition:
-    # is_tenant 키워드 인덱스에 맞추기 위해 문자열로 저장하고 문자열로 찾는다.
-    return models.FieldCondition(
-        key="building_id",
-        match=models.MatchValue(value=str(building_id)),
-    )
 
 
 def upsert_document(
@@ -31,7 +24,7 @@ def upsert_document(
 ) -> int:
     document_filter = models.Filter(
         must=[
-            _building_condition(request.building_id),
+            building_condition(request.building_id),
             models.FieldCondition(
                 key="doc_id",
                 match=models.MatchValue(value=request.doc_id),
@@ -91,7 +84,7 @@ def delete_missing_documents(
         collection_name=collection,
         points_selector=models.FilterSelector(
             filter=models.Filter(
-                must=[_building_condition(building_id)],
+                must=[building_condition(building_id)],
                 must_not=[
                     models.FieldCondition(
                         key="doc_id",

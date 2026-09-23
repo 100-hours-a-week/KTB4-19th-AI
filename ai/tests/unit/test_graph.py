@@ -1,5 +1,6 @@
 import pytest
 
+import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
     ComplaintState,
@@ -10,6 +11,7 @@ from zipsai.contracts.converse import (
 from zipsai.errors import LlmUnavailableError
 from zipsai.orchestration.graph import build_graph, select_entry_node, select_next_node
 from zipsai.orchestration.state import AgentState
+from zipsai.settings import EMBEDDING_DIM
 
 
 def _make_request(
@@ -160,6 +162,16 @@ def test_graph_clears_complaint_state_for_non_complaint_route(
     route: Route,
 ):
     monkeypatch.setattr(graph_module, "classify_intent", _stub_classify_intent)
+    # 노드를 통째로 스텁으로 갈면 스텁이 넣은 None을 그대로 확인하게 된다.
+    # 실제 노드를 태우고 바깥으로 나가는 호출만 막는다.
+    monkeypatch.setattr(knowledge_node, "get_client", lambda: object())
+    monkeypatch.setattr(knowledge_node, "query_encoder", lambda: object())
+    monkeypatch.setattr(
+        knowledge_node,
+        "encode_question",
+        lambda _question, *, encoder: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
+    )
+    monkeypatch.setattr(knowledge_node, "search_chunks", lambda *_a, **_kw: [])
 
     result = build_graph().invoke(_make_state(route))
 
