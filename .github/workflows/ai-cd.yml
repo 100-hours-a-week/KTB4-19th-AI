@@ -147,11 +147,15 @@ jobs:
                 sudo docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/compose.yaml" "$@"
               }
 
-              # 대용량 AI Image Pull 중에도 SSM Agent가 실행 상태를 확인할 수 있게 주기적으로 로그를 남긴다.
-              # Image Pull 자체는 백그라운드로 수행하고, 실패하면 wait가 오류를 그대로 반환한다.
+              # 대용량 Image Pull의 Docker 진행 로그를 SSM 표준 출력으로 그대로 흘리지 않는다.
+              # SSM Agent의 출력 처리 부담을 줄이고, 대신 15초마다 짧은 상태 로그만 남긴다.
               pull_with_heartbeat() {
                 service="$1"
-                compose pull "$service" &
+                pull_log="/tmp/zipsai-${service}-pull.log"
+
+                # --quiet: Docker의 Downloading/Extracting 진행 로그를 숨긴다.
+                # 실패한 경우에만 아래에서 마지막 로그를 출력한다.
+                compose pull --quiet "$service" >"$pull_log" 2>&1 &
                 pull_pid="$!"
 
                 while kill -0 "$pull_pid" 2>/dev/null; do
@@ -159,7 +163,13 @@ jobs:
                   sleep 15
                 done
 
-                wait "$pull_pid"
+                if ! wait "$pull_pid"; then
+                  echo "$service image pull failed. Recent Docker output:" >&2
+                  tail -n 80 "$pull_log" >&2 || true
+                  return 1
+                fi
+
+                rm -f "$pull_log"
               }
 
               if [ "$API_REQUESTED" = true ] && [ "$EMBEDDING_REQUESTED" = true ]; then
@@ -208,6 +218,7 @@ jobs:
               --document-name AWS-RunShellScript \
               --instance-ids "$INSTANCE_ID" \
               --parameters file://ssm-parameters.json \
+              --timeout-seconds 900 \
               --comment "Deploy AI API=${api_tag:-current}, Embedding=${embedding_tag:-current}" \
               --query 'Command.CommandId' \
               --output text)"
