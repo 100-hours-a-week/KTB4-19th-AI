@@ -147,14 +147,30 @@ jobs:
                 sudo docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/compose.yaml" "$@"
               }
 
+              # 대용량 AI Image Pull 중에도 SSM Agent가 실행 상태를 확인할 수 있게 주기적으로 로그를 남긴다.
+              # Image Pull 자체는 백그라운드로 수행하고, 실패하면 wait가 오류를 그대로 반환한다.
+              pull_with_heartbeat() {
+                service="$1"
+                compose pull "$service" &
+                pull_pid="$!"
+
+                while kill -0 "$pull_pid" 2>/dev/null; do
+                  echo "$service image pull in progress..."
+                  sleep 15
+                done
+
+                wait "$pull_pid"
+              }
+
               if [ "$API_REQUESTED" = true ] && [ "$EMBEDDING_REQUESTED" = true ]; then
-                compose pull ai-api embedding
+                pull_with_heartbeat ai-api
+                pull_with_heartbeat embedding
                 compose up -d qdrant embedding ai-api
               elif [ "$API_REQUESTED" = true ]; then
-                compose pull ai-api
+                pull_with_heartbeat ai-api
                 compose up -d --no-deps ai-api
               else
-                compose pull embedding
+                pull_with_heartbeat embedding
                 compose up -d --no-deps embedding
               fi
 
@@ -292,3 +308,86 @@ jobs:
               --value "$EMBEDDING_TAG" \
               --overwrite > /dev/null
           fi
+
+          # 현재 배포한 SHA와 바로 직전 정상 SHA만 남긴다.
+          # 삭제에 실패해도 배포 자체는 성공했으므로 Workflow를 실패 처리하지 않는다.
+          cleanup_remote_images() {
+            local encoded_script command_id status
+
+            {
+              printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+              printf 'ECR_REGISTRY=%q\n' "$ECR_REGISTRY"
+              printf 'API_TAG=%q\n' "$API_TAG"
+              printf 'EMBEDDING_TAG=%q\n' "$EMBEDDING_TAG"
+              printf 'PREVIOUS_API=%q\n' "$previous_api"
+              printf 'PREVIOUS_EMBEDDING=%q\n' "$previous_embedding"
+              printf 'API_REQUESTED=%q\n' "$API_REQUESTED"
+              printf 'EMBEDDING_REQUESTED=%q\n' "$EMBEDDING_REQUESTED"
+              cat <<'REMOTE_CLEANUP'
+              cleanup_service_images() {
+                repository="$1"
+                current_tag="$2"
+                previous_tag="$3"
+
+                [ -n "$current_tag" ] || return 0
+
+                sudo docker image ls "$repository" --format '{{.Repository}}:{{.Tag}}' \
+                  | while IFS= read -r image_ref; do
+                      case "$image_ref" in
+                        "$repository:$current_tag"|"$repository:$previous_tag")
+                          echo "keep $image_ref"
+                          ;;
+                        "$repository:<none>")
+                          ;;
+                        *)
+                          echo "remove unused image $image_ref"
+                          sudo docker image rm "$image_ref" \
+                            || echo "could not remove $image_ref; it may still be referenced by a Container"
+                          ;;
+                      esac
+                    done
+              }
+
+              if [ "$API_REQUESTED" = true ]; then
+                cleanup_service_images "$ECR_REGISTRY/zipsai-ai-api" "$API_TAG" "$PREVIOUS_API"
+              fi
+              if [ "$EMBEDDING_REQUESTED" = true ]; then
+                cleanup_service_images "$ECR_REGISTRY/zipsai-embedding" "$EMBEDDING_TAG" "$PREVIOUS_EMBEDDING"
+              fi
+          REMOTE_CLEANUP
+            } > remote-cleanup.sh
+
+            encoded_script="$(base64 < remote-cleanup.sh | tr -d '\n')"
+            jq -n \
+              --arg command "echo '$encoded_script' | base64 --decode | bash" \
+              '{commands: [$command]}' > ssm-cleanup-parameters.json
+
+            command_id="$(aws ssm send-command \
+              --document-name AWS-RunShellScript \
+              --instance-ids "$INSTANCE_ID" \
+              --parameters file://ssm-cleanup-parameters.json \
+              --comment "Clean unused AI images" \
+              --query 'Command.CommandId' \
+              --output text)"
+
+            for _ in $(seq 1 36); do
+              status="$(aws ssm get-command-invocation \
+                --command-id "$command_id" \
+                --instance-id "$INSTANCE_ID" \
+                --query 'Status' \
+                --output text 2>/dev/null || true)"
+              case "$status" in
+                Success)
+                  return 0
+                  ;;
+                Failed|Cancelled|TimedOut|Cancelling)
+                  return 1
+                  ;;
+              esac
+              sleep 5
+            done
+
+            return 1
+          }
+
+          cleanup_remote_images || echo "::warning::Unused AI image cleanup failed. The deployment itself succeeded."
