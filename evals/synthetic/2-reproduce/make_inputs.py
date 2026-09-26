@@ -237,11 +237,16 @@ def build():
                 if kind == "scan":
                     rasterize(tmp, out)
                 else:
-                    # 굽는 포맷도 매니페스트가 정한다. formatOptions 는 JPEG 품질 옵션이라
-                    # png 에 넘기면 안 된다.
-                    fmt = "jpeg" if doc["file_type"] == "jpg" else doc["file_type"]
-                    opts = ["-s", "formatOptions", "70"] if fmt == "jpeg" else []
-                    sips(["-s", "format", fmt, *opts, str(tmp), "--out", str(out)])
+                    # 굽는 포맷은 매니페스트가 정한다. sips 가 PDF 를 png 로 직접 구우면
+                    # RGB 가 전부 검정이 되고 내용이 알파에만 남아 OCR 이 읽지 못한다.
+                    # jpeg 를 거쳐 흰 배경을 깔아준 뒤 최종 포맷으로 바꾼다.
+                    mid = tmp.with_suffix(".jpg")
+                    sips(["-s", "format", "jpeg", "-s", "formatOptions", "70",
+                          str(tmp), "--out", str(mid)])
+                    if doc["file_type"] == "jpg":
+                        shutil.move(mid, out)
+                    else:
+                        sips(["-s", "format", doc["file_type"], str(mid), "--out", str(out)])
             finally:
                 shutil.rmtree(tmp.parent, ignore_errors=True)
         counts[kind] += 1
