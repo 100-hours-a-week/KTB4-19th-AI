@@ -108,7 +108,7 @@ jpg로 바꾼다. 본문이 없으면 OCR 품질을 잴 수 없어 그 케이스
 | 코드 | P1 단계 | 발동시키는 분기 |
 |---|---|---|
 | `PARSE_NO_TEXT_LAYER` | 2 파싱 | 텍스트 레이어 없는 스캔 PDF → 색인 보류 |
-| `PARSE_IMAGE_ONLY` | 1 업로드 | 사진으로 찍은 공지 → v1 색인 제외 |
+| `PARSE_IMAGE_ONLY` | 1 업로드 | 사진으로 찍은 공지 → 이미지 직접 색인(docling OCR) |
 | `MASK_PII_DETECTED` | 3 마스킹 | 개인정보 탐지 → 관리자 확인 대기 |
 | `MASK_FALSE_POSITIVE` | 3 마스킹 | 문서번호·금액을 전화번호로 오인 |
 | `CLEAN_REPEATED_HEADER` | 4 정제 | 반복 머리말·꼬리말 제거 |
@@ -173,12 +173,13 @@ jpg로 바꾼다. 본문이 없으면 OCR 품질을 잴 수 없어 그 케이스
 | 모든 문서에 파일 필요 | `Rule_Documents.attachment_id NOT NULL` |
 | 개정은 version 증가 + is_valid | `Rule_Documents.version`, `is_valid` |
 
-`file_type` 허용 4종 중 jpg·png·heic는 P1에서 v1 색인 제외다.
-**실제 색인 가능한 포맷은 PDF 하나뿐**이라, md 원본을 PDF로 변환해 쓴다.
+`file_type` 허용 4종 중 **색인 대상은 PDF·JPG·PNG 3종**이다. 이미지도 docling OCR을 거쳐 PDF와 같은 경로에 합류한다.
+heic만 예외로, 백엔드가 확장자를 변환해 S3에 올리므로 AI는 받지 않는다.
+이 데이터셋은 md 원본을 PDF로 변환해 쓰고, 이미지 입력은 jpg 2건으로 재현한다.
 
 ## 미해결 — 팀 확정 필요
 
 | 항목 | 내용 |
 |---|---|
 | `doc_type` 저장 위치 | `Rule_Documents`에 문서 종류 컬럼이 없다. 이 데이터셋은 매니페스트에 유지하되 DB 매핑은 미정 |
-| 표 400자 초과 시 우선순위 | 청킹 규칙이 "표는 통째로 한 청크"와 "400자 초과 시 겹침 분할"을 동시에 요구한다. b001 `facility-001` 이용 요금 섹션(462자)이 이 충돌을 노출시킨다. 어느 쪽이 이기는지 P1 설계에 답이 없다 |
+| 표 400자 초과 시 우선순위 | **코드는 표 우선으로 확정**(`ai/src/zipsai/indexing/chunk.py:171-173` — 표가 capacity를 넘으면 통째로 한 청크). 설계서에는 여전히 답이 없고, 8000자를 넘는 표를 어떻게 자를지도 미정이다 |
