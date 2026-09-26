@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 from pypdf import PdfReader, PdfWriter
+from reportlab import rl_config
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -26,6 +27,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, Frame, PageBreak, PageTemplate, Paragraph,
                                 Spacer, Table, TableStyle)
+
+# 생성 시각과 문서 ID를 고정한다. 켜지 않으면 다시 구울 때마다 51개 파일의
+# 바이트가 전부 달라져, 버전 관리에서 실제 변경분을 가려낼 수 없다.
+rl_config.invariant = 1
 
 ROOT = Path(__file__).resolve().parent          # 2-reproduce/ — 원본 md 와 매니페스트가 있는 곳
 BUILD = ROOT.parent / "1-dataset" / "build"     # 완성물은 1-dataset/ 으로 나간다
@@ -167,7 +172,7 @@ def out_name(code, doc, kind):
     if kind == "scan":
         return BUILD / f"{code}-{safe(doc['document_title'])}-스캔본.pdf"
     if kind == "photo":
-        return BUILD / f"{code}-{safe(doc['document_title'])}-사진.jpg"
+        return BUILD / f"{code}-{safe(doc['document_title'])}-사진.{doc['file_type']}"
     return BUILD / f"{code}-{Path(doc['file']).stem}.pdf"
 
 
@@ -232,8 +237,11 @@ def build():
                 if kind == "scan":
                     rasterize(tmp, out)
                 else:
-                    sips(["-s", "format", "jpeg", "-s", "formatOptions", "70",
-                          str(tmp), "--out", str(out)])
+                    # 굽는 포맷도 매니페스트가 정한다. formatOptions 는 JPEG 품질 옵션이라
+                    # png 에 넘기면 안 된다.
+                    fmt = "jpeg" if doc["file_type"] == "jpg" else doc["file_type"]
+                    opts = ["-s", "formatOptions", "70"] if fmt == "jpeg" else []
+                    sips(["-s", "format", fmt, *opts, str(tmp), "--out", str(out)])
             finally:
                 shutil.rmtree(tmp.parent, ignore_errors=True)
         counts[kind] += 1
@@ -285,7 +293,7 @@ def check():
                        if k == "pdf" and unicodedata.normalize("NFC", o.name) in on_disk),
          expect["pdf"]),
         ("스캔본 PDF", expect["scan"], expect["scan"]),
-        ("사진 jpg", expect["photo"], expect["photo"]),
+        ("사진 이미지", expect["photo"], expect["photo"]),
         ("매니페스트에 없는 잔재", len(extra), 0),
         ("빠진 산출물", len(missing), 0),
         ("본문이 잘린 문서", len(lost), 0),
