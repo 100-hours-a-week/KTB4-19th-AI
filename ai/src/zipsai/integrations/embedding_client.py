@@ -62,7 +62,12 @@ class HttpEncoder:
                 return response.json()
             except httpx.HTTPError as exc:
                 if not _is_transient(exc):
-                    raise EmbeddingError(f"Embedding request failed: {exc}") from exc
+                    detail = ""
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        detail = f" {exc.response.text[:500]}"
+                    raise EmbeddingError(
+                        f"Embedding request failed: {exc}{detail}"
+                    ) from exc
                 last = exc
                 if attempt + 1 < self._attempts:
                     time.sleep(self._retry_delay)
