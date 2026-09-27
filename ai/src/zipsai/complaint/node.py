@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,8 @@ from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
 
+logger = logging.getLogger(__name__)
+
 _KST = ZoneInfo("Asia/Seoul")
 # 일시적인 JSON/스키마 오류만 한 번 더 시도한다. rate limit·timeout 등 LLM 레벨 오류는
 # generate_text가 별도 예외로 던지므로 여기서 재시도하지 않고 API 계층까지 그대로 올려보낸다.
@@ -33,6 +36,9 @@ _EXTRACTION_ATTEMPTS = 2
 # 위치를 모른다는 답은 추출 프롬프트가 "모름"으로 채우므로 여기서 빠진다. 증상은
 # "모름"을 허용하지 않아 계속 null로 남고, 그래서 계속 질문 대상이 된다.
 _REQUIRED_FIELDS = ("location", "symptom")
+# 추출 프롬프트가 "위치를 모른다"는 답에 넣는 값. 코드가 쓰지는 않지만, 그 경로가 실제로
+# 얼마나 타는지 로그에서 세려면 문자열을 한곳에 두어야 한다.
+_UNKNOWN_LOCATION = "모름"
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
@@ -89,6 +95,11 @@ def _merge_complaint_draft(
         for field in ("issue_type", "location", "symptom", "occurred_at")
         if getattr(extracted, field) is not None
     }
+    # "모름"은 빈 칸을 채우는 값이지 이미 확인된 값을 대체하는 값이 아니다. 증상을 물은
+    # 턴에 "모르겠어요"가 오면 추출이 그걸 위치에 대한 모름으로 보고 "모름"을 넣기도 한다
+    # (실제로 관측됨). 그대로 두면 확인된 위치가 지워져 관리자가 쓸 수 없는 값이 된다.
+    if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
+        del updates["location"]
     return (current or ComplaintDraft()).model_copy(update=updates)
 
 
@@ -163,8 +174,10 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         asked_now = missing_fields[0]
         if llm_reply and llm_missing == {asked_now}:
             follow_up = llm_reply
+            reply_source = "llm"
         else:
             follow_up = _MISSING_FIELD_REPLY[asked_now]
+            reply_source = "fixed"
         reply = (
             follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
         )
@@ -175,6 +188,26 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         # 민원 카드를 만들고 대화를 끝내므로, 확인 대기 상태를 따로 둘 필요가 없다.
         complaint_state = None
         reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+        reply_source = "complete"
+
+    # 턴당 한 줄. 같은 항목을 몇 번 묻는지, "모름" 경로가 얼마나 타는지, 아무 값도 안
+    # 채워지는 턴이 반복되는지를 사후에 세기 위한 것이다. 다음 작업(반복 질문 가드,
+    # 사진 분석을 추출에 연결)의 우선순위를 여기서 나온 수치로 정한다.
+    logger.info(
+        "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
+        "asked=%s missing=%s draft_changed=%s location_unknown=%s "
+        "reply_source=%s text_len=%s photo=%s",
+        request.building_id,
+        request.conversation_id,
+        request.trace_id,
+        asked_now if missing_fields else None,
+        missing_fields,
+        draft != request.complaint_draft,
+        draft.location == _UNKNOWN_LOCATION,
+        reply_source,
+        len((request.message.text or "").strip()),
+        "analyzed" if image_analysis else ("failed" if photo_sent else "none"),
+    )
 
     return {
         "complaint_state": complaint_state,

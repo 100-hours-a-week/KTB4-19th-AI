@@ -649,3 +649,47 @@ def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
     )["reply"]
 
     assert reply == "사진은 확인했습니다. 어디에서 생긴 문제인가요?"
+
+
+def test_handle_complaint_logs_one_line_per_turn(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    request = _make_request("몰라")
+    request.complaint_draft = ComplaintDraft(symptom="온수가 나오지 않음")
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        # 추출 프롬프트가 "모른다"는 답을 location="모름"으로 채워 올려보낸 상황.
+        lambda _: (ComplaintDraft(location="모름"), "", set()),
+    )
+
+    with caplog.at_level("INFO", logger=node_module.__name__):
+        handle_complaint(request)
+
+    assert len(caplog.records) == 1
+    line = caplog.records[0].getMessage()
+    assert "complaint_turn" in line
+    assert "conversation_id=conv-001" in line
+    assert "missing=[]" in line
+    assert "location_unknown=True" in line
+    assert "reply_source=complete" in line
+    assert "photo=none" in line
+
+
+def test_handle_complaint_keeps_confirmed_location_against_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 증상을 물은 턴에 "모르겠어요"가 오면 추출이 location="모름"을 올려보내기도 한다.
+    # 이미 확인된 위치를 그 값으로 덮으면 관리자가 쓸 수 없는 카드가 된다.
+    request = _make_request("모르겠어요")
+    request.complaint_draft = ComplaintDraft(location="주방")
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        lambda _: (ComplaintDraft(location="모름"), "", set()),
+    )
+
+    outcome = handle_complaint(request)
+
+    assert outcome["result"].complaint_draft.location == "주방"
+    assert outcome["result"].missing_fields == ["symptom"]
