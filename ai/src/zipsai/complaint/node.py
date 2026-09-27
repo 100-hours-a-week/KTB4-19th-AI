@@ -19,6 +19,7 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
 )
+from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
 
@@ -38,7 +39,7 @@ def _extract_complaint_fields_and_reply(
 ) -> tuple[ComplaintDraft, str, set[str]]:
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
         today=datetime.now(_KST).date().isoformat(),
-        conversation_history=request.conversation_history,
+        conversation_history=format_history(request.conversation_history),
         complaint_draft=request.complaint_draft,
         message_text=request.message.text,
     )

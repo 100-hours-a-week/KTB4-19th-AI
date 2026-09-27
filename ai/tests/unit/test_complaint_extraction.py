@@ -22,6 +22,7 @@ def _make_request(
     text: str,
     image_urls: list[str] | None = None,
     current_complaint_state: str = "collecting",
+    conversation_history: list[dict[str, object]] | None = None,
 ) -> ConverseRequest:
     return ConverseRequest.model_validate(
         {
@@ -37,10 +38,39 @@ def _make_request(
                 "text": text,
                 "image_urls": image_urls or [],
             },
-            "conversation_history": [],
+            "conversation_history": conversation_history or [],
             "complaint_draft": None,
         }
     )
+
+
+def test_complaint_prompt_carries_formatted_history_without_model_repr(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+        captured["user_prompt"] = user_prompt
+        return '{"location": "화장실"}'
+
+    monkeypatch.setattr(node_module, "generate_text", fake_generate_text)
+
+    extract_complaint_fields(
+        _make_request(
+            "화장실이요",
+            conversation_history=[
+                {
+                    "message_id": "msg-h1",
+                    "role": "user",
+                    "text": "물이 새요",
+                    "image_urls": [],
+                }
+            ],
+        )
+    )
+
+    assert "user: 물이 새요" in captured["user_prompt"]
+    assert "msg-h1" not in captured["user_prompt"]
 
 
 def test_extract_complaint_fields_parses_llm_json(monkeypatch: pytest.MonkeyPatch):
