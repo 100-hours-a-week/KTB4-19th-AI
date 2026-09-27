@@ -145,7 +145,9 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     else:
         if draft.issue_type is None:
             draft = draft.model_copy(update={"issue_type": "other"})
-        complaint_state = ComplaintState.READY_TO_CONFIRM
+        # 필수 필드가 찼으면 상태를 비운다. 백엔드가 missing_fields가 빈 것을 보고
+        # 민원 카드를 만들고 대화를 끝내므로, 확인 대기 상태를 따로 둘 필요가 없다.
+        complaint_state = None
         reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
     return {

@@ -471,7 +471,7 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
     assert reply == "사진은 확인했습니다. 정확히 어디쯤인지 알려주시겠어요?"
 
 
-def test_handle_complaint_sets_ready_to_confirm_when_fields_complete(
+def test_handle_complaint_clears_state_when_fields_complete(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -486,7 +486,9 @@ def test_handle_complaint_sets_ready_to_confirm_when_fields_complete(
 
     result = handle_complaint(_make_request("화장실에서 물이 새요"))
 
-    assert result["complaint_state"] == ComplaintState.READY_TO_CONFIRM
+    # 상태를 비우고 missing_fields를 빈 배열로 내보내면 백엔드가 민원 카드를 만든다.
+    assert result["complaint_state"] is None
+    assert result["result"].missing_fields == []
 
 
 def test_handle_complaint_keeps_collecting_when_fields_missing(
@@ -501,33 +503,6 @@ def test_handle_complaint_keeps_collecting_when_fields_missing(
     result = handle_complaint(_make_request("화장실이 이상해요"))
 
     assert result["complaint_state"] == ComplaintState.COLLECTING
-
-
-def test_handle_complaint_merges_edit_after_ready_to_confirm_without_erasing_fields(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    request = _make_request(
-        "화장실로 정정할게요.", current_complaint_state="ready_to_confirm"
-    )
-    request.complaint_draft = ComplaintDraft(
-        issue_type="water_supply",
-        location="주방",
-        symptom="온수가 나오지 않음",
-    )
-    monkeypatch.setattr(
-        node_module,
-        "_extract_complaint_fields_and_reply",
-        lambda _: (ComplaintDraft(location="화장실"), "", set()),
-    )
-
-    result = handle_complaint(request)
-
-    assert result["result"].complaint_draft == ComplaintDraft(
-        issue_type="water_supply",
-        location="화장실",
-        symptom="온수가 나오지 않음",
-    )
-    assert result["complaint_state"] == ComplaintState.READY_TO_CONFIRM
 
 
 def test_handle_complaint_asks_only_about_missing_symptom(
@@ -569,7 +544,7 @@ def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
 
     result = handle_complaint(_make_request("화장실이 이상해요"))
 
-    assert result["complaint_state"] == ComplaintState.READY_TO_CONFIRM
+    assert result["complaint_state"] is None
     assert result["result"].complaint_draft.issue_type == "other"
 
 
