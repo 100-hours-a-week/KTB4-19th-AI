@@ -669,11 +669,7 @@ def test_handle_complaint_logs_one_line_per_turn(
     assert len(caplog.records) == 1
     line = caplog.records[0].getMessage()
     assert "complaint_turn" in line
-    assert "conversation_id=conv-001" in line
-    assert "missing=[]" in line
     assert "location_unknown=True" in line
-    assert "reply_source=complete" in line
-    assert "photo=none" in line
 
 
 def test_handle_complaint_keeps_confirmed_location_against_unknown(

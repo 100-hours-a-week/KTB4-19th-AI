@@ -36,8 +36,8 @@ _EXTRACTION_ATTEMPTS = 2
 # 위치를 모른다는 답은 추출 프롬프트가 "모름"으로 채우므로 여기서 빠진다. 증상은
 # "모름"을 허용하지 않아 계속 null로 남고, 그래서 계속 질문 대상이 된다.
 _REQUIRED_FIELDS = ("location", "symptom")
-# 추출 프롬프트가 "위치를 모른다"는 답에 넣는 값. 코드가 쓰지는 않지만, 그 경로가 실제로
-# 얼마나 타는지 로그에서 세려면 문자열을 한곳에 두어야 한다.
+# 추출 프롬프트가 "위치를 모른다"는 답에 넣는 값. 확인된 위치를 이 값이 덮지 못하게
+# 막아야 해서(_merge_complaint_draft) 코드도 이 문자열을 안다.
 _UNKNOWN_LOCATION = "모름"
 
 
@@ -109,14 +109,6 @@ def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> Complain
     )
 
 
-def _missing_fields(draft: ComplaintDraft | None) -> list[str]:
-    return [
-        field
-        for field in _REQUIRED_FIELDS
-        if draft is None or not getattr(draft, field)
-    ]
-
-
 # 한 턴에 한 필드만 묻는다. 둘을 한 문장으로 같이 물으면 "몰라" 같은 답이 어느 필드에
 # 대한 것인지 추출 프롬프트도 판단할 수 없다.
 # LLM의 reply를 못 받았거나, LLM이 물은 필드가 우리가 물을 필드와 다를 때 쓰는 fallback.
@@ -129,12 +121,8 @@ _PHOTO_FAILED_PREFIX = "사진을 받았지만 분석에 실패했어요. "
 
 
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
-    """사진에서 읽은 내용을 응답에 그대로 노출한다.
-
-    VLM 결과를 초안에 직접 넣으면 신뢰도 임계값이 필요해진다(확인 단계 없이 카드가
-    만들어지므로). 대신 읽은 내용을 보여주고 입주민이 맞다고 하면 그 발화로 symptom이
-    채워지게 한다 — 확인 주체가 사람이라 임계값이 필요 없다.
-    """
+    """사진에서 읽은 내용을 노출한다. 입주민이 확인해주면 그 발화로 symptom이 채워지므로,
+    초안에 직접 넣을 때 필요한 신뢰도 임계값이 필요 없다."""
     if image_analysis is None:
         return _PHOTO_FAILED_PREFIX
     summary = next(
@@ -167,17 +155,15 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         LlmUpstreamError,
     ):
         image_analysis = None
-    missing_fields = _missing_fields(draft)
+    missing_fields = [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
 
     if missing_fields:
         complaint_state = ComplaintState.COLLECTING
         asked_now = missing_fields[0]
         if llm_reply and llm_missing == {asked_now}:
             follow_up = llm_reply
-            reply_source = "llm"
         else:
             follow_up = _MISSING_FIELD_REPLY[asked_now]
-            reply_source = "fixed"
         reply = (
             follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
         )
@@ -188,7 +174,6 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         # 민원 카드를 만들고 대화를 끝내므로, 확인 대기 상태를 따로 둘 필요가 없다.
         complaint_state = None
         reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
-        reply_source = "complete"
 
     # 턴당 한 줄. 같은 항목을 몇 번 묻는지, "모름" 경로가 얼마나 타는지, 아무 값도 안
     # 채워지는 턴이 반복되는지를 사후에 세기 위한 것이다. 다음 작업(반복 질문 가드,
@@ -196,15 +181,14 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     logger.info(
         "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
         "asked=%s missing=%s draft_changed=%s location_unknown=%s "
-        "reply_source=%s text_len=%s photo=%s",
+        "text_len=%s photo=%s",
         request.building_id,
         request.conversation_id,
         request.trace_id,
-        asked_now if missing_fields else None,
+        missing_fields[0] if missing_fields else None,
         missing_fields,
         draft != request.complaint_draft,
         draft.location == _UNKNOWN_LOCATION,
-        reply_source,
         len((request.message.text or "").strip()),
         "analyzed" if image_analysis else ("failed" if photo_sent else "none"),
     )
