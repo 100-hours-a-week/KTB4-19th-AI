@@ -412,7 +412,7 @@ def test_handle_complaint_acknowledges_photo_when_fields_still_missing(
 
     assert (
         reply
-        == "사진은 확인했습니다. 민원 접수를 위해 발생 위치와 불편 증상을 알려주세요."
+        == "사진은 확인했습니다 — 천장에서 물이 흐르는 흔적. 어디에서 생긴 문제인가요?"
     )
 
 
@@ -427,7 +427,7 @@ def test_handle_complaint_uses_generic_reply_without_photo(
 
     reply = handle_complaint(_make_request("음.."))["reply"]
 
-    assert reply == "민원 접수를 위해 발생 위치와 불편 증상을 알려주세요."
+    assert reply == "어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_uses_llm_generated_reply_when_missing_matches(
@@ -438,14 +438,14 @@ def test_handle_complaint_uses_llm_generated_reply_when_missing_matches(
         "_extract_complaint_fields_and_reply",
         lambda _: (
             ComplaintDraft(),
-            "화장실 세면대인지 변기 쪽인지, 어떤 증상인지 알려주시겠어요?",
-            {"location", "symptom"},
+            "화장실 세면대인지 변기 쪽인지 알려주시겠어요?",
+            {"location"},
         ),
     )
 
     reply = handle_complaint(_make_request("화장실이 좀 이상해요"))["reply"]
 
-    assert reply == "화장실 세면대인지 변기 쪽인지, 어떤 증상인지 알려주시겠어요?"
+    assert reply == "화장실 세면대인지 변기 쪽인지 알려주시겠어요?"
 
 
 def test_handle_complaint_falls_back_when_llm_missing_disagrees_with_actual(
@@ -476,7 +476,7 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
         lambda _: (
             ComplaintDraft(),
             "정확히 어디쯤인지 알려주시겠어요?",
-            {"location", "symptom"},
+            {"location"},
         ),
     )
     monkeypatch.setattr(
@@ -498,7 +498,10 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
         _make_request("이거 보세요", ["https://example.com/leak.jpg"])
     )["reply"]
 
-    assert reply == "사진은 확인했습니다. 정확히 어디쯤인지 알려주시겠어요?"
+    assert (
+        reply
+        == "사진은 확인했습니다 — 바닥에 물이 고여 있음. 정확히 어디쯤인지 알려주시겠어요?"
+    )
 
 
 def test_handle_complaint_clears_state_when_fields_complete(
@@ -560,7 +563,7 @@ def test_handle_complaint_asks_only_about_missing_location(
 
     reply = handle_complaint(_make_request("물이 새요"))["reply"]
 
-    assert reply == "정확한 발생 위치를 알려주세요."
+    assert reply == "어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
@@ -569,7 +572,11 @@ def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint_fields_and_reply",
-        lambda _: (ComplaintDraft(location="화장실", symptom="이상해요"), "", set()),
+        lambda _: (
+            ComplaintDraft(location="화장실", symptom="이상해요"),
+            "",
+            set(),
+        ),
     )
 
     result = handle_complaint(_make_request("화장실이 이상해요"))
@@ -597,3 +604,48 @@ def test_handle_complaint_merges_occurred_at_without_erasing_existing_value(
     result = handle_complaint(request)["result"]
 
     assert result.complaint_draft.occurred_at == datetime(2026, 9, 20)  # noqa: DTZ001
+
+
+def test_handle_complaint_asks_one_field_at_a_time_when_both_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 둘을 한 문장으로 같이 물으면 "몰라"가 어느 필드에 대한 답인지 알 수 없다.
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        lambda _: (ComplaintDraft(), "", set()),
+    )
+
+    outcome = handle_complaint(_make_request("좀 이상해요"))
+
+    assert outcome["reply"] == node_module._MISSING_FIELD_REPLY["location"]
+    assert "증상" not in outcome["reply"]
+
+
+def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # VLM이 요약을 못 준 경우까지 사진 내용을 노출하려 들면 빈 문장이 붙는다.
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        lambda _: (ComplaintDraft(), "", set()),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda _, __: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/blur.jpg", summary=None, ocr_text=None
+                )
+            ]
+        ),
+        raising=False,
+    )
+
+    reply = handle_complaint(
+        _make_request("이것 좀 봐주세요", image_urls=["https://example.com/blur.jpg"])
+    )["reply"]
+
+    assert reply == "사진은 확인했습니다. 어디에서 생긴 문제인가요?"

@@ -285,7 +285,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "route": "complaint",
         "complaint_intent": None,
         "next_complaint_state": "collecting",
-        "reply": "민원 접수를 위해 발생 위치와 불편 증상을 알려주세요.",
+        "reply": "어디에서 생긴 문제인가요?",
         "result": {
             "complaint_draft": {
                 "issue_type": None,

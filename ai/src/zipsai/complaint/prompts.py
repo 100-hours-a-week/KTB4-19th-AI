@@ -20,8 +20,16 @@ COMPLAINT_SYSTEM_PROMPT = (
     "down → drain, not water_supply. Water actively dripping/pooling somewhere → leak, even if the "
     "source is a pipe or the water system.\n\n"
     "Other fields:\n"
-    "- location: where the problem is (e.g. 화장실, 주방). null if not stated in this turn.\n"
-    "- symptom: what's wrong, in the resident's own words. null if not stated in this turn.\n"
+    "- location: where the problem is (e.g. 화장실, 주방). null if not stated in this turn. "
+    "Exception: when the previous assistant turn asked for the location and the resident "
+    "replies that they do not know or will not say (몰라, 모르겠어요, 안 알려줄래요), output "
+    'the literal string "모름" instead of null — an unknown location is a usable value '
+    "because the manager can call and confirm it.\n"
+    "- symptom: what's wrong, in the resident's own words. null if not stated in this turn. "
+    'NEVER output "모름" or any placeholder here; a complaint with no symptom cannot be '
+    "acted on, so leave it null and it will be asked again. If an earlier assistant turn "
+    "reported what a photo showed and the resident confirms it or points back to the photo "
+    "(네, 맞아요, 사진에 있는 그거요, 사진 봐), use that reported observation as the symptom.\n"
     "- occurred_at: when the problem started or was first noticed, only if stated in this turn. "
     "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
     "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
@@ -30,9 +38,10 @@ COMPLAINT_SYSTEM_PROMPT = (
     "at the EXISTING draft below together with what you just extracted this turn, not just this "
     'turn\'s message. Empty array if both are known. Only "location" and/or "symptom" are valid '
     "entries; never include issue_type or occurred_at.\n"
-    "- reply: a short, natural Korean follow-up question for the resident, asking ONLY about the "
-    'field(s) listed in `missing`. Empty string "" if `missing` is empty. One short, friendly '
-    "sentence, no lists. Never ask about issue_type or occurred_at.\n\n"
+    "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — the "
+    'first still-unknown field in the order "location", then "symptom". Never ask about two '
+    'fields in one turn. Empty string "" if `missing` is empty. One short, friendly sentence, '
+    "no lists. Never ask about issue_type or occurred_at.\n\n"
     "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"
     '{{"issue_type": null, "location": null, "symptom": null, "occurred_at": null, "missing": [], '
