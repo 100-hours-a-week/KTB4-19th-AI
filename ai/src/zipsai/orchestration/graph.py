@@ -2,7 +2,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from zipsai.complaint.node import handle_complaint
-from zipsai.contracts.converse import Route
+from zipsai.contracts.converse import ComplaintState, Route
 from zipsai.knowledge.node import handle_knowledge
 from zipsai.orchestration.clarify import handle_clarify
 from zipsai.orchestration.intent import classify_intent
@@ -11,9 +11,12 @@ from zipsai.orchestration.state import AgentState
 
 def select_entry_node(state: AgentState) -> str:
     request = state["request"]
+    # 수집 중일 때만 단축한다. "화장실이요"처럼 주어 없는 응답을 민원에 붙여두려고
+    # 넣은 보호이고, 그게 필요한 상태는 collecting뿐이다. 계약에만 있는
+    # guiding·clarifying가 오더라도 의도를 다시 분류하는 편이 맞다.
     if (
         request.current_route is Route.COMPLAINT
-        and request.current_complaint_state is not None
+        and request.current_complaint_state is ComplaintState.COLLECTING
     ):
         return "complaint"
     return "classify_intent"

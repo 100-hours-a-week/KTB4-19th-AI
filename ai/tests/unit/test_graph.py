@@ -68,6 +68,7 @@ def test_select_next_node_returns_route_node(route: Route | None, expected_node:
     ("current_route", "current_complaint_state", "expected_node"),
     [
         (Route.COMPLAINT, ComplaintState.COLLECTING, "complaint"),
+        (Route.COMPLAINT, ComplaintState.CLARIFYING, "classify_intent"),
         (Route.COMPLAINT, None, "classify_intent"),
         (Route.KNOWLEDGE, None, "classify_intent"),
         (None, None, "classify_intent"),
