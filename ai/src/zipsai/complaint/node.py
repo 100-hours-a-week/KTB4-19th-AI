@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from zipsai.errors import (
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
+from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +37,22 @@ _UNKNOWN_LOCATION = "모름"
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
+    # 단계 로그는 handle_complaint 한 곳에서만 낸다. 여기서도 내면 같은 stage 이름이
+    # 두 번 집계된다.
     draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
     return draft
+
+
+def _log_retry(attempt: int, error: Exception) -> None:
+    """재시도로 넘어간 회차를 남긴다. 다음 시도가 성공하면 1차 실패가 어디에도 안 남는다."""
+    logger.warning(
+        "extraction_retry",
+        extra={
+            "stage": "text_extraction",
+            "attempt": attempt,
+            "error_type": type(error).__name__,
+        },
+    )
 
 
 def _extract_complaint_fields_and_reply(
@@ -46,16 +62,19 @@ def _extract_complaint_fields_and_reply(
         today=datetime.now(_KST).date().isoformat(),
         conversation_history=format_history(request.conversation_history),
         complaint_draft=request.complaint_draft,
-        message_text=request.message.text,
+        # 사진만 온 턴은 text가 None이다. 그대로 넘기면 "현재 발화: None"이 렌더돼
+        # 모델이 None을 입주민 발화로 읽는다.
+        message_text=request.message.text or "",
     )
 
     last_error: Exception | None = None
-    for _attempt in range(_EXTRACTION_ATTEMPTS):
+    for attempt in range(1, _EXTRACTION_ATTEMPTS + 1):
         raw = generate_text(system_message.content, user_message.content)
         try:
             data = json.loads(strip_json_code_fence(raw))
         except json.JSONDecodeError as error:
             last_error = error
+            _log_retry(attempt, error)
             continue
 
         reply = data.pop("reply", "")
@@ -71,6 +90,7 @@ def _extract_complaint_fields_and_reply(
             draft = ComplaintDraft(**data)
         except ValidationError as error:
             last_error = error
+            _log_retry(attempt, error)
             continue
 
         return draft, reply.strip(), llm_missing
@@ -88,6 +108,9 @@ def _merge_complaint_draft(
         for field in ("issue_type", "location", "symptom", "occurred_at")
         if getattr(extracted, field) is not None
     }
+    # "모름"은 빈 칸을 채우는 값이지 이미 확인된 값을 대체하는 값이 아니다. 증상을 물은
+    # 턴에 "모르겠어요"가 오면 추출이 그걸 위치에 대한 모름으로 보고 "모름"을 넣기도 한다
+    # (실제로 관측됨). 그대로 두면 확인된 위치가 지워져 관리자가 쓸 수 없는 값이 된다.
     if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
         del updates["location"]
     return (current or ComplaintDraft()).model_copy(update=updates)
@@ -97,6 +120,10 @@ def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> Complain
     return draft.model_copy(
         update={"image_urls": list(dict.fromkeys([*draft.image_urls, *image_urls]))}
     )
+
+
+def _missing_fields(draft: ComplaintDraft) -> list[str]:
+    return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
 
 
 _MISSING_FIELD_REPLY = {
@@ -122,26 +149,34 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
 
 
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
-    extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
+    started_at = perf_counter()
+    with stage("text_extraction", logger):
+        extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
     draft = _append_image_urls(
         _merge_complaint_draft(request.complaint_draft, extracted),
         request.message.image_urls,
     )
     photo_sent = bool(request.message.image_urls)
-    try:
-        image_analysis = (
-            analyze_images(request.message.image_urls, VLM_ANALYSIS_PROMPT)
-            if photo_sent
-            else None
-        )
-    except (
-        ImageAnalysisError,
-        LlmRateLimitedError,
-        LlmTimeoutError,
-        LlmUnavailableError,
-        LlmUpstreamError,
-    ):
-        image_analysis = None
+    image_analysis = None
+    if photo_sent:
+        try:
+            with stage("image_analysis", logger):
+                image_analysis = analyze_images(
+                    request.message.image_urls, VLM_ANALYSIS_PROMPT
+                )
+        except (
+            ImageAnalysisError,
+            LlmRateLimitedError,
+            LlmTimeoutError,
+            LlmUnavailableError,
+            LlmUpstreamError,
+        ):
+            # 사진 분석이 실패해도 민원 수집은 이어간다. 답변에 실패를 알리고 텍스트로 받는다.
+            image_analysis = None
+    else:
+        # 사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 구분하려면 줄이 있어야 한다.
+        skipped("image_analysis", logger)
+
     missing_fields = _missing_fields(draft)
 
     if missing_fields:
@@ -163,21 +198,21 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
         reply_source = "complete"
 
-
     logger.info(
-        "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
-        "asked=%s missing=%s draft_changed=%s location_unknown=%s "
-        "reply_source=%s text_len=%s photo=%s",
-        request.building_id,
-        request.conversation_id,
-        request.trace_id,
-        asked_now if missing_fields else None,
-        missing_fields,
-        draft != request.complaint_draft,
-        draft.location == _UNKNOWN_LOCATION,
-        reply_source,
-        len((request.message.text or "").strip()),
-        "analyzed" if image_analysis else ("failed" if photo_sent else "none"),
+        "complaint_turn",
+        extra={
+            "conversation_id": request.conversation_id,
+            "total_ms": elapsed_ms(started_at),
+            "asked": asked_now if missing_fields else None,
+            "missing": missing_fields,
+            "draft_changed": draft != request.complaint_draft,
+            "location_unknown": draft.location == _UNKNOWN_LOCATION,
+            "reply_source": reply_source,
+            "text_len": len((request.message.text or "").strip()),
+            "photo": "analyzed"
+            if image_analysis
+            else ("failed" if photo_sent else "none"),
+        },
     )
 
     return {

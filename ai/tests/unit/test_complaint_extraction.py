@@ -18,8 +18,13 @@ from zipsai.contracts.converse import (
 from zipsai.errors import ComplaintExtractionError, ImageAnalysisError
 
 
+def _node_records(caplog: pytest.LogCaptureFixture) -> list:
+    """caplog 핸들러는 root에 붙어 다른 로거 기록까지 담는다. 이 모듈 것만 남긴다."""
+    return [r for r in caplog.records if r.name == node_module.__name__]
+
+
 def _make_request(
-    text: str,
+    text: str | None,
     image_urls: list[str] | None = None,
     current_complaint_state: str = "collecting",
     conversation_history: list[dict[str, object]] | None = None,
@@ -174,7 +179,7 @@ def test_extract_complaint_fields_retries_once_then_succeeds(
 
 
 def test_extract_complaint_fields_gives_up_after_exhausting_retries(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
     calls: list[int] = []
 
@@ -184,10 +189,28 @@ def test_extract_complaint_fields_gives_up_after_exhausting_retries(
 
     monkeypatch.setattr(node_module, "generate_text", always_broken)
 
-    with pytest.raises(ComplaintExtractionError):
-        extract_complaint_fields(_make_request("아무 말"))
+    # 단계 로그가 붙은 실제 경로(handle_complaint)로 확인한다.
+    with (
+        caplog.at_level("INFO", logger=node_module.__name__),
+        pytest.raises(ComplaintExtractionError),
+    ):
+        handle_complaint(_make_request("아무 말"))
 
     assert len(calls) == node_module._EXTRACTION_ATTEMPTS
+    records = _node_records(caplog)
+    retries = [r for r in records if r.getMessage() == "extraction_retry"]
+    assert [(r.attempt, r.error_type) for r in retries] == [
+        (1, "JSONDecodeError"),
+        (2, "JSONDecodeError"),
+    ]
+    failed = [
+        r for r in records if r.getMessage() == "stage_done" and r.outcome == "fail"
+    ]
+    assert [(r.stage, r.error_type) for r in failed] == [
+        ("text_extraction", "ComplaintExtractionError")
+    ]
+    # 원인(JSONDecodeError)은 logger.exception이 실은 트레이스백에 남는다.
+    assert "JSONDecodeError" in failed[0].exc_text
 
 
 def test_extract_complaint_fields_parses_occurred_at(monkeypatch: pytest.MonkeyPatch):
@@ -651,7 +674,7 @@ def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
     assert reply == "사진은 확인했습니다. 어디에서 생긴 문제인가요?"
 
 
-def test_handle_complaint_logs_one_line_per_turn(
+def test_handle_complaint_logs_stages_and_turn(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
     request = _make_request("몰라")
@@ -666,10 +689,93 @@ def test_handle_complaint_logs_one_line_per_turn(
     with caplog.at_level("INFO", logger=node_module.__name__):
         handle_complaint(request)
 
-    assert len(caplog.records) == 1
-    line = caplog.records[0].getMessage()
-    assert "complaint_turn" in line
-    assert "location_unknown=True" in line
+    records = _node_records(caplog)
+    # 외부 호출이 있는 단계만 잰다. 순수 계산 구간은 항상 0ms라 줄만 늘린다.
+    stages = [r for r in records if r.getMessage() == "stage_done"]
+    assert [(r.stage, r.outcome) for r in stages] == [
+        ("text_extraction", "ok"),
+        ("image_analysis", "skipped"),
+    ]
+    assert all(r.duration_ms >= 0 for r in stages)
+
+    turn = records[-1]
+    assert turn.getMessage() == "complaint_turn"
+    assert turn.location_unknown is True
+    # "모름"이 위치를 채웠으므로 더 물을 항목이 없다 — 수집이 여기서 끝난다.
+    assert turn.asked is None
+    assert turn.reply_source == "complete"
+    assert turn.total_ms >= 0
+
+
+def test_handle_complaint_logs_image_failure_and_keeps_text_flow(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        lambda _: (ComplaintDraft(location="욕실"), "", set()),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: (_ for _ in ()).throw(ImageAnalysisError("invalid image")),
+    )
+
+    with caplog.at_level("INFO", logger=node_module.__name__):
+        result = handle_complaint(
+            _make_request("물이 새요", ["https://example.com/leak.jpg"])
+        )
+
+    assert result["result"].image_analysis is None
+    failed = [
+        r
+        for r in _node_records(caplog)
+        if r.getMessage() == "stage_done" and r.outcome == "fail"
+    ]
+    assert [(r.stage, r.error_type, r.error) for r in failed] == [
+        ("image_analysis", "ImageAnalysisError", "invalid image")
+    ]
+    assert failed[0].duration_ms >= 0
+
+
+def test_handle_complaint_photo_only_logs_image_analysis(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    image_url = "https://example.com/leak.jpg"
+    monkeypatch.setattr(
+        node_module,
+        "generate_text",
+        lambda *_: (
+            '{"location": null, "symptom": null, "missing": ["location", "symptom"]}'
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url=image_url, summary="바닥에 물이 고여 있음", ocr_text=None
+                )
+            ]
+        ),
+    )
+
+    with caplog.at_level("INFO", logger=node_module.__name__):
+        outcome = handle_complaint(_make_request(None, [image_url]))
+
+    assert outcome["result"].complaint_draft.image_urls == [image_url]
+    assert outcome["result"].missing_fields == ["location", "symptom"]
+    assert outcome["reply"].startswith("사진은 확인했습니다 — 바닥에 물이 고여 있음.")
+    records = _node_records(caplog)
+    analyzed = [
+        r
+        for r in records
+        if r.getMessage() == "stage_done" and r.stage == "image_analysis"
+    ]
+    assert [r.outcome for r in analyzed] == ["ok"]
+    assert analyzed[0].duration_ms >= 0
+    assert records[-1].photo == "analyzed"
 
 
 def test_handle_complaint_keeps_confirmed_location_against_unknown(

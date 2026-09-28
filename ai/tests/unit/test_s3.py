@@ -8,6 +8,13 @@ from zipsai.integrations import s3
 from zipsai.integrations.s3 import download, parse_s3_location
 
 
+@pytest.fixture(autouse=True)
+def _ignore_ambient_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S3_BUCKET은 import 시점에 .env에서 읽는 모듈 상수다. 비워두지 않으면 개발자가
+    # 어떤 버킷을 설정해뒀는지에 따라 결과가 달라져, .env가 없는 CI와 답이 어긋난다.
+    monkeypatch.setattr(s3, "S3_BUCKET", None)
+
+
 class FakeS3:
     def __init__(self, error: Exception | None = None) -> None:
         self.calls: list[tuple[str, str, str]] = []
