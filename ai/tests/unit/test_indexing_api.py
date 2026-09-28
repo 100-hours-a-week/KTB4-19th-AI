@@ -15,7 +15,9 @@ REAL_RUN_JOB = indexing._run_job
 def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> list[IndexingJobRequest]:
     # 배경 작업이 실제 S3·Embedding에 붙지 않게 막고 예약 여부만 기록한다.
     runs: list[IndexingJobRequest] = []
-    monkeypatch.setattr(indexing, "_run_job", runs.append)
+    monkeypatch.setattr(
+        indexing, "_run_job", lambda payload, _job_id: runs.append(payload)
+    )
     return runs
 
 
