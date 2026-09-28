@@ -13,6 +13,7 @@ from zipsai.integrations.qdrant import (
     building_condition,
     to_sparse_vector,
 )
+from zipsai.observability import skipped, stage
 from zipsai.settings import QDRANT_COLLECTION
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ def query_encoder() -> HttpEncoder:
 
 def encode_question(question: str, *, encoder: Encoder) -> QueryVector:
     """질문 하나를 색인과 같은 bge-m3로 dense·sparse 벡터로 만든다."""
-    dense, sparse = encoder.encode([question])
+    with stage("encode", logger, question_len=len(question)):
+        dense, sparse = encoder.encode([question])
     return dense[0], sparse[0]
 
 
@@ -65,53 +67,50 @@ def search_chunks(
     # 게이트를 먼저 통과시킨다. 실패가 성공보다 빠르고 싸야 하므로,
     # dense 한 건도 임계값을 못 넘으면 하이브리드도 LLM도 돌리지 않는다.
     # RRF 점수는 코사인이 아니라서 융합 뒤에는 이 임계값을 걸 수 없다.
-    gate = _query(
-        client,
-        collection_name=collection,
-        query=dense,
-        using=DENSE_VECTOR,
-        query_filter=building_filter,
-        limit=1,
-        score_threshold=SCORE_THRESHOLD,
-        with_payload=False,
-    )
-    if not gate.points:
-        logger.info(
-            "knowledge_search_gated building_id=%s threshold=%.2f",
-            building_id,
-            SCORE_THRESHOLD,
+    with stage("gate", logger, threshold=SCORE_THRESHOLD) as step:
+        # 임계값을 Qdrant에 맡기면 미달일 때 결과가 비어 점수 자체를 볼 수 없다.
+        # 최고점만 받아 와 여기서 비교해야 임계값이 적절한지 판단할 근거가 남는다.
+        gate = _query(
+            client,
+            collection_name=collection,
+            query=dense,
+            using=DENSE_VECTOR,
+            query_filter=building_filter,
+            limit=1,
+            with_payload=False,
         )
+        top_score = gate.points[0].score if gate.points else None
+        passed = top_score is not None and top_score >= SCORE_THRESHOLD
+        step["top_score"] = round(top_score, 4) if top_score is not None else None
+        step["passed"] = passed
+
+    if not passed:
+        skipped("hybrid", logger)
         return []
 
-    hits = _query(
-        client,
-        collection_name=collection,
-        prefetch=[
-            models.Prefetch(
-                query=dense,
-                using=DENSE_VECTOR,
-                filter=building_filter,
-                limit=PREFETCH_LIMIT,
-            ),
-            models.Prefetch(
-                query=to_sparse_vector(sparse),
-                using=SPARSE_VECTOR,
-                filter=building_filter,
-                limit=PREFETCH_LIMIT,
-            ),
-        ],
-        query=models.FusionQuery(fusion=models.Fusion.RRF),
-        limit=TOP_K,
-        with_payload=True,
-    ).points
+    with stage("hybrid", logger, prefetch_limit=PREFETCH_LIMIT) as step:
+        hits = _query(
+            client,
+            collection_name=collection,
+            prefetch=[
+                models.Prefetch(
+                    query=dense,
+                    using=DENSE_VECTOR,
+                    filter=building_filter,
+                    limit=PREFETCH_LIMIT,
+                ),
+                models.Prefetch(
+                    query=to_sparse_vector(sparse),
+                    using=SPARSE_VECTOR,
+                    filter=building_filter,
+                    limit=PREFETCH_LIMIT,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=TOP_K,
+            with_payload=True,
+        ).points
+        step["hits"] = len(hits)
+        step["distinct_docs"] = len({(hit.payload or {}).get("doc_id") for hit in hits})
 
-    for hit in hits:
-        payload = hit.payload or {}
-        logger.info(
-            "knowledge_search_hit building_id=%s doc_id=%s score=%.4f text=%.40s",
-            building_id,
-            payload.get("doc_id"),
-            hit.score,
-            payload.get("text", ""),
-        )
     return hits

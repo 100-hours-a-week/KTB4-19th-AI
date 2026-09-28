@@ -1,8 +1,13 @@
+import logging
+
 from zipsai.contracts.converse import Route
 from zipsai.errors import IntentClassificationError
 from zipsai.integrations.llm import generate_text
+from zipsai.observability import stage
 from zipsai.orchestration.prompts import INTENT_PROMPT
 from zipsai.orchestration.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def classify_intent(state: AgentState) -> dict[str, Route]:
@@ -13,11 +18,18 @@ def classify_intent(state: AgentState) -> dict[str, Route]:
         conversation_history=_format_history(state),
         current_route=request.current_route.value if request.current_route else "없음",
     )
-    raw_response = generate_text(
-        system_prompt=str(messages[0].content),
-        user_prompt=str(messages[1].content),
-    )
-    return {"route": parse_route(raw_response)}
+    with stage(
+        "intent",
+        logger,
+        current_route=request.current_route.value if request.current_route else None,
+    ) as step:
+        raw_response = generate_text(
+            system_prompt=str(messages[0].content),
+            user_prompt=str(messages[1].content),
+        )
+        route = parse_route(raw_response)
+        step["route"] = route.value
+    return {"route": route}
 
 
 def parse_route(raw_response: str) -> Route:

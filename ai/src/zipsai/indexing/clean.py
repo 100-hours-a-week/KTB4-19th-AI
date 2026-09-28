@@ -1,9 +1,6 @@
-import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
 
 HOLD_RATIO = 0.30
 
@@ -24,6 +21,7 @@ _UNCHANGED_RE = re.compile(
 class CleaningResult:
     pages: list[dict[str, int | str]]
     removed_ratio: float
+    skipped: bool = False
 
 
 def _is_protected(line: str) -> bool:
@@ -101,17 +99,13 @@ def clean_pages(pages: list[dict[str, int | str]]) -> CleaningResult:
     return CleaningResult(pages=cleaned_pages, removed_ratio=removed_ratio)
 
 
-def apply_cleaning(doc_id: str, pages: list[dict[str, int | str]]) -> CleaningResult:
+def apply_cleaning(pages: list[dict[str, int | str]]) -> CleaningResult:
     result = clean_pages(pages)
     if result.removed_ratio > HOLD_RATIO:
         # 너무 많이 지웠으면 정제를 포기한다. 쪽번호가 섞이는 편이
         # 본문이 잘린 채 색인되는 것보다 낫다.
-        logger.info(
-            "cleaning_skipped doc_id=%s removed_ratio=%.3f",
-            doc_id,
-            result.removed_ratio,
+        return CleaningResult(
+            pages=[dict(page) for page in pages], removed_ratio=0.0, skipped=True
         )
-        return CleaningResult(pages=[dict(page) for page in pages], removed_ratio=0.0)
 
-    logger.info("cleaning doc_id=%s removed_ratio=%.3f", doc_id, result.removed_ratio)
     return result

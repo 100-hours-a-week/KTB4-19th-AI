@@ -12,6 +12,7 @@ from zipsai.integrations.llm import generate_text
 from zipsai.integrations.qdrant import get_client
 from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT, NO_EVIDENCE, format_context
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
+from zipsai.observability import stage
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +50,34 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
             qa_question=question,
         )
 
-    messages = KNOWLEDGE_PROMPT.format_messages(
-        question=question,
-        context=format_context(chunks),
-    )
-    answer = generate_text(
-        system_prompt=str(messages[0].content),
-        user_prompt=str(messages[1].content),
-    )
-    # 전체 일치로만 판정한다. 부분 문자열로 보면 건물 문서 본문에 이 단어가 들어 있는
-    # 정상 답변이 회피로 뒤집힌다.
-    if answer.strip() == NO_EVIDENCE:
+    with stage("context", logger) as step:
+        context = format_context(chunks)
+        # 답이 이상하다는 신고가 오면 어떤 근거로 만든 답인지가 유일한 단서다.
+        # 본문 대신 좌표만 남긴다. Qdrant 포인트 id는 재색인마다 바뀌어 쓸 수 없다.
+        step["chunks"] = [
+            {
+                "doc_id": (chunk.payload or {}).get("doc_id"),
+                "page": (chunk.payload or {}).get("page"),
+                "rank": rank,
+                "chars": len((chunk.payload or {}).get("text") or ""),
+            }
+            for rank, chunk in enumerate(chunks, start=1)
+        ]
+        step["context_chars"] = len(context)
+
+    messages = KNOWLEDGE_PROMPT.format_messages(question=question, context=context)
+    with stage("generate", logger) as step:
+        answer = generate_text(
+            system_prompt=str(messages[0].content),
+            user_prompt=str(messages[1].content),
+        )
+        # 전체 일치로만 판정한다. 부분 문자열로 보면 건물 문서 본문에 이 단어가 들어 있는
+        # 정상 답변이 회피로 뒤집힌다.
+        declined = answer.strip() == NO_EVIDENCE
+        step["answer_chars"] = len(answer)
+        step["declined"] = declined
+
+    if declined:
         return _fallback(
             request,
             reason="model_declined",
@@ -85,10 +103,8 @@ def _fallback(
     qa_question: str | None = None,
 ) -> dict[str, object]:
     logger.info(
-        "knowledge_fallback building_id=%s reason=%s trace_id=%s",
-        request.building_id,
-        reason,
-        request.trace_id,
+        "fallback",
+        extra={"reason": reason, "has_question": bool(qa_question)},
     )
     return {
         "complaint_state": None,

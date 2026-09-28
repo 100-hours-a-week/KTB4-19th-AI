@@ -1,7 +1,4 @@
 import copy
-import logging
-
-import pytest
 
 from zipsai.indexing.clean import HOLD_RATIO, apply_cleaning, clean_pages
 
@@ -105,7 +102,7 @@ def test_apply_cleaning_falls_back_to_the_original_when_removal_is_excessive() -
     original = "불필요\n- 3 -\n본문"
     assert clean_pages([{"page": 1, "text": original}]).removed_ratio > HOLD_RATIO
 
-    result = apply_cleaning("doc-1", [{"page": 1, "text": original}])
+    result = apply_cleaning([{"page": 1, "text": original}])
 
     assert result.pages[0]["text"] == original
     assert result.removed_ratio == 0.0
@@ -116,21 +113,21 @@ def test_apply_cleaning_keeps_the_cleaned_pages_below_the_threshold() -> None:
     cleaned = clean_pages(pages)
     assert 0 < cleaned.removed_ratio <= HOLD_RATIO
 
-    result = apply_cleaning("doc-1", pages)
+    result = apply_cleaning(pages)
 
     assert result.pages[0]["text"] == cleaned.pages[0]["text"]
 
 
-def test_logs_doc_id_and_ratio_without_body_text(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    body = "비밀본문"
+def test_skipped_is_marked_so_the_log_can_tell_it_from_a_clean_document() -> None:
+    # removed_ratio 0.0만으로는 "지울 게 없었다"와 "포기했다"가 구분되지 않는다.
+    original = "불필요\n- 3 -\n본문"
 
-    with caplog.at_level(logging.INFO, logger="zipsai.indexing.clean"):
-        apply_cleaning("doc-abc", [{"page": 1, "text": body}])
+    skipped = apply_cleaning([{"page": 1, "text": original}])
+    untouched = apply_cleaning([{"page": 1, "text": "본문"}])
 
-    assert "cleaning doc_id=doc-abc removed_ratio=0.000" in caplog.text
-    assert body not in caplog.text
+    assert skipped.skipped is True
+    assert untouched.skipped is False
+    assert skipped.removed_ratio == untouched.removed_ratio == 0.0
 
 
 def test_preserves_dates_and_mask_placeholders() -> None:
