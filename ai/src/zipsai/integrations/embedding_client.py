@@ -1,9 +1,12 @@
+import logging
 import time
 
 import httpx
 
 from zipsai.errors import EmbeddingError
 from zipsai.settings import EMBEDDING_API_URL
+
+logger = logging.getLogger(__name__)
 
 # CPU 임베딩은 배치가 크면 수십 초가 걸린다. 실측 후 조정한다.
 DEFAULT_TIMEOUT_SECONDS = 120.0
@@ -16,6 +19,10 @@ ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 5.0
 
 EncodeOutput = tuple[list[list[float]], list[dict[str, float]]]
+
+
+def _status_code(exc: httpx.HTTPError) -> int | None:
+    return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
 
 
 def _is_transient(exc: httpx.HTTPError) -> bool:
@@ -62,8 +69,24 @@ class HttpEncoder:
                 return response.json()
             except httpx.HTTPError as exc:
                 if not _is_transient(exc):
-                    raise EmbeddingError(f"Embedding request failed: {exc}") from exc
+                    detail = ""
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        detail = f" {exc.response.text[:500]}"
+                    raise EmbeddingError(
+                        f"Embedding request failed: {exc}{detail}"
+                    ) from exc
                 last = exc
+                # 다음 시도가 성공하면 이 실패는 어디에도 남지 않는다.
+                logger.warning(
+                    "embed_retry",
+                    extra={
+                        "attempt": attempt + 1,
+                        "attempts": self._attempts,
+                        "status": _status_code(exc),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                )
                 if attempt + 1 < self._attempts:
                     time.sleep(self._retry_delay)
         raise EmbeddingError(

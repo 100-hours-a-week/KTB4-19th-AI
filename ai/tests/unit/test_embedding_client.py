@@ -148,7 +148,7 @@ def test_encode_does_not_retry_a_rejected_request() -> None:
         attempts.append(1)
         return httpx.Response(422, json={"detail": "texts must hold at most 32 items"})
 
-    with pytest.raises(EmbeddingError):
+    with pytest.raises(EmbeddingError, match="at most 32 items"):
         encoder_returning(handler).encode(["청크"])
 
     assert len(attempts) == 1

@@ -1,10 +1,6 @@
-import logging
 import re
-from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
-
-logger = logging.getLogger(__name__)
 
 
 class PiiKind(str, Enum):
@@ -172,10 +168,7 @@ def mask_pages(pages: list[dict[str, int | str]]) -> MaskingResult:
     return MaskingResult(pages=masked_pages, detections=detections)
 
 
-def apply_masking(doc_id: str, pages: list[dict[str, int | str]]) -> MaskingResult:
+def apply_masking(pages: list[dict[str, int | str]]) -> MaskingResult:
     # 탐지돼도 멈추지 않는다. 라벨로 치환된 본문을 그대로 색인하고
-    # 무엇이 걸렸는지는 로그로만 남긴다.
-    result = mask_pages(pages)
-    counts = Counter(detection.kind.value for detection in result.detections)
-    logger.info("pii_masking doc_id=%s counts=%s", doc_id, dict(counts))
-    return result
+    # 무엇이 걸렸는지는 단계 로그에만 남긴다.
+    return mask_pages(pages)

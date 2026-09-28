@@ -1,4 +1,3 @@
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,12 +11,10 @@ from zipsai.api.error_responses import (
 )
 from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
+from zipsai.observability import configure_logging
 from zipsai.settings import API_PREFIX, missing_required_settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging()
 
 
 @asynccontextmanager
