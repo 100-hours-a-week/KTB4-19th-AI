@@ -19,7 +19,7 @@ from zipsai.errors import ComplaintExtractionError, ImageAnalysisError
 
 
 def _make_request(
-    text: str,
+    text: str | None,
     image_urls: list[str] | None = None,
     current_complaint_state: str = "collecting",
     conversation_history: list[dict[str, object]] | None = None,
@@ -174,7 +174,7 @@ def test_extract_complaint_fields_retries_once_then_succeeds(
 
 
 def test_extract_complaint_fields_gives_up_after_exhausting_retries(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
     calls: list[int] = []
 
@@ -184,10 +184,20 @@ def test_extract_complaint_fields_gives_up_after_exhausting_retries(
 
     monkeypatch.setattr(node_module, "generate_text", always_broken)
 
-    with pytest.raises(ComplaintExtractionError):
+    with (
+        caplog.at_level("INFO", logger=node_module.__name__),
+        pytest.raises(ComplaintExtractionError),
+    ):
         extract_complaint_fields(_make_request("아무 말"))
 
     assert len(calls) == node_module._EXTRACTION_ATTEMPTS
+    lines = [record.getMessage() for record in caplog.records]
+    assert any("attempt=2 error=JSONDecodeError" in line for line in lines)
+    assert any(
+        "stage=text_extraction status=failed" in line
+        and "error=ComplaintExtractionError cause=JSONDecodeError" in line
+        for line in lines
+    )
 
 
 def test_extract_complaint_fields_parses_occurred_at(monkeypatch: pytest.MonkeyPatch):
@@ -651,7 +661,7 @@ def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
     assert reply == "사진은 확인했습니다. 어디에서 생긴 문제인가요?"
 
 
-def test_handle_complaint_logs_one_line_per_turn(
+def test_handle_complaint_logs_stages_and_turn(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
     request = _make_request("몰라")
@@ -666,10 +676,89 @@ def test_handle_complaint_logs_one_line_per_turn(
     with caplog.at_level("INFO", logger=node_module.__name__):
         handle_complaint(request)
 
-    assert len(caplog.records) == 1
-    line = caplog.records[0].getMessage()
-    assert "complaint_turn" in line
-    assert "location_unknown=True" in line
+    lines = [record.getMessage() for record in caplog.records]
+    assert [
+        line.split(" stage=")[1].split()[0]
+        for line in lines
+        if "complaint_stage" in line
+    ] == [
+        "text_extraction",
+        "draft_merge",
+        "image_analysis",
+        "required_fields",
+        "reply",
+    ]
+    assert "stage=image_analysis status=skipped" in lines[2]
+    assert all("trace_id=trace-001" in line for line in lines)
+    assert all("duration_ms=" in line for line in lines if "complaint_stage" in line)
+    assert caplog.records[0].stage == "text_extraction"
+    assert caplog.records[0].outcome == "ok"
+    assert caplog.records[0].duration_ms >= 0
+    assert "location_unknown=True" in lines[-1]
+    assert "total_ms=" in lines[-1]
+
+
+def test_handle_complaint_logs_image_failure_and_keeps_text_flow(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint_fields_and_reply",
+        lambda _: (ComplaintDraft(location="욕실"), "", set()),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: (_ for _ in ()).throw(ImageAnalysisError("invalid image")),
+    )
+
+    with caplog.at_level("INFO", logger=node_module.__name__):
+        result = handle_complaint(
+            _make_request("물이 새요", ["https://example.com/leak.jpg"])
+        )
+
+    assert result["result"].image_analysis is None
+    assert any(
+        "stage=image_analysis status=failed" in record.getMessage()
+        and "error=ImageAnalysisError" in record.getMessage()
+        and "detail=invalid image" in record.getMessage()
+        and "duration_ms=" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_handle_complaint_photo_only_logs_image_analysis(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    image_url = "https://example.com/leak.jpg"
+    monkeypatch.setattr(
+        node_module,
+        "generate_text",
+        lambda *_: (
+            '{"location": null, "symptom": null, "missing": ["location", "symptom"]}'
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url=image_url, summary="바닥에 물이 고여 있음", ocr_text=None
+                )
+            ]
+        ),
+    )
+
+    with caplog.at_level("INFO", logger=node_module.__name__):
+        outcome = handle_complaint(_make_request(None, [image_url]))
+
+    assert outcome["result"].complaint_draft.image_urls == [image_url]
+    assert outcome["result"].missing_fields == ["location", "symptom"]
+    assert outcome["reply"].startswith("사진은 확인했습니다 — 바닥에 물이 고여 있음.")
+    lines = [record.getMessage() for record in caplog.records]
+    assert any("stage=image_analysis status=ok duration_ms=" in line for line in lines)
+    assert "photo=analyzed" in lines[-1]
 
 
 def test_handle_complaint_keeps_confirmed_location_against_unknown(

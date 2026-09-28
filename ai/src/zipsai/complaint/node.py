@@ -1,6 +1,9 @@
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -27,6 +30,66 @@ from zipsai.integrations.vlm import analyze_images
 
 logger = logging.getLogger(__name__)
 
+
+@contextmanager
+def _stage(request: ConverseRequest, name: str) -> Iterator[None]:
+    started_at = perf_counter()
+    try:
+        yield
+    except Exception as error:
+        duration_ms = int((perf_counter() - started_at) * 1000)
+        detail = (
+            str(error)
+            if isinstance(
+                error,
+                (
+                    ComplaintExtractionError,
+                    ImageAnalysisError,
+                    LlmRateLimitedError,
+                    LlmTimeoutError,
+                    LlmUnavailableError,
+                    LlmUpstreamError,
+                ),
+            )
+            else None
+        )
+        logger.error(
+            "complaint_stage trace_id=%s stage=%s status=failed duration_ms=%d "
+            "error=%s cause=%s detail=%s",
+            request.trace_id,
+            name,
+            duration_ms,
+            type(error).__name__,
+            type(error.__cause__).__name__ if error.__cause__ else None,
+            detail,
+            extra={
+                "trace_id": request.trace_id,
+                "building_id": request.building_id,
+                "stage": name,
+                "duration_ms": duration_ms,
+                "outcome": "fail",
+                "error_type": type(error).__name__,
+                "error": detail,
+            },
+        )
+        raise
+    else:
+        duration_ms = int((perf_counter() - started_at) * 1000)
+        logger.info(
+            "complaint_stage trace_id=%s stage=%s status=ok duration_ms=%d",
+            request.trace_id,
+            name,
+            duration_ms,
+            extra={
+                "trace_id": request.trace_id,
+                "building_id": request.building_id,
+                "stage": name,
+                "duration_ms": duration_ms,
+                "outcome": "ok",
+            },
+        )
+
+
 _KST = ZoneInfo("Asia/Seoul")
 _EXTRACTION_ATTEMPTS = 2
 
@@ -35,7 +98,8 @@ _UNKNOWN_LOCATION = "모름"
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
-    draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
+    with _stage(request, "text_extraction"):
+        draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
     return draft
 
 
@@ -50,12 +114,25 @@ def _extract_complaint_fields_and_reply(
     )
 
     last_error: Exception | None = None
-    for _attempt in range(_EXTRACTION_ATTEMPTS):
+    for attempt in range(1, _EXTRACTION_ATTEMPTS + 1):
         raw = generate_text(system_message.content, user_message.content)
         try:
             data = json.loads(strip_json_code_fence(raw))
         except json.JSONDecodeError as error:
             last_error = error
+            logger.warning(
+                "complaint_retry trace_id=%s stage=text_extraction attempt=%d error=%s",
+                request.trace_id,
+                attempt,
+                type(error).__name__,
+                extra={
+                    "trace_id": request.trace_id,
+                    "building_id": request.building_id,
+                    "stage": "text_extraction",
+                    "attempt": attempt,
+                    "error_type": type(error).__name__,
+                },
+            )
             continue
 
         reply = data.pop("reply", "")
@@ -71,6 +148,19 @@ def _extract_complaint_fields_and_reply(
             draft = ComplaintDraft(**data)
         except ValidationError as error:
             last_error = error
+            logger.warning(
+                "complaint_retry trace_id=%s stage=text_extraction attempt=%d error=%s",
+                request.trace_id,
+                attempt,
+                type(error).__name__,
+                extra={
+                    "trace_id": request.trace_id,
+                    "building_id": request.building_id,
+                    "stage": "text_extraction",
+                    "attempt": attempt,
+                    "error_type": type(error).__name__,
+                },
+            )
             continue
 
         return draft, reply.strip(), llm_missing
@@ -99,6 +189,10 @@ def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> Complain
     )
 
 
+def _missing_fields(draft: ComplaintDraft) -> list[str]:
+    return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
+
+
 _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
     "symptom": "어떤 불편 증상인지 알려주세요.",
@@ -122,18 +216,35 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
 
 
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
-    extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
-    draft = _append_image_urls(
-        _merge_complaint_draft(request.complaint_draft, extracted),
-        request.message.image_urls,
-    )
+    started_at = perf_counter()
+    with _stage(request, "text_extraction"):
+        extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
+    with _stage(request, "draft_merge"):
+        draft = _append_image_urls(
+            _merge_complaint_draft(request.complaint_draft, extracted),
+            request.message.image_urls,
+        )
     photo_sent = bool(request.message.image_urls)
     try:
-        image_analysis = (
-            analyze_images(request.message.image_urls, VLM_ANALYSIS_PROMPT)
-            if photo_sent
-            else None
-        )
+        if photo_sent:
+            with _stage(request, "image_analysis"):
+                image_analysis = analyze_images(
+                    request.message.image_urls, VLM_ANALYSIS_PROMPT
+                )
+        else:
+            image_analysis = None
+            logger.info(
+                "complaint_stage trace_id=%s stage=image_analysis "
+                "status=skipped duration_ms=0",
+                request.trace_id,
+                extra={
+                    "trace_id": request.trace_id,
+                    "building_id": request.building_id,
+                    "stage": "image_analysis",
+                    "duration_ms": 0,
+                    "outcome": "skipped",
+                },
+            )
     except (
         ImageAnalysisError,
         LlmRateLimitedError,
@@ -142,42 +253,56 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         LlmUpstreamError,
     ):
         image_analysis = None
-    missing_fields = _missing_fields(draft)
+    with _stage(request, "required_fields"):
+        missing_fields = _missing_fields(draft)
 
-    if missing_fields:
-        complaint_state = ComplaintState.COLLECTING
-        asked_now = missing_fields[0]
-        if llm_reply and llm_missing == {asked_now}:
-            follow_up = llm_reply
-            reply_source = "llm"
+    with _stage(request, "reply"):
+        if missing_fields:
+            complaint_state = ComplaintState.COLLECTING
+            asked_now = missing_fields[0]
+            if llm_reply and llm_missing == {asked_now}:
+                follow_up = llm_reply
+                reply_source = "llm"
+            else:
+                follow_up = _MISSING_FIELD_REPLY[asked_now]
+                reply_source = "fixed"
+            reply = (
+                follow_up
+                if not photo_sent
+                else _photo_prefix(image_analysis) + follow_up
+            )
         else:
-            follow_up = _MISSING_FIELD_REPLY[asked_now]
-            reply_source = "fixed"
-        reply = (
-            follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
-        )
-    else:
-        if draft.issue_type is None:
-            draft = draft.model_copy(update={"issue_type": "other"})
-        complaint_state = None
-        reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
-        reply_source = "complete"
+            if draft.issue_type is None:
+                draft = draft.model_copy(update={"issue_type": "other"})
+            complaint_state = None
+            reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+            reply_source = "complete"
 
-
+    total_ms = int((perf_counter() - started_at) * 1000)
+    photo = "analyzed" if image_analysis else ("failed" if photo_sent else "none")
     logger.info(
         "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
-        "asked=%s missing=%s draft_changed=%s location_unknown=%s "
+        "total_ms=%d asked=%s missing=%s draft_changed=%s location_unknown=%s "
         "reply_source=%s text_len=%s photo=%s",
         request.building_id,
         request.conversation_id,
         request.trace_id,
+        total_ms,
         asked_now if missing_fields else None,
         missing_fields,
         draft != request.complaint_draft,
         draft.location == _UNKNOWN_LOCATION,
         reply_source,
         len((request.message.text or "").strip()),
-        "analyzed" if image_analysis else ("failed" if photo_sent else "none"),
+        photo,
+        extra={
+            "trace_id": request.trace_id,
+            "building_id": request.building_id,
+            "conversation_id": request.conversation_id,
+            "total_ms": total_ms,
+            "outcome": "ok",
+            "photo": photo,
+        },
     )
 
     return {
