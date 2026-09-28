@@ -1,7 +1,5 @@
 import json
 import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import datetime
 from time import perf_counter
 from zoneinfo import ZoneInfo
@@ -27,68 +25,9 @@ from zipsai.errors import (
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
+from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
-
-
-@contextmanager
-def _stage(request: ConverseRequest, name: str) -> Iterator[None]:
-    started_at = perf_counter()
-    try:
-        yield
-    except Exception as error:
-        duration_ms = int((perf_counter() - started_at) * 1000)
-        detail = (
-            str(error)
-            if isinstance(
-                error,
-                (
-                    ComplaintExtractionError,
-                    ImageAnalysisError,
-                    LlmRateLimitedError,
-                    LlmTimeoutError,
-                    LlmUnavailableError,
-                    LlmUpstreamError,
-                ),
-            )
-            else None
-        )
-        logger.error(
-            "complaint_stage trace_id=%s stage=%s status=failed duration_ms=%d "
-            "error=%s cause=%s detail=%s",
-            request.trace_id,
-            name,
-            duration_ms,
-            type(error).__name__,
-            type(error.__cause__).__name__ if error.__cause__ else None,
-            detail,
-            extra={
-                "trace_id": request.trace_id,
-                "building_id": request.building_id,
-                "stage": name,
-                "duration_ms": duration_ms,
-                "outcome": "fail",
-                "error_type": type(error).__name__,
-                "error": detail,
-            },
-        )
-        raise
-    else:
-        duration_ms = int((perf_counter() - started_at) * 1000)
-        logger.info(
-            "complaint_stage trace_id=%s stage=%s status=ok duration_ms=%d",
-            request.trace_id,
-            name,
-            duration_ms,
-            extra={
-                "trace_id": request.trace_id,
-                "building_id": request.building_id,
-                "stage": name,
-                "duration_ms": duration_ms,
-                "outcome": "ok",
-            },
-        )
-
 
 _KST = ZoneInfo("Asia/Seoul")
 _EXTRACTION_ATTEMPTS = 2
@@ -98,9 +37,22 @@ _UNKNOWN_LOCATION = "모름"
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
-    with _stage(request, "text_extraction"):
-        draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
+    # 단계 로그는 handle_complaint 한 곳에서만 낸다. 여기서도 내면 같은 stage 이름이
+    # 두 번 집계된다.
+    draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
     return draft
+
+
+def _log_retry(attempt: int, error: Exception) -> None:
+    """재시도로 넘어간 회차를 남긴다. 다음 시도가 성공하면 1차 실패가 어디에도 안 남는다."""
+    logger.warning(
+        "extraction_retry",
+        extra={
+            "stage": "text_extraction",
+            "attempt": attempt,
+            "error_type": type(error).__name__,
+        },
+    )
 
 
 def _extract_complaint_fields_and_reply(
@@ -110,7 +62,9 @@ def _extract_complaint_fields_and_reply(
         today=datetime.now(_KST).date().isoformat(),
         conversation_history=format_history(request.conversation_history),
         complaint_draft=request.complaint_draft,
-        message_text=request.message.text,
+        # 사진만 온 턴은 text가 None이다. 그대로 넘기면 "현재 발화: None"이 렌더돼
+        # 모델이 None을 입주민 발화로 읽는다.
+        message_text=request.message.text or "",
     )
 
     last_error: Exception | None = None
@@ -120,19 +74,7 @@ def _extract_complaint_fields_and_reply(
             data = json.loads(strip_json_code_fence(raw))
         except json.JSONDecodeError as error:
             last_error = error
-            logger.warning(
-                "complaint_retry trace_id=%s stage=text_extraction attempt=%d error=%s",
-                request.trace_id,
-                attempt,
-                type(error).__name__,
-                extra={
-                    "trace_id": request.trace_id,
-                    "building_id": request.building_id,
-                    "stage": "text_extraction",
-                    "attempt": attempt,
-                    "error_type": type(error).__name__,
-                },
-            )
+            _log_retry(attempt, error)
             continue
 
         reply = data.pop("reply", "")
@@ -148,19 +90,7 @@ def _extract_complaint_fields_and_reply(
             draft = ComplaintDraft(**data)
         except ValidationError as error:
             last_error = error
-            logger.warning(
-                "complaint_retry trace_id=%s stage=text_extraction attempt=%d error=%s",
-                request.trace_id,
-                attempt,
-                type(error).__name__,
-                extra={
-                    "trace_id": request.trace_id,
-                    "building_id": request.building_id,
-                    "stage": "text_extraction",
-                    "attempt": attempt,
-                    "error_type": type(error).__name__,
-                },
-            )
+            _log_retry(attempt, error)
             continue
 
         return draft, reply.strip(), llm_missing
@@ -178,6 +108,9 @@ def _merge_complaint_draft(
         for field in ("issue_type", "location", "symptom", "occurred_at")
         if getattr(extracted, field) is not None
     }
+    # "모름"은 빈 칸을 채우는 값이지 이미 확인된 값을 대체하는 값이 아니다. 증상을 물은
+    # 턴에 "모르겠어요"가 오면 추출이 그걸 위치에 대한 모름으로 보고 "모름"을 넣기도 한다
+    # (실제로 관측됨). 그대로 두면 확인된 위치가 지워져 관리자가 쓸 수 없는 값이 된다.
     if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
         del updates["location"]
     return (current or ComplaintDraft()).model_copy(update=updates)
@@ -217,91 +150,68 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
 
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     started_at = perf_counter()
-    with _stage(request, "text_extraction"):
+    with stage("text_extraction", logger):
         extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
-    with _stage(request, "draft_merge"):
-        draft = _append_image_urls(
-            _merge_complaint_draft(request.complaint_draft, extracted),
-            request.message.image_urls,
-        )
+    draft = _append_image_urls(
+        _merge_complaint_draft(request.complaint_draft, extracted),
+        request.message.image_urls,
+    )
     photo_sent = bool(request.message.image_urls)
-    try:
-        if photo_sent:
-            with _stage(request, "image_analysis"):
+    image_analysis = None
+    if photo_sent:
+        try:
+            with stage("image_analysis", logger):
                 image_analysis = analyze_images(
                     request.message.image_urls, VLM_ANALYSIS_PROMPT
                 )
-        else:
+        except (
+            ImageAnalysisError,
+            LlmRateLimitedError,
+            LlmTimeoutError,
+            LlmUnavailableError,
+            LlmUpstreamError,
+        ):
+            # 사진 분석이 실패해도 민원 수집은 이어간다. 답변에 실패를 알리고 텍스트로 받는다.
             image_analysis = None
-            logger.info(
-                "complaint_stage trace_id=%s stage=image_analysis "
-                "status=skipped duration_ms=0",
-                request.trace_id,
-                extra={
-                    "trace_id": request.trace_id,
-                    "building_id": request.building_id,
-                    "stage": "image_analysis",
-                    "duration_ms": 0,
-                    "outcome": "skipped",
-                },
-            )
-    except (
-        ImageAnalysisError,
-        LlmRateLimitedError,
-        LlmTimeoutError,
-        LlmUnavailableError,
-        LlmUpstreamError,
-    ):
-        image_analysis = None
-    with _stage(request, "required_fields"):
-        missing_fields = _missing_fields(draft)
+    else:
+        # 사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 구분하려면 줄이 있어야 한다.
+        skipped("image_analysis", logger)
 
-    with _stage(request, "reply"):
-        if missing_fields:
-            complaint_state = ComplaintState.COLLECTING
-            asked_now = missing_fields[0]
-            if llm_reply and llm_missing == {asked_now}:
-                follow_up = llm_reply
-                reply_source = "llm"
-            else:
-                follow_up = _MISSING_FIELD_REPLY[asked_now]
-                reply_source = "fixed"
-            reply = (
-                follow_up
-                if not photo_sent
-                else _photo_prefix(image_analysis) + follow_up
-            )
+    missing_fields = _missing_fields(draft)
+
+    if missing_fields:
+        complaint_state = ComplaintState.COLLECTING
+        asked_now = missing_fields[0]
+        if llm_reply and llm_missing == {asked_now}:
+            follow_up = llm_reply
+            reply_source = "llm"
         else:
-            if draft.issue_type is None:
-                draft = draft.model_copy(update={"issue_type": "other"})
-            complaint_state = None
-            reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
-            reply_source = "complete"
+            follow_up = _MISSING_FIELD_REPLY[asked_now]
+            reply_source = "fixed"
+        reply = (
+            follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
+        )
+    else:
+        if draft.issue_type is None:
+            draft = draft.model_copy(update={"issue_type": "other"})
+        complaint_state = None
+        reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+        reply_source = "complete"
 
-    total_ms = int((perf_counter() - started_at) * 1000)
-    photo = "analyzed" if image_analysis else ("failed" if photo_sent else "none")
     logger.info(
-        "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
-        "total_ms=%d asked=%s missing=%s draft_changed=%s location_unknown=%s "
-        "reply_source=%s text_len=%s photo=%s",
-        request.building_id,
-        request.conversation_id,
-        request.trace_id,
-        total_ms,
-        asked_now if missing_fields else None,
-        missing_fields,
-        draft != request.complaint_draft,
-        draft.location == _UNKNOWN_LOCATION,
-        reply_source,
-        len((request.message.text or "").strip()),
-        photo,
+        "complaint_turn",
         extra={
-            "trace_id": request.trace_id,
-            "building_id": request.building_id,
             "conversation_id": request.conversation_id,
-            "total_ms": total_ms,
-            "outcome": "ok",
-            "photo": photo,
+            "total_ms": elapsed_ms(started_at),
+            "asked": asked_now if missing_fields else None,
+            "missing": missing_fields,
+            "draft_changed": draft != request.complaint_draft,
+            "location_unknown": draft.location == _UNKNOWN_LOCATION,
+            "reply_source": reply_source,
+            "text_len": len((request.message.text or "").strip()),
+            "photo": "analyzed"
+            if image_analysis
+            else ("failed" if photo_sent else "none"),
         },
     )
 
