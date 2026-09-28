@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,7 @@ from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
     ConverseRequest,
+    ImageAnalysis,
     RouteResult,
 )
 from zipsai.errors import (
@@ -19,13 +21,17 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
 )
+from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text, strip_json_code_fence
 from zipsai.integrations.vlm import analyze_images
 
+logger = logging.getLogger(__name__)
+
 _KST = ZoneInfo("Asia/Seoul")
-# 일시적인 JSON/스키마 오류만 한 번 더 시도한다. rate limit·timeout 등 LLM 레벨 오류는
-# generate_text가 별도 예외로 던지므로 여기서 재시도하지 않고 API 계층까지 그대로 올려보낸다.
 _EXTRACTION_ATTEMPTS = 2
+
+_REQUIRED_FIELDS = ("location", "symptom")
+_UNKNOWN_LOCATION = "모름"
 
 
 def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
@@ -38,7 +44,7 @@ def _extract_complaint_fields_and_reply(
 ) -> tuple[ComplaintDraft, str, set[str]]:
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
         today=datetime.now(_KST).date().isoformat(),
-        conversation_history=request.conversation_history,
+        conversation_history=format_history(request.conversation_history),
         complaint_draft=request.complaint_draft,
         message_text=request.message.text,
     )
@@ -59,9 +65,7 @@ def _extract_complaint_fields_and_reply(
         llm_missing = data.pop("missing", [])
         if not isinstance(llm_missing, list):
             llm_missing = []
-        llm_missing = {
-            field for field in llm_missing if field in ("location", "symptom")
-        }
+        llm_missing = {field for field in llm_missing if field in _REQUIRED_FIELDS}
 
         try:
             draft = ComplaintDraft(**data)
@@ -84,6 +88,8 @@ def _merge_complaint_draft(
         for field in ("issue_type", "location", "symptom", "occurred_at")
         if getattr(extracted, field) is not None
     }
+    if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
+        del updates["location"]
     return (current or ComplaintDraft()).model_copy(update=updates)
 
 
@@ -93,14 +99,26 @@ def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> Complain
     )
 
 
-# LLM의 reply를 못 받았거나, LLM이 생각하는 missing이 실제 missing_fields와 다를 때 쓰는 fallback.
-_MISSING_FIELDS_REPLY = {
-    ("location", "symptom"): "민원 접수를 위해 발생 위치와 불편 증상을 알려주세요.",
-    ("location",): "정확한 발생 위치를 알려주세요.",
-    ("symptom",): "어떤 불편 증상인지 알려주세요.",
+_MISSING_FIELD_REPLY = {
+    "location": "어디에서 생긴 문제인가요?",
+    "symptom": "어떤 불편 증상인지 알려주세요.",
 }
 _PHOTO_ANALYZED_PREFIX = "사진은 확인했습니다. "
 _PHOTO_FAILED_PREFIX = "사진을 받았지만 분석에 실패했어요. "
+
+
+def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
+    """사진에서 읽은 내용을 노출한다. 입주민이 확인해주면 그 발화로 symptom이 채워지므로,
+    초안에 직접 넣을 때 필요한 신뢰도 임계값이 필요 없다."""
+    if image_analysis is None:
+        return _PHOTO_FAILED_PREFIX
+    summary = next(
+        (observed.summary for observed in image_analysis.images if observed.summary),
+        None,
+    )
+    if not summary:
+        return _PHOTO_ANALYZED_PREFIX
+    return f"사진은 확인했습니다 — {summary.rstrip('. ')}. "
 
 
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
@@ -124,29 +142,43 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
         LlmUpstreamError,
     ):
         image_analysis = None
-    missing_fields = [
-        field
-        for field in ("location", "symptom")
-        if draft is None or not getattr(draft, field)
-    ]
+    missing_fields = _missing_fields(draft)
 
     if missing_fields:
         complaint_state = ComplaintState.COLLECTING
-        if llm_reply and llm_missing == set(missing_fields):
+        asked_now = missing_fields[0]
+        if llm_reply and llm_missing == {asked_now}:
             follow_up = llm_reply
+            reply_source = "llm"
         else:
-            follow_up = _MISSING_FIELDS_REPLY[tuple(missing_fields)]
-        if not photo_sent:
-            reply = follow_up
-        elif image_analysis is not None:
-            reply = _PHOTO_ANALYZED_PREFIX + follow_up
-        else:
-            reply = _PHOTO_FAILED_PREFIX + follow_up
+            follow_up = _MISSING_FIELD_REPLY[asked_now]
+            reply_source = "fixed"
+        reply = (
+            follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
+        )
     else:
         if draft.issue_type is None:
             draft = draft.model_copy(update={"issue_type": "other"})
-        complaint_state = ComplaintState.READY_TO_CONFIRM
+        complaint_state = None
         reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+        reply_source = "complete"
+
+
+    logger.info(
+        "complaint_turn building_id=%s conversation_id=%s trace_id=%s "
+        "asked=%s missing=%s draft_changed=%s location_unknown=%s "
+        "reply_source=%s text_len=%s photo=%s",
+        request.building_id,
+        request.conversation_id,
+        request.trace_id,
+        asked_now if missing_fields else None,
+        missing_fields,
+        draft != request.complaint_draft,
+        draft.location == _UNKNOWN_LOCATION,
+        reply_source,
+        len((request.message.text or "").strip()),
+        "analyzed" if image_analysis else ("failed" if photo_sent else "none"),
+    )
 
     return {
         "complaint_state": complaint_state,

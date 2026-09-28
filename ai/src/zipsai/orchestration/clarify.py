@@ -1,4 +1,5 @@
 from zipsai.contracts.converse import Route
+from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text
 from zipsai.orchestration.prompts import CLARIFY_PROMPT
 from zipsai.orchestration.state import AgentState
@@ -13,17 +14,10 @@ def handle_clarify(state: AgentState) -> dict[str, str | None]:
     else:
         messages = CLARIFY_PROMPT.format_messages(
             message_text=(request.message.text or "").strip() or "없음",
-            conversation_history=_format_history(state),
+            conversation_history=format_history(request.conversation_history),
         )
         reply = generate_text(
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
         )
     return {"reply": reply, "complaint_state": None}
-
-
-def _format_history(state: AgentState) -> str:
-    history = state["request"].conversation_history
-    if not history:
-        return "없음"
-    return "\n".join(f"{turn.role}: {turn.text or '[이미지 첨부]'}" for turn in history)

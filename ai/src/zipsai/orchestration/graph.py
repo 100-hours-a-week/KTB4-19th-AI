@@ -1,8 +1,10 @@
+from functools import lru_cache
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from zipsai.complaint.node import handle_complaint
-from zipsai.contracts.converse import Route
+from zipsai.contracts.converse import ComplaintState, Route
 from zipsai.knowledge.node import handle_knowledge
 from zipsai.orchestration.clarify import handle_clarify
 from zipsai.orchestration.intent import classify_intent
@@ -13,7 +15,7 @@ def select_entry_node(state: AgentState) -> str:
     request = state["request"]
     if (
         request.current_route is Route.COMPLAINT
-        and request.current_complaint_state is not None
+        and request.current_complaint_state is ComplaintState.COLLECTING
     ):
         return "complaint"
     return "classify_intent"
@@ -32,12 +34,21 @@ def _run_knowledge(state: AgentState) -> dict[str, object]:
     return handle_knowledge(state["request"])
 
 
+def _run_classify_intent(state: AgentState) -> dict[str, object]:
+    return classify_intent(state)
+
+
+def _run_clarify(state: AgentState) -> dict[str, object]:
+    return handle_clarify(state)
+
+
+@lru_cache(maxsize=1)
 def build_graph() -> CompiledStateGraph:
     builder = StateGraph(AgentState)
-    builder.add_node("classify_intent", classify_intent)
+    builder.add_node("classify_intent", _run_classify_intent)
     builder.add_node("complaint", _run_complaint)
     builder.add_node("knowledge", _run_knowledge)
-    builder.add_node("clarify", handle_clarify)
+    builder.add_node("clarify", _run_clarify)
     builder.add_conditional_edges(
         START,
         select_entry_node,
