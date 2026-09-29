@@ -30,7 +30,7 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     message: str
     error: ErrorDetail
-    trace_id: str | None
+    turn_id: str | None
 
 
 # exception type -> (status_code, detail). 오류 코드는 errors.ERROR_CODES가 단일 출처다.
@@ -46,14 +46,14 @@ _AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str]] = {
 }
 
 
-def agent_error_response(error: Exception, trace_id: str) -> JSONResponse:
+def agent_error_response(error: Exception, turn_id: str) -> JSONResponse:
     status_code, detail = _AGENT_ERROR_MAPPING[type(error)]
     code = error_code(error)
     # 예외를 JSON으로 바꾸고 로그를 남기지 않으면 무엇이 터졌는지가 영영 사라진다.
     logger.warning(
         "agent_error",
         extra={
-            "trace_id": trace_id,
+            "turn_id": turn_id,
             "status_code": status_code,
             "error_code": code,
             "error_type": type(error).__name__,
@@ -64,7 +64,7 @@ def agent_error_response(error: Exception, trace_id: str) -> JSONResponse:
         status_code=status_code,
         code=code,
         detail=detail,
-        trace_id=trace_id,
+        turn_id=turn_id,
         retryable=True,
         retry_after_seconds=getattr(error, "retry_after_seconds", None),
     )
@@ -75,7 +75,7 @@ def error_response(
     status_code: int,
     code: str,
     detail: str,
-    trace_id: str | None,
+    turn_id: str | None,
     retryable: bool,
     retry_after_seconds: int | None = None,
 ) -> JSONResponse:
@@ -87,7 +87,7 @@ def error_response(
             retryable=retryable,
             retry_after_seconds=retry_after_seconds,
         ),
-        trace_id=trace_id,
+        turn_id=turn_id,
     )
     return JSONResponse(
         status_code=status_code, content=body.model_dump(exclude_none=True)
@@ -102,14 +102,14 @@ async def request_validation_error_handler(
         item["type"] in {"missing", "json_invalid"} for item in error.errors()
     )
     body = error.body
-    trace_id = body.get("trace_id") if isinstance(body, dict) else None
+    turn_id = body.get("turn_id") if isinstance(body, dict) else None
     status_code = 400 if bad_request else 422
     code = "MISSING_REQUIRED_FIELD" if bad_request else "VALIDATION_ERROR"
     # 어느 필드가 어긋났는지 남기지 않으면 백엔드와 계약을 맞출 근거가 없다.
     logger.warning(
         "validation_error",
         extra={
-            "trace_id": trace_id if isinstance(trace_id, str) else None,
+            "turn_id": turn_id if isinstance(turn_id, str) else None,
             "status_code": status_code,
             "error_code": code,
             "fields": [
@@ -122,7 +122,7 @@ async def request_validation_error_handler(
         status_code=status_code,
         code=code,
         detail="Request validation failed",
-        trace_id=trace_id if isinstance(trace_id, str) else None,
+        turn_id=turn_id if isinstance(turn_id, str) else None,
         retryable=False,
     )
 
@@ -131,13 +131,13 @@ async def unhandled_exception_handler(
     request: Request,
     error: Exception,
 ) -> JSONResponse:
-    trace_id = getattr(request.state, "trace_id", None)
+    turn_id = getattr(request.state, "turn_id", None)
     # 500은 우리가 예상하지 못한 경로다. 스택트레이스가 유일한 단서다.
     logger.exception(
         "unhandled_error",
         exc_info=error,
         extra={
-            "trace_id": trace_id if isinstance(trace_id, str) else None,
+            "turn_id": turn_id if isinstance(turn_id, str) else None,
             "status_code": 500,
             "error_code": "INTERNAL_SERVER_ERROR",
             "error_type": type(error).__name__,
@@ -148,6 +148,6 @@ async def unhandled_exception_handler(
         status_code=500,
         code="INTERNAL_SERVER_ERROR",
         detail="Unexpected server error",
-        trace_id=trace_id if isinstance(trace_id, str) else None,
+        turn_id=turn_id if isinstance(turn_id, str) else None,
         retryable=False,
     )

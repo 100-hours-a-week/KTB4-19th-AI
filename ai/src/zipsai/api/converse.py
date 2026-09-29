@@ -46,10 +46,10 @@ AGENT_ERRORS = (
 def converse(
     request: ConverseRequest, http_request: Request
 ) -> ConverseResponse | JSONResponse:
-    http_request.state.trace_id = request.trace_id
+    http_request.state.turn_id = request.turn_id
     with (
         bind(
-            trace_id=request.trace_id,
+            turn_id=request.turn_id,
             building_id=request.building_id,
             # 경로를 리터럴로 적으면 라우터 prefix와 두 곳이 된다.
             route=http_request.url.path,
@@ -94,7 +94,7 @@ def _handle(
             status_code=400,
             code="MISSING_REQUIRED_FIELD",
             detail="A message requires text or image_urls",
-            trace_id=request.trace_id,
+            turn_id=request.turn_id,
             retryable=False,
         )
 
@@ -112,7 +112,7 @@ def _handle(
     except AGENT_ERRORS as error:
         # 상태 코드의 출처는 error_responses의 매핑 하나다. 여기서 다시 정하지 않고
         # 만들어진 응답에서 읽는다.
-        response = agent_error_response(error, request.trace_id)
+        response = agent_error_response(error, request.turn_id)
         _request_done(
             started_at,
             timings,
@@ -138,7 +138,7 @@ def _handle(
             status_code=500,
             code="INTERNAL_SERVER_ERROR",
             detail="Agent route returned no reply",
-            trace_id=request.trace_id,
+            turn_id=request.turn_id,
             retryable=False,
         )
 
@@ -157,7 +157,7 @@ def _handle(
     )
     return ConverseResponse(
         code="ai_response_success",
-        trace_id=request.trace_id,
+        turn_id=request.turn_id,
         data=ConverseData(
             route=result["route"],
             next_complaint_state=result["complaint_state"],

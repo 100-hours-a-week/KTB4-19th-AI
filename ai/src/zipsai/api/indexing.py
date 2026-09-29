@@ -90,7 +90,7 @@ def _job_fields(
 def create_job(
     payload: IndexingJobRequest, background_tasks: BackgroundTasks
 ) -> Response:
-    # 색인 계약에는 trace_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
+    # 색인 계약에는 turn_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
     job_id = str(uuid4())
     logger.info(
         "job_accepted",

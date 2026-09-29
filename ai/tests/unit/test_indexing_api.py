@@ -213,7 +213,7 @@ def test_removed_fields_are_ignored_not_rejected(
     payload = valid_payload() | {
         "source_type": "notice",
         "published_at": "2026-09-15T00:00:00Z",
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
     status_code, _ = post("/api/v3/ai/indexing/jobs", payload)
