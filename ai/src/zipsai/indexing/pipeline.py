@@ -34,7 +34,7 @@ def run_indexing_job(
 ) -> JobStatus:
     doc_id = request.doc_id
     # 첫 작업은 docling이 OCR·레이아웃 모델을 올리느라 수십 초가 더 걸린다.
-    cold = is_cold()
+    cold = is_cold("indexing")
     started = perf_counter()
 
     try:

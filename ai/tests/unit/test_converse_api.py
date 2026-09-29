@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 from qdrant_client import models
@@ -17,6 +19,7 @@ from zipsai.errors import (
     VectorStoreError,
 )
 from zipsai.main import app
+from zipsai.observability import _ContextFilter
 from zipsai.settings import EMBEDDING_DIM, Settings
 
 
@@ -351,7 +354,7 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
 
 
 def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_progress(
-    monkeypatch,
+    monkeypatch, caplog
 ):
     def failing_classify_intent(_state: object) -> dict[str, object]:
         raise AssertionError("classify_intent must not run mid-complaint")
@@ -371,12 +374,34 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
     payload["current_route"] = "complaint"
     payload["current_complaint_state"] = "collecting"
 
-    response = TestClient(app, raise_server_exceptions=False).post(
-        "/api/v3/ai/converse", json=payload
-    )
+    # 운영에서는 configure_logging이 핸들러에 붙이는 필터를 여기서는 로거에 심는다.
+    loggers = [
+        logging.getLogger(name)
+        for name in ("zipsai.orchestration.graph", "zipsai.complaint.node")
+    ]
+    context_filter = _ContextFilter()
+    for target in loggers:
+        target.addFilter(context_filter)
+    try:
+        with caplog.at_level(logging.INFO):
+            response = TestClient(app, raise_server_exceptions=False).post(
+                "/api/v3/ai/converse", json=payload
+            )
+    finally:
+        for target in loggers:
+            target.removeFilter(context_filter)
 
     assert response.status_code == 200
     assert response.json()["data"]["route"] == "complaint"
+    stages = {
+        record.stage: record for record in caplog.records if record.msg == "stage_done"
+    }
+    # 건너뛴 의도 분류도 줄을 남겨야 intent_ms 부재를 "느려서"와 구분할 수 있다.
+    assert stages["intent"].outcome == "skipped"
+    assert stages["intent"].skip_reason == "complaint_in_progress"
+    assert stages["intent"].duration_ms == 0
+    # 의도 분류를 건너뛴 경로도 단계 로그가 경로를 담아야 trace_id 조회가 이어진다.
+    assert {record.intent_route for record in stages.values()} == {"complaint"}
 
 
 def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
