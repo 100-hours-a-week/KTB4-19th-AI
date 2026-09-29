@@ -97,13 +97,13 @@ def test_timings_are_collected_for_the_request_summary(
 def test_bound_fields_are_attached_when_the_line_is_made(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # 포매터에서 읽으면 출력이 늦어질 때 trace_id를 잃는다. 여기서는 블록을
+    # 포매터에서 읽으면 출력이 늦어질 때 turn_id를 잃는다. 여기서는 블록을
     # 빠져나온 뒤에 포맷해도 남아 있어야 한다.
     logger.addFilter(_ContextFilter())
     try:
         with (
             caplog.at_level(logging.INFO),
-            bind(trace_id="t-1"),
+            bind(turn_id="t-1"),
             stage("encode", logger),
         ):
             pass
@@ -111,7 +111,7 @@ def test_bound_fields_are_attached_when_the_line_is_made(
         logger.filters.clear()
 
     payload = json.loads(JsonFormatter().format(_records(caplog)[0]))
-    assert payload["trace_id"] == "t-1"
+    assert payload["turn_id"] == "t-1"
     assert payload["event"] == "stage_done"
     assert payload["timestamp"].endswith("+00:00")
     # 백엔드·embedding 로그와 합쳐 볼 때 어느 서비스 줄인지 가리는 필드다.

@@ -1,7 +1,7 @@
 """구조화 로그. 단계마다 걸린 시간과 결과를 한 줄씩 남긴다.
 
 평문 로그는 CloudWatch Logs Insights가 필드로 쪼개지 못해 집계가 안 된다.
-JSON 한 줄로 남기고, 한 요청에 속한 줄들은 trace_id·job_id로 묶는다.
+JSON 한 줄로 남기고, 한 요청에 속한 줄들은 turn_id·job_id로 묶는다.
 """
 
 import json
@@ -66,7 +66,7 @@ class _ContextFilter(logging.Filter):
     """공통 필드를 로그를 만든 시점에 붙인다.
 
     포매터에서 읽으면 출력 시점의 값을 보게 되어, 그 사이 컨텍스트를 벗어난
-    로그는 trace_id를 잃는다.
+    로그는 turn_id를 잃는다.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:

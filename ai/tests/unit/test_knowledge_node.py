@@ -19,7 +19,7 @@ def _request(text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?")
             "room_no": "101",
             "resident_id": "r-1",
             "conversation_id": "c-1",
-            "trace_id": "t-1",
+            "turn_id": "t-1",
             "current_route": "knowledge",
             "current_complaint_state": None,
             "message": {

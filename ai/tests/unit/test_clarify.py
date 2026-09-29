@@ -11,7 +11,7 @@ def _make_state(current_route: Route | None = None) -> AgentState:
             "room_no": "301",
             "resident_id": "linda",
             "conversation_id": "conv-001",
-            "trace_id": "trace-001",
+            "turn_id": "turn-001",
             "current_route": current_route,
             "current_complaint_state": None,
             "message": {
