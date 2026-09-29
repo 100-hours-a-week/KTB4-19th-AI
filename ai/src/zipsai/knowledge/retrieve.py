@@ -85,7 +85,7 @@ def search_chunks(
         step["passed"] = passed
 
     if not passed:
-        skipped("hybrid", logger)
+        skipped("hybrid", logger, skip_reason="gate_blocked")
         return []
 
     with stage("hybrid", logger, prefetch_limit=PREFETCH_LIMIT) as step:

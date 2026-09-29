@@ -4,7 +4,7 @@ from zipsai.contracts.converse import Route
 from zipsai.errors import IntentClassificationError
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text
-from zipsai.observability import stage
+from zipsai.observability import add_context, stage
 from zipsai.orchestration.prompts import INTENT_PROMPT
 from zipsai.orchestration.state import AgentState
 
@@ -29,7 +29,9 @@ def classify_intent(state: AgentState) -> dict[str, Route]:
             user_prompt=str(messages[1].content),
         )
         route = parse_route(raw_response)
-        step["route"] = route.value
+        step["intent_route"] = route.value
+    # 이 줄 자신은 step이 담고, 뒤따르는 단계들은 컨텍스트로 물려받는다.
+    add_context(intent_route=route.value)
     return {"route": route}
 
 

@@ -21,8 +21,9 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
     VectorStoreError,
+    error_code,
 )
-from zipsai.observability import bind, collect_timings, track_in_flight
+from zipsai.observability import bind, collect_timings, is_cold, track_in_flight
 from zipsai.orchestration.graph import build_graph
 from zipsai.settings import get_settings
 
@@ -47,7 +48,17 @@ def converse(
 ) -> ConverseResponse | JSONResponse:
     http_request.state.trace_id = request.trace_id
     with (
-        bind(trace_id=request.trace_id, building_id=request.building_id),
+        bind(
+            trace_id=request.trace_id,
+            building_id=request.building_id,
+            # 경로를 리터럴로 적으면 라우터 prefix와 두 곳이 된다.
+            route=http_request.url.path,
+            # 진행 중인 민원은 의도 분류를 건너뛴다(graph.py select_entry_node).
+            # 백엔드가 준 경로로 시작해 두고, 재분류가 돌면 그 결과가 덮는다.
+            intent_route=(
+                request.current_route.value if request.current_route else None
+            ),
+        ),
         track_in_flight() as in_flight,
         collect_timings() as timings,
     ):
@@ -64,10 +75,21 @@ def _handle(
         "has_image": bool(message.image_urls),
         "history_turns": len(request.conversation_history),
         "in_flight": in_flight,
+        # 인코더·Qdrant 클라이언트를 만드는 첫 질의는 수 초가 더 걸린다.
+        "cold": is_cold("converse"),
     }
+    # 끝난 요청만 남기면 처리 중 컨테이너가 죽은 요청은 흔적이 없다.
+    logger.info("request_started")
 
     if not (received["has_text"] or received["has_image"]):
-        _request_done(started_at, timings, received, outcome="fail", status=400)
+        _request_done(
+            started_at,
+            timings,
+            received,
+            outcome="fail",
+            status_code=400,
+            error_code="MISSING_REQUIRED_FIELD",
+        )
         return error_response(
             status_code=400,
             code="MISSING_REQUIRED_FIELD",
@@ -88,18 +110,30 @@ def _handle(
             }
         )
     except AGENT_ERRORS as error:
+        # 상태 코드의 출처는 error_responses의 매핑 하나다. 여기서 다시 정하지 않고
+        # 만들어진 응답에서 읽는다.
+        response = agent_error_response(error, request.trace_id)
         _request_done(
             started_at,
             timings,
             received,
             outcome="fail",
+            status_code=response.status_code,
+            error_code=error_code(error),
             error_type=type(error).__name__,
         )
-        return agent_error_response(error, request.trace_id)
+        return response
 
     reply = result["reply"]
     if reply is None:
-        _request_done(started_at, timings, received, outcome="fail", status=500)
+        _request_done(
+            started_at,
+            timings,
+            received,
+            outcome="fail",
+            status_code=500,
+            error_code="INTERNAL_SERVER_ERROR",
+        )
         return error_response(
             status_code=500,
             code="INTERNAL_SERVER_ERROR",
@@ -114,8 +148,9 @@ def _handle(
         timings,
         received,
         outcome="ok",
-        status=200,
-        route=result["route"].value if result["route"] else None,
+        status_code=200,
+        error_code=None,
+        intent_route=result["route"].value if result["route"] else None,
         has_evidence=route_result.has_sufficient_evidence,
         citations=len(route_result.citations or []),
         reply_chars=len(reply),
@@ -149,6 +184,17 @@ def _request_done(
             "total_ms": int((perf_counter() - started_at) * 1000),
             **received,
             **{f"{name}_ms": elapsed for name, elapsed in timings.items()},
+            **_qdrant_ms(timings),
             **fields,
         },
     )
+
+
+def _qdrant_ms(timings: dict[str, int]) -> dict[str, int]:
+    """게이트와 하이브리드를 합친 Qdrant 총 소요시간.
+
+    검색을 타지 않은 민원 경로에서는 필드를 넣지 않는다. 0을 넣으면 "Qdrant가
+    0ms"로 읽혀 병목 판단이 뒤집힌다.
+    """
+    parts = [timings[name] for name in ("gate", "hybrid") if name in timings]
+    return {"qdrant_ms": sum(parts)} if parts else {}

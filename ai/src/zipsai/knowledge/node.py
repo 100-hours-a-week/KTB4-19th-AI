@@ -12,7 +12,7 @@ from zipsai.integrations.llm import generate_text
 from zipsai.integrations.qdrant import get_client
 from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT, NO_EVIDENCE, format_context
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
-from zipsai.observability import stage
+from zipsai.observability import skipped, stage
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         # 이미지만 온 요청은 intent가 complaint로 보내지만, current_route=knowledge로
         # 유지되는 경로가 있어 검색까지 가기 전에 막는다.
         # 질문이 없으니 QA 카드도 만들지 않는다. 관리자에게 빈 질문이 전달된다.
+        for name in ("encode", "gate", "hybrid", "context", "generate"):
+            skipped(name, logger, skip_reason="empty_question")
         return _fallback(request, reason="empty_question", reply=EMPTY_QUESTION_REPLY)
 
     chunks = search_chunks(
@@ -43,6 +45,10 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         client=get_client(),
     )
     if not chunks:
+        # 근거가 없어 두 단계가 아예 돌지 않는다. 줄이 없으면 느려서 아직 안 찍힌
+        # 것과 구분되지 않는다.
+        skipped("context", logger, skip_reason="no_hit")
+        skipped("generate", logger, skip_reason="no_hit")
         return _fallback(
             request,
             reason="no_hit",

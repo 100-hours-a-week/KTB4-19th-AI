@@ -11,7 +11,13 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
+
+from zipsai.errors import error_code
+
+# 백엔드·embedding 로그와 같은 스키마로 조회하기 위한 공통 필드. 설정으로 뺄 값이
+# 아니라 이 프로세스의 정체라서 여기가 단일 출처다.
+SERVICE_NAME: Final = "ai-api"
 
 # 로그 그룹마다 시각 기준이 다르면(ai-api는 KST, qdrant·mysql은 UTC) 같은 사건을
 # 대조할 때마다 9시간을 암산해야 한다. 여기서 UTC로 고정한다.
@@ -28,17 +34,19 @@ _in_flight = 0
 _in_flight_lock = threading.Lock()
 
 # 첫 요청은 docling·인코더·Qdrant 클라이언트를 만들며 수십 초가 더 걸린다.
-# 이 값이 없으면 "파싱이 52초"라는 잘못된 결론으로 간다.
-_warm = False
+# 이 값이 없으면 "파싱이 52초"라는 잘못된 결론으로 간다. 질의와 색인은 서로 다른
+# 모델을 올리므로 플래그를 하나로 묶으면 먼저 온 쪽이 나머지의 첫 판을 가린다.
+_warm: set[str] = set()
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(
                 timespec="milliseconds"
             ),
             "level": record.levelname,
+            "service": SERVICE_NAME,
             "logger": record.name,
             "event": record.getMessage(),
         }
@@ -103,6 +111,17 @@ def bind(**fields: Any):
         _context.reset(token)
 
 
+def add_context(**fields: Any) -> None:
+    """이미 열려 있는 bind 블록에 필드를 덧붙인다.
+
+    라우팅 결과처럼 블록에 들어갈 때는 아직 모르는 값이 있다. bind가 만든 dict를
+    그대로 고치므로 블록을 벗어나면 reset이 되돌린다.
+    """
+    current = _context.get()
+    if current is not None:
+        current.update(fields)
+
+
 @contextmanager
 def collect_timings():
     """이 블록 안 단계들의 소요시간을 모은다.
@@ -132,11 +151,10 @@ def track_in_flight():
             _in_flight -= 1
 
 
-def is_cold() -> bool:
-    """이번이 프로세스 기동 후 첫 작업인지. 호출 즉시 warm으로 넘긴다."""
-    global _warm
-    cold = not _warm
-    _warm = True
+def is_cold(scope: str) -> bool:
+    """이번이 그 범위의 첫 작업인지. 호출 즉시 warm으로 넘긴다."""
+    cold = scope not in _warm
+    _warm.add(scope)
     return cold
 
 
@@ -159,6 +177,7 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
                 "stage": name,
                 "duration_ms": _record(name, started),
                 "outcome": "fail",
+                "error_code": error_code(error),
                 "error_type": type(error).__name__,
                 "error": str(error),
                 **extra,
@@ -173,19 +192,30 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
             "stage": name,
             "duration_ms": _record(name, started),
             "outcome": "ok",
+            "error_code": None,
             **extra,
         },
     )
 
 
-def skipped(name: str, logger: logging.Logger, **fields: Any) -> None:
+def skipped(
+    name: str, logger: logging.Logger, *, skip_reason: str, **fields: Any
+) -> None:
     """앞 단계에서 막혀 아예 돌지 않은 단계를 남긴다.
 
-    줄이 없으면 "느려서 안 찍힌 건지 건너뛴 건지" 구분할 수 없다.
+    줄이 없으면 "느려서 안 찍힌 건지 건너뛴 건지" 구분할 수 없다. 이유는 기본값을
+    두지 않는다. 기본값이 있으면 이유 없는 skipped 줄이 조용히 늘어난다.
     """
     logger.info(
         "stage_done",
-        extra={"stage": name, "duration_ms": 0, "outcome": "skipped", **fields},
+        extra={
+            "stage": name,
+            "duration_ms": 0,
+            "outcome": "skipped",
+            "skip_reason": skip_reason,
+            "error_code": None,
+            **fields,
+        },
     )
 
 

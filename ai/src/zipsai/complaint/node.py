@@ -175,7 +175,7 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
             image_analysis = None
     else:
         # 사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 구분하려면 줄이 있어야 한다.
-        skipped("image_analysis", logger)
+        skipped("image_analysis", logger, skip_reason="no_image")
 
     missing_fields = _missing_fields(draft)
 

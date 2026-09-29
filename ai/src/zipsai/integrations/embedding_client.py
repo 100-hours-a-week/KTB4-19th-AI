@@ -82,7 +82,7 @@ class HttpEncoder:
                     extra={
                         "attempt": attempt + 1,
                         "attempts": self._attempts,
-                        "status": _status_code(exc),
+                        "status_code": _status_code(exc),
                         "error_type": type(exc).__name__,
                         "error": str(exc),
                     },
