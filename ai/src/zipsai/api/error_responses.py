@@ -14,6 +14,7 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
     VectorStoreError,
+    error_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,48 +33,29 @@ class ErrorResponse(BaseModel):
     trace_id: str | None
 
 
-# exception type -> (status_code, code, detail)
-_AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str, str]] = {
-    LlmRateLimitedError: (429, "MODEL_RATE_LIMITED", "AI model rate limit exceeded"),
-    LlmTimeoutError: (504, "MODEL_TIMEOUT", "AI model did not respond in time"),
-    LlmUpstreamError: (
-        502,
-        "MODEL_UPSTREAM_ERROR",
-        "AI model provider returned an upstream error",
-    ),
-    LlmUnavailableError: (503, "DEPENDENCY_NOT_READY", "AI model is unavailable"),
-    IntentClassificationError: (
-        502,
-        "MODEL_UPSTREAM_ERROR",
-        "AI model returned an unsupported route",
-    ),
-    ComplaintExtractionError: (
-        502,
-        "MODEL_UPSTREAM_ERROR",
-        "AI model returned an invalid complaint draft",
-    ),
-    EmbeddingError: (
-        503,
-        "DEPENDENCY_NOT_READY",
-        "Embedding service is unavailable",
-    ),
-    VectorStoreError: (
-        503,
-        "DEPENDENCY_NOT_READY",
-        "Vector store is unavailable",
-    ),
+# exception type -> (status_code, detail). 오류 코드는 errors.ERROR_CODES가 단일 출처다.
+_AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str]] = {
+    LlmRateLimitedError: (429, "AI model rate limit exceeded"),
+    LlmTimeoutError: (504, "AI model did not respond in time"),
+    LlmUpstreamError: (502, "AI model provider returned an upstream error"),
+    LlmUnavailableError: (503, "AI model is unavailable"),
+    IntentClassificationError: (502, "AI model returned an unsupported route"),
+    ComplaintExtractionError: (502, "AI model returned an invalid complaint draft"),
+    EmbeddingError: (503, "Embedding service is unavailable"),
+    VectorStoreError: (503, "Vector store is unavailable"),
 }
 
 
 def agent_error_response(error: Exception, trace_id: str) -> JSONResponse:
-    status_code, code, detail = _AGENT_ERROR_MAPPING[type(error)]
+    status_code, detail = _AGENT_ERROR_MAPPING[type(error)]
+    code = error_code(error)
     # 예외를 JSON으로 바꾸고 로그를 남기지 않으면 무엇이 터졌는지가 영영 사라진다.
     logger.warning(
         "agent_error",
         extra={
             "trace_id": trace_id,
-            "status": status_code,
-            "code": code,
+            "status_code": status_code,
+            "error_code": code,
             "error_type": type(error).__name__,
             "error": str(error),
         },
@@ -121,12 +103,15 @@ async def request_validation_error_handler(
     )
     body = error.body
     trace_id = body.get("trace_id") if isinstance(body, dict) else None
+    status_code = 400 if bad_request else 422
+    code = "MISSING_REQUIRED_FIELD" if bad_request else "VALIDATION_ERROR"
     # 어느 필드가 어긋났는지 남기지 않으면 백엔드와 계약을 맞출 근거가 없다.
     logger.warning(
         "validation_error",
         extra={
             "trace_id": trace_id if isinstance(trace_id, str) else None,
-            "status": 400 if bad_request else 422,
+            "status_code": status_code,
+            "error_code": code,
             "fields": [
                 ".".join(str(part) for part in item["loc"]) for item in error.errors()
             ],
@@ -134,8 +119,8 @@ async def request_validation_error_handler(
         },
     )
     return error_response(
-        status_code=400 if bad_request else 422,
-        code="MISSING_REQUIRED_FIELD" if bad_request else "VALIDATION_ERROR",
+        status_code=status_code,
+        code=code,
         detail="Request validation failed",
         trace_id=trace_id if isinstance(trace_id, str) else None,
         retryable=False,
@@ -153,9 +138,10 @@ async def unhandled_exception_handler(
         exc_info=error,
         extra={
             "trace_id": trace_id if isinstance(trace_id, str) else None,
-            "status": 500,
+            "status_code": 500,
+            "error_code": "INTERNAL_SERVER_ERROR",
             "error_type": type(error).__name__,
-            "path": request.url.path,
+            "route": request.url.path,
         },
     )
     return error_response(
