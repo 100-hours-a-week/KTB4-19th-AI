@@ -8,6 +8,7 @@ import zipsai.api.converse as converse_module
 import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
+import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
     ComplaintExtractionError,
@@ -353,13 +354,10 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     assert response.json()["data"]["reply"] == "22시까지 이용할 수 있습니다."
 
 
-def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_progress(
+def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch, caplog
 ):
-    def failing_classify_intent(_state: object) -> dict[str, object]:
-        raise AssertionError("classify_intent must not run mid-complaint")
-
-    monkeypatch.setattr(graph_module, "classify_intent", failing_classify_intent)
+    monkeypatch.setattr(intent_module, "generate_text", lambda **_kwargs: "complaint")
     monkeypatch.setattr(
         converse_module,
         "get_settings",
@@ -377,7 +375,7 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
     # 운영에서는 configure_logging이 핸들러에 붙이는 필터를 여기서는 로거에 심는다.
     loggers = [
         logging.getLogger(name)
-        for name in ("zipsai.orchestration.graph", "zipsai.complaint.node")
+        for name in ("zipsai.orchestration.intent", "zipsai.complaint.node")
     ]
     context_filter = _ContextFilter()
     for target in loggers:
@@ -396,12 +394,10 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
     stages = {
         record.stage: record for record in caplog.records if record.msg == "stage_done"
     }
-    # 건너뛴 의도 분류도 줄을 남겨야 intent_ms 부재를 "느려서"와 구분할 수 있다.
-    assert stages["intent"].outcome == "skipped"
-    assert stages["intent"].skip_reason == "complaint_in_progress"
-    assert stages["intent"].duration_ms == 0
-    # 의도 분류를 건너뛴 경로도 단계 로그가 경로를 담아야 turn_id 조회가 이어진다.
-    assert {record.turn_id for record in stages.values()} == {"turn-001"}
+    # 수집 중이라고 건너뛰지 않는다. 건너뛰면 intent 단계가 통째로 관측에서 빠진다.
+    assert stages["intent"].outcome == "ok"
+    assert stages["intent"].intent_route == "complaint"
+    # 재분류가 돈 경로도 단계 로그가 경로를 담아야 turn_id 조회가 이어진다.
     assert {record.intent_route for record in stages.values()} == {"complaint"}
 
 

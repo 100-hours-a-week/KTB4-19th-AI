@@ -5,26 +5,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from zipsai.complaint.node import handle_complaint
-from zipsai.contracts.converse import ComplaintState, Route
+from zipsai.contracts.converse import Route
 from zipsai.knowledge.node import handle_knowledge
-from zipsai.observability import skipped
 from zipsai.orchestration.clarify import handle_clarify
 from zipsai.orchestration.intent import classify_intent
 from zipsai.orchestration.state import AgentState
 
 logger = logging.getLogger(__name__)
-
-
-def select_entry_node(state: AgentState) -> str:
-    request = state["request"]
-    if (
-        request.current_route is Route.COMPLAINT
-        and request.current_complaint_state is ComplaintState.COLLECTING
-    ):
-        # 줄이 없으면 intent_ms가 빠진 이유를 "느려서"와 구분할 수 없다.
-        skipped("intent", logger, skip_reason="complaint_in_progress")
-        return "complaint"
-    return "classify_intent"
 
 
 def select_next_node(state: AgentState) -> str:
@@ -55,11 +42,7 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("complaint", _run_complaint)
     builder.add_node("knowledge", _run_knowledge)
     builder.add_node("clarify", _run_clarify)
-    builder.add_conditional_edges(
-        START,
-        select_entry_node,
-        {"classify_intent": "classify_intent", "complaint": "complaint"},
-    )
+    builder.add_edge(START, "classify_intent")
     builder.add_conditional_edges(
         "classify_intent",
         select_next_node,
