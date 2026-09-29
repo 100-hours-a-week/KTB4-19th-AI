@@ -41,7 +41,7 @@ def _payload() -> dict[str, object]:
         "room_no": "301",
         "resident_id": "linda",
         "conversation_id": "conv-001",
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
         "current_route": None,
         "current_complaint_state": None,
         "message": {"message_id": "msg-001", "text": "네", "image_urls": []},
@@ -71,7 +71,7 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "code": "ai_response_success",
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
         "data": {
             "route": "clarify",
             "complaint_intent": None,
@@ -197,7 +197,7 @@ def test_converse_maps_llm_error_to_api_response(
     assert response.json() == {
         "message": "ai_response_error",
         "error": error_body,
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
 
@@ -231,7 +231,7 @@ def test_converse_returns_dependency_error_when_llm_settings_are_missing(monkeyp
             "detail": "AI model is unavailable",
             "retryable": True,
         },
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
 
@@ -400,7 +400,8 @@ def test_converse_stays_in_complaint_without_consulting_intent_when_state_in_pro
     assert stages["intent"].outcome == "skipped"
     assert stages["intent"].skip_reason == "complaint_in_progress"
     assert stages["intent"].duration_ms == 0
-    # 의도 분류를 건너뛴 경로도 단계 로그가 경로를 담아야 trace_id 조회가 이어진다.
+    # 의도 분류를 건너뛴 경로도 단계 로그가 경로를 담아야 turn_id 조회가 이어진다.
+    assert {record.turn_id for record in stages.values()} == {"turn-001"}
     assert {record.intent_route for record in stages.values()} == {"complaint"}
 
 
@@ -433,7 +434,7 @@ def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
             "detail": "A message requires text or image_urls",
             "retryable": False,
         },
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
 
@@ -452,7 +453,7 @@ def test_converse_returns_standard_error_for_contract_violation():
             "detail": "Request validation failed",
             "retryable": False,
         },
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
 
@@ -470,8 +471,19 @@ def test_converse_returns_standard_error_for_missing_required_field():
             "detail": "Request validation failed",
             "retryable": False,
         },
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
+
+
+def test_converse_rejects_legacy_trace_id_field():
+    payload = _payload()
+    payload["trace_id"] = payload.pop("turn_id")
+
+    response = TestClient(app).post("/api/v3/ai/converse", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "MISSING_REQUIRED_FIELD"
+    assert "turn_id" not in response.json()
 
 
 def test_converse_returns_generic_error_for_unexpected_exception(monkeypatch):
@@ -499,7 +511,7 @@ def test_converse_returns_generic_error_for_unexpected_exception(monkeypatch):
             "detail": "Unexpected server error",
             "retryable": False,
         },
-        "trace_id": "trace-001",
+        "turn_id": "turn-001",
     }
 
 
