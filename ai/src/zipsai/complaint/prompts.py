@@ -20,6 +20,21 @@ COMPLAINT_SYSTEM_PROMPT = (
     "down → drain, not water_supply. Water actively dripping/pooling somewhere → leak, even if the "
     "source is a pipe or the water system.\n\n"
     "Other fields:\n"
+    "- complaint_switch: whether this turn is still about the SAME complaint as the existing draft "
+    'below. Output exactly one of "same", "ask", "accept".\n'
+    '  "same": the turn continues, corrects, or adds to the existing draft. Also use "same" when the '
+    "previous assistant turn offered to switch complaints and the resident refused (아니요, 아까 "
+    "그거요, 그거 말고요).\n"
+    '  "ask": the turn reports a problem clearly different from the draft\'s symptom — e.g. the draft '
+    "is 보일러 누수 and the resident now says 세탁기가 안 돌아가요.\n"
+    '  "accept": the previous assistant turn asked whether to switch to a specific new complaint, and '
+    "the resident agreed (네, 맞아요, 그걸로 해주세요).\n"
+    '  Default to "same" whenever you are not confident. Discarding a draft the resident already '
+    "filled in costs far more than merging one extra turn into it.\n"
+    '  If the draft is empty or has no symptom yet, always output "same".\n'
+    "  If the current turn states no symptom, judge from issue_type instead: a clearly different "
+    'issue_type is "ask"; anything else is "same". A bare answer that only supplies a missing field '
+    '(화장실이요, 어제요, 네) is always "same".\n'
     "- location: where the problem is (e.g. 화장실, 주방). null if not stated in this turn. "
     "Exception: when the previous assistant turn asked for the location and the resident "
     "replies that they do not know or will not say (몰라, 모르겠어요, 안 알려줄래요), output "
@@ -27,25 +42,35 @@ COMPLAINT_SYSTEM_PROMPT = (
     "because the manager can call and confirm it.\n"
     "- symptom: what's wrong, in the resident's own words. null if not stated in this turn. "
     'NEVER output "모름" or any placeholder here; a complaint with no symptom cannot be '
-    "acted on, so leave it null and it will be asked again. If an earlier assistant turn "
-    "reported what a photo showed and the resident confirms it or points back to the photo "
-    "(네, 맞아요, 사진에 있는 그거요, 사진 봐), use that reported observation as the symptom.\n"
+    "acted on, so leave it null and it will be asked again. Two exceptions may take the symptom "
+    "from an earlier assistant turn instead of the current message:\n"
+    "  (1) an earlier assistant turn reported what a photo showed and the resident confirms it or "
+    "points back to the photo (네, 맞아요, 사진에 있는 그거요, 사진 봐) — use that reported "
+    "observation.\n"
+    '  (2) complaint_switch is "accept" — use the new complaint named inside the previous assistant '
+    "turn's switch question, quoted there between 작은따옴표. Copy it as written. Do not invent a "
+    "symptom that does not appear in that question.\n"
+    "  These two are the only cases where a value may come from an earlier turn.\n"
     "- occurred_at: when the problem started or was first noticed, only if stated in this turn. "
     "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
     "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
-    "date and omit finer precision. null if not stated in this turn.\n"
+    "date and omit finer precision. null if not stated in this turn. Output null when "
+    'complaint_switch is "accept" unless the current message itself states a time.\n'
     '- missing: an array listing which of "location"/"symptom" are still unknown overall — look '
     "at the EXISTING draft below together with what you just extracted this turn, not just this "
     'turn\'s message. Empty array if both are known. Only "location" and/or "symptom" are valid '
-    "entries; never include issue_type or occurred_at.\n"
+    "entries; never include issue_type or occurred_at. "
+    'When complaint_switch is "accept", ignore the existing draft entirely and judge only against '
+    "the new complaint — the old draft is being discarded.\n"
     "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — the "
     'first still-unknown field in the order "location", then "symptom". Never ask about two '
     'fields in one turn. Empty string "" if `missing` is empty. One short, friendly sentence, '
-    "no lists. Never ask about issue_type or occurred_at.\n\n"
-    "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
+    "no lists. Never ask about issue_type or occurred_at. "
+    'Output "" when complaint_switch is "ask" — the service writes that question itself.\n\n'
+    "Output contract: output ONLY a JSON object with exactly these seven keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"
-    '{{"issue_type": null, "location": null, "symptom": null, "occurred_at": null, "missing": [], '
-    '"reply": ""}}'
+    '{{"complaint_switch": "same", "issue_type": null, "location": null, "symptom": null, '
+    '"occurred_at": null, "missing": [], "reply": ""}}'
 )
 
 COMPLAINT_USER_TEMPLATE = (
