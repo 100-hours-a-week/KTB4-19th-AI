@@ -11,6 +11,7 @@ from zipsai.errors import (
 )
 from zipsai.integrations.llm import _get_client, strip_json_code_fence
 from zipsai.settings import get_settings
+from zipsai.tracing import get_tracing_client
 
 
 def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
@@ -27,6 +28,7 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": image_content},
             ],
+            **({"name": "analyze-images"} if get_tracing_client() else {}),
         )
     except RateLimitError as error:
         raise LlmRateLimitedError("VLM rate limit exceeded") from error

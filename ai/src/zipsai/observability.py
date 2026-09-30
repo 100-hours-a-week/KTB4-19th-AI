@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from zipsai.errors import error_code
+from zipsai.tracing import trace_step
 
 # 백엔드·embedding 로그와 같은 스키마로 조회하기 위한 공통 필드. 설정으로 뺄 값이
 # 아니라 이 프로세스의 정체라서 여기가 단일 출처다.
@@ -169,7 +170,18 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
     extra: dict[str, Any] = dict(fields)
     started = time.perf_counter()
     try:
-        yield extra
+        with trace_step(name) as trace:
+            try:
+                yield extra
+            except Exception as error:
+                if trace is not None:
+                    trace.update(
+                        output={"outcome": "fail", "error_code": error_code(error)}
+                    )
+                raise
+            else:
+                if trace is not None:
+                    trace.update(output={"outcome": "ok"})
     except Exception as error:
         logger.exception(
             "stage_done",

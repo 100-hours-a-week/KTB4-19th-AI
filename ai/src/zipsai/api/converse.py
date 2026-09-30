@@ -26,6 +26,7 @@ from zipsai.errors import (
 from zipsai.observability import bind, collect_timings, is_cold, track_in_flight
 from zipsai.orchestration.graph import build_graph
 from zipsai.settings import get_settings
+from zipsai.tracing import trace_turn
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v3/ai", tags=["converse"])
@@ -63,8 +64,21 @@ def converse(
         ),
         track_in_flight() as in_flight,
         collect_timings() as timings,
+        trace_turn(request) as trace,
     ):
-        return _handle(request, in_flight=in_flight, timings=timings)
+        response = _handle(request, in_flight=in_flight, timings=timings)
+        if trace is not None:
+            trace.update(
+                output={
+                    "status_code": response.status_code
+                    if isinstance(response, JSONResponse)
+                    else 200,
+                    "route": response.data.route.value
+                    if isinstance(response, ConverseResponse)
+                    else None,
+                }
+            )
+        return response
 
 
 def _handle(

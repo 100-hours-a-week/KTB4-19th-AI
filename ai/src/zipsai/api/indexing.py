@@ -7,13 +7,14 @@ from fastapi import APIRouter, BackgroundTasks, status
 from fastapi.responses import JSONResponse
 from qdrant_client import QdrantClient
 
-from zipsai.contracts.indexing import IndexingJobRequest
+from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.upsert import delete_missing_documents
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
 from zipsai.integrations.s3 import download
 from zipsai.observability import bind, elapsed_ms, stage
+from zipsai.tracing import trace_job
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,17 +32,22 @@ def _dependencies() -> tuple[QdrantClient, HttpEncoder]:
 
 def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
     started = perf_counter()
-    with bind(
-        job_id=job_id,
-        trace_id=payload.trace_id,
-        doc_id=payload.doc_id,
-        building_id=payload.building_id,
+    with (
+        bind(
+            job_id=job_id,
+            trace_id=payload.trace_id,
+            doc_id=payload.doc_id,
+            building_id=payload.building_id,
+        ),
+        trace_job(payload, job_id) as trace,
     ):
         try:
             with stage("setup", logger):
                 client, encoder = _dependencies()
         except Exception as error:
             # 응답은 이미 202로 나갔다. 여기서 터지면 로그가 유일한 흔적이다.
+            if trace is not None:
+                trace.update(output={"outcome": "fail", "failed_stage": "setup"})
             logger.exception(
                 "job_done",
                 extra=_job_fields(started, "fail", failed_stage="setup", error=error),
@@ -50,9 +56,20 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
 
         # 색인이 먼저다. 정리가 앞서면 이번에 넣을 문서가 잠깐 검색에서 빠진다.
         if payload.has_document:
-            run_indexing_job(payload, download=download, encoder=encoder, client=client)
+            result = run_indexing_job(
+                payload, download=download, encoder=encoder, client=client
+            )
+            if result is JobStatus.FAILED:
+                if trace is not None:
+                    trace.update(output={"outcome": "fail", "failed_stage": "index"})
+                logger.error(
+                    "job_done", extra=_job_fields(started, "fail", failed_stage="index")
+                )
+                return
 
         if payload.valid_doc_ids is None:
+            if trace is not None:
+                trace.update(output={"outcome": "ok"})
             logger.info("job_done", extra=_job_fields(started, "ok"))
             return
 
@@ -64,6 +81,8 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
                 step["kept"] = len(payload.valid_doc_ids)
         except Exception as error:
             # 스택은 reconcile 단계 로그가 남겼다.
+            if trace is not None:
+                trace.update(output={"outcome": "fail", "failed_stage": "reconcile"})
             logger.exception(
                 "job_done",
                 exc_info=False,
@@ -73,6 +92,8 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
             )
             return
 
+        if trace is not None:
+            trace.update(output={"outcome": "ok"})
         logger.info("job_done", extra=_job_fields(started, "ok"))
 
 
