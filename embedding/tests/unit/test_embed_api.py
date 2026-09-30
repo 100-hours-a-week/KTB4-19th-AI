@@ -53,7 +53,9 @@ def test_health_reports_unavailable_while_the_model_loads(
 def test_embed_returns_dense_and_sparse_for_every_text(
     client: TestClient, encoder: FakeEncoder
 ) -> None:
-    response = client.post("/embed", json={"texts": ["첫 청크", "둘째 청크"]})
+    response = client.post(
+        "/embed", json={"texts": ["첫 청크", "둘째 청크"], "trace_id": "trace-001"}
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -66,7 +68,7 @@ def test_embed_returns_dense_and_sparse_for_every_text(
 def test_embed_returns_empty_result_without_calling_the_model(
     client: TestClient, encoder: FakeEncoder
 ) -> None:
-    response = client.post("/embed", json={"texts": []})
+    response = client.post("/embed", json={"texts": [], "trace_id": "trace-001"})
 
     assert response.status_code == 200
     assert response.json() == {"dense": [], "sparse": []}
@@ -78,7 +80,7 @@ def test_embed_reports_unavailable_while_the_model_loads(
 ) -> None:
     encoder.ready = False
 
-    response = client.post("/embed", json={"texts": ["청크"]})
+    response = client.post("/embed", json={"texts": ["청크"], "trace_id": "trace-001"})
 
     assert response.status_code == 503
     assert encoder.calls == []
@@ -87,7 +89,10 @@ def test_embed_reports_unavailable_while_the_model_loads(
 def test_embed_rejects_a_batch_over_the_limit(
     client: TestClient, encoder: FakeEncoder
 ) -> None:
-    response = client.post("/embed", json={"texts": ["청크"] * (MAX_BATCH_SIZE + 1)})
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"] * (MAX_BATCH_SIZE + 1), "trace_id": "trace-001"},
+    )
 
     assert response.status_code == 422
     assert encoder.calls == []
@@ -96,7 +101,9 @@ def test_embed_rejects_a_batch_over_the_limit(
 def test_embed_rejects_a_text_over_the_character_limit(
     client: TestClient, encoder: FakeEncoder
 ) -> None:
-    response = client.post("/embed", json={"texts": ["가" * (MAX_TEXT_CHARS + 1)]})
+    response = client.post(
+        "/embed", json={"texts": ["가" * (MAX_TEXT_CHARS + 1)], "trace_id": "trace-001"}
+    )
 
     assert response.status_code == 422
     assert encoder.calls == []

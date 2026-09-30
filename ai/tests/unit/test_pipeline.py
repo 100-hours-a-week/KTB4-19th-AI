@@ -16,7 +16,7 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "two-pages.pdf"
 
 class FakeEncoder:
     def encode(
-        self, texts: list[str]
+        self, texts: list[str], trace_id: str
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         return [[0.0] * EMBEDDING_DIM for _ in texts], [{} for _ in texts]
 
@@ -24,6 +24,7 @@ class FakeEncoder:
 def make_request() -> IndexingJobRequest:
     return IndexingJobRequest(
         building_id=101,
+        trace_id="trace-001",
         doc_id="notice-001",
         title="물탱크 청소 안내",
         file_key="buildings/101/notice-001.pdf",

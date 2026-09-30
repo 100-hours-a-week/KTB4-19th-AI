@@ -3,7 +3,8 @@ from functools import lru_cache
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Response, status
+from fastapi import APIRouter, BackgroundTasks, status
+from fastapi.responses import JSONResponse
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest
@@ -30,7 +31,12 @@ def _dependencies() -> tuple[QdrantClient, HttpEncoder]:
 
 def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
     started = perf_counter()
-    with bind(job_id=job_id, doc_id=payload.doc_id, building_id=payload.building_id):
+    with bind(
+        job_id=job_id,
+        trace_id=payload.trace_id,
+        doc_id=payload.doc_id,
+        building_id=payload.building_id,
+    ):
         try:
             with stage("setup", logger):
                 client, encoder = _dependencies()
@@ -86,16 +92,17 @@ def _job_fields(
     }
 
 
-@router.post("/jobs", status_code=ACCEPTED, response_class=Response)
+@router.post("/jobs", status_code=ACCEPTED, response_class=JSONResponse)
 def create_job(
     payload: IndexingJobRequest, background_tasks: BackgroundTasks
-) -> Response:
+) -> JSONResponse:
     # 색인 계약에는 turn_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
     job_id = str(uuid4())
     logger.info(
         "job_accepted",
         extra={
             "job_id": job_id,
+            "trace_id": payload.trace_id,
             "doc_id": payload.doc_id,
             "building_id": payload.building_id,
             "has_document": payload.has_document,
@@ -105,4 +112,4 @@ def create_job(
         },
     )
     background_tasks.add_task(_run_job, payload, job_id)
-    return Response(status_code=ACCEPTED)
+    return JSONResponse(status_code=ACCEPTED, content={"trace_id": payload.trace_id})

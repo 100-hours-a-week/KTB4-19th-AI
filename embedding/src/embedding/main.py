@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -6,6 +7,8 @@ from fastapi import FastAPI
 from embedding.api.embed import router as embed_router
 from embedding.api.health import router as health_router
 from embedding.encoder import encoder
+
+logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager

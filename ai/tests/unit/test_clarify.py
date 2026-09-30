@@ -21,6 +21,7 @@ def _make_state(
             "resident_id": "linda",
             "conversation_id": "conv-001",
             "turn_id": "turn-001",
+            "trace_id": "trace-001",
             "current_route": current_route,
             "current_complaint_state": None,
             "message": {

@@ -43,6 +43,7 @@ def _payload() -> dict[str, object]:
         "resident_id": "linda",
         "conversation_id": "conv-001",
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
         "current_route": None,
         "current_complaint_state": None,
         "message": {"message_id": "msg-001", "text": "네", "image_urls": []},
@@ -73,6 +74,7 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
     assert response.json() == {
         "code": "ai_response_success",
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
         "data": {
             "route": "clarify",
             "complaint_intent": None,
@@ -199,6 +201,7 @@ def test_converse_maps_llm_error_to_api_response(
         "message": "ai_response_error",
         "error": error_body,
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
 
 
@@ -233,6 +236,7 @@ def test_converse_returns_dependency_error_when_llm_settings_are_missing(monkeyp
             "retryable": True,
         },
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
 
 
@@ -327,7 +331,7 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     monkeypatch.setattr(
         knowledge_node,
         "encode_question",
-        lambda _question, *, encoder: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
+        lambda _question, *, encoder, trace_id: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
     )
     monkeypatch.setattr(
         knowledge_node,
@@ -431,6 +435,7 @@ def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
             "retryable": False,
         },
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
 
 
@@ -450,6 +455,7 @@ def test_converse_returns_standard_error_for_contract_violation():
             "retryable": False,
         },
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
 
 
@@ -468,18 +474,8 @@ def test_converse_returns_standard_error_for_missing_required_field():
             "retryable": False,
         },
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
-
-
-def test_converse_rejects_legacy_trace_id_field():
-    payload = _payload()
-    payload["trace_id"] = payload.pop("turn_id")
-
-    response = TestClient(app).post("/api/v3/ai/converse", json=payload)
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "MISSING_REQUIRED_FIELD"
-    assert "turn_id" not in response.json()
 
 
 def test_converse_returns_generic_error_for_unexpected_exception(monkeypatch):
@@ -508,6 +504,7 @@ def test_converse_returns_generic_error_for_unexpected_exception(monkeypatch):
             "retryable": False,
         },
         "turn_id": "turn-001",
+        "trace_id": "trace-001",
     }
 
 

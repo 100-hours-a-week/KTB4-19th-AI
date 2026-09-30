@@ -22,6 +22,7 @@ def test_converse_request_accepts_real_example():
         "resident_id": "linda",
         "conversation_id": "conv-001",
         "turn_id": "conv-001-003",
+        "trace_id": "trace-001",
         "current_route": "complaint",
         "current_complaint_state": "collecting",
         "message": {
@@ -155,6 +156,7 @@ def test_history_and_citation_follow_api_contract():
             "resident_id": "linda",
             "conversation_id": "conv-001",
             "turn_id": "turn-001",
+            "trace_id": "trace-001",
             "current_route": None,
             "current_complaint_state": None,
             "message": {
@@ -193,6 +195,7 @@ def test_agent_state_keeps_request_route_and_complaint_state():
             "resident_id": "linda",
             "conversation_id": "conv-001",
             "turn_id": "turn-001",
+            "trace_id": "trace-001",
             "current_route": None,
             "current_complaint_state": None,
             "message": {
