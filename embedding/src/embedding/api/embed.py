@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -44,8 +45,15 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
 
     # 구조화 로거가 없어 trace_id를 메시지 문자열에 싣는다 — CloudWatch
     # filter-log-events로 값 검색은 되지만 필드 파싱은 안 된다.
+    # load는 CPU 경합 의심 시 그 순간 값을 사후에 지표 권한 없이도 로그로 확인하기 위함.
     logger.info(
-        "embed request trace_id=%s texts=%d", payload.trace_id, len(payload.texts)
+        "embed request trace_id=%s texts=%d load=%s",
+        payload.trace_id,
+        len(payload.texts),
+        os.getloadavg(),
     )
     dense, sparse = encoder.encode(payload.texts)
+    # uvicorn 접속 로그("POST /embed ... 200 OK")엔 trace_id가 안 실린다.
+    # 요청 줄과 시간순으로만 대조하던 걸 trace_id로 직접 맞출 수 있게 완료 줄을 따로 남긴다.
+    logger.info("embed done trace_id=%s texts=%d", payload.trace_id, len(payload.texts))
     return EmbedResponse(dense=dense, sparse=sparse)
