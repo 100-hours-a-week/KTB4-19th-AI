@@ -489,8 +489,6 @@ def test_handle_complaint_clears_state_when_fields_complete(
         "_extract_complaint",
         lambda _: _Extraction(
             ComplaintDraft(issue_type="leak", location="화장실", symptom="물이 새요"),
-            "",
-            frozenset(set()),
         ),
     )
 
@@ -550,7 +548,7 @@ def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
         node_module,
         "_extract_complaint",
         lambda _: _Extraction(
-            ComplaintDraft(location="화장실", symptom="이상해요"), "", frozenset(set())
+            ComplaintDraft(location="화장실", symptom="이상해요"),
         ),
     )
 

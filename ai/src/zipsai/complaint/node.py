@@ -7,6 +7,7 @@ from typing import get_args
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from zipsai.complaint.prompts import COMPLAINT_PROMPT, VLM_ANALYSIS_PROMPT
 from zipsai.contracts.converse import (
@@ -74,8 +75,12 @@ _EXTRACTION_SCHEMA = {
 }
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True)
 class _Extraction:
+    """pydantic dataclass — switch 등 필드에 원본 str을 넣어도 생성 시점에 실제
+    타입으로 검증·변환된다. 평범한 @dataclass는 타입힌트를 강제하지 않아
+    "타입은 ComplaintSwitch인데 런타임엔 str"인 상태가 조용히 통과했었다."""
+
     draft: ComplaintDraft = field(default_factory=ComplaintDraft)
     reply: str = ""
     switch: ComplaintSwitch = ComplaintSwitch.SAME
