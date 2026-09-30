@@ -790,9 +790,13 @@ def test_handle_complaint_keeps_confirmed_location_against_unknown(
 
 
 def _switching_draft() -> ComplaintDraft:
+    """전환 판정이 실제로 도달하는 초안 — 증상은 있고 위치는 아직 없다.
+
+    필수 항목이 다 차면 그 턴에 카드가 나가고 대화가 끝나므로, 완성된 초안을
+    들고 다음 턴이 오는 경우는 없다.
+    """
     return ComplaintDraft(
         issue_type="leak",
-        location="화장실",
         symptom="천장에서 물이 떨어져요",
         image_urls=["https://example.com/old.jpg"],
     )
@@ -816,33 +820,11 @@ def test_handle_complaint_asks_before_replacing_a_draft_with_a_new_complaint(
     # 아직 전환된 게 아니다. 거절당하면 되돌릴 방법이 없으므로 초안을 그대로 둔다.
     assert outcome["result"].complaint_draft == _switching_draft()
     assert outcome["complaint_state"] is ComplaintState.COLLECTING
-    # 새 증상이 작은따옴표 안에 들어가는 것이 계약이다. 수락 턴의 추출 프롬프트가
-    # 이 문구에서 증상을 되읽으므로, 따옴표가 빠지면 회수가 조용히 깨진다.
-    assert "'세탁기가 안 돌아감'" in outcome["reply"]
-
-
-def test_handle_complaint_asks_to_switch_even_when_the_draft_is_already_complete(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    # 필수 항목이 다 찬 초안은 missing_fields가 비어 완료 분기로 떨어진다. 전환 판정이
-    # 그보다 앞서지 않으면 "아 그리고 세탁기도요"에 확인 카드가 나가고 대화가 끝난다.
-    request = _make_request("세탁기가 안 돌아가요")
-    request.complaint_draft = _switching_draft()
-    monkeypatch.setattr(
-        node_module,
-        "_extract_complaint",
-        lambda _: _Extraction(
-            ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
-        ),
-    )
-
-    outcome = handle_complaint(request)
-
-    assert outcome["complaint_state"] is ComplaintState.COLLECTING
-    assert outcome["reply"] != "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
-    # 백엔드는 missing_fields가 비면 카드를 만든다. 옛 초안이 완성돼 있어도 전환을
-    # 묻는 중에는 비워 보낼 수 없다.
-    assert outcome["result"].missing_fields == ["location", "symptom"]
+    # 돌려주는 초안이 옛 민원이므로 빈 칸도 옛 민원 기준이다.
+    assert outcome["result"].missing_fields == ["location"]
+    # 새 증상이 낫표 안에 들어가는 것이 계약이다. 수락 턴의 추출 프롬프트가 이 문구에서
+    # 증상을 되읽으므로, 낫표가 빠지면 회수가 조용히 깨진다.
+    assert "「세탁기가 안 돌아감」" in outcome["reply"]
 
 
 def test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking(
@@ -928,20 +910,69 @@ def test_handle_complaint_keeps_this_turns_photo_after_accepting_a_switch(
 
 
 @pytest.mark.parametrize(
-    ("switch", "current", "extracted"),
+    ("current", "extracted"),
     [
         # 비교할 기존 증상이 없다. 전환할 대상이 아예 없는 상태다.
-        ("ask", None, ComplaintDraft(symptom="세탁기가 안 돌아감")),
+        (None, ComplaintDraft(symptom="세탁기가 안 돌아감")),
         # 새 증상을 못 읽었다. 확인 문구를 만들 재료가 없다.
-        ("ask", ComplaintDraft(symptom="물이 새요"), ComplaintDraft()),
-        # 수락인데 증상이 비었다. 비우면 빈 초안으로 처음부터 다시 묻게 된다.
-        ("accept", ComplaintDraft(symptom="물이 새요"), ComplaintDraft()),
+        (ComplaintDraft(symptom="물이 새요"), ComplaintDraft()),
     ],
 )
-def test_resolve_switch_falls_back_to_same_without_the_pieces_it_needs(
-    switch: str, current: ComplaintDraft | None, extracted: ComplaintDraft
+def test_settle_switch_drops_ask_without_the_pieces_it_needs(
+    current: ComplaintDraft | None, extracted: ComplaintDraft
 ):
-    assert node_module._resolve_switch(switch, current, extracted) == "same"
+    settled = node_module._settle_switch(_Extraction(extracted, switch="ask"), current)
+    assert settled.switch == "same"
+
+
+def test_settle_switch_discards_a_contradictory_ask_extraction():
+    # "다른 민원"이라면서 증상이 없다. 값을 병합하면 다른 민원의 issue_type이
+    # 지금 초안에 얹혀 짜깁기 카드가 된다.
+    settled = node_module._settle_switch(
+        _Extraction(ComplaintDraft(issue_type="electricity"), switch="ask"),
+        ComplaintDraft(symptom="물이 새요"),
+    )
+    assert settled.switch == "same"
+    assert settled.draft.issue_type is None
+
+
+def test_settle_switch_keeps_extraction_when_there_is_nothing_to_switch_from():
+    # 전환할 대상이 없으면 평범한 수집 턴이다. 추출값을 버리면 증상을 잃는다.
+    settled = node_module._settle_switch(
+        _Extraction(ComplaintDraft(symptom="물이 새요"), switch="ask"), None
+    )
+    assert settled.switch == "same"
+    assert settled.draft.symptom == "물이 새요"
+
+
+def test_settle_switch_never_demotes_accept():
+    # accept를 same으로 돌리면 방금 접어두기로 한 민원이 완성 상태로 카드까지 나간다.
+    settled = node_module._settle_switch(
+        _Extraction(ComplaintDraft(), switch="accept"),
+        ComplaintDraft(symptom="물이 새요"),
+    )
+    assert settled.switch == "accept"
+
+
+def test_handle_complaint_does_not_file_the_abandoned_draft_when_recovery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 입주민이 전환을 수락했는데 추출이 새 증상을 못 읽은 턴. 옛 초안은 완성돼 있다.
+    request = _make_request("네")
+    request.complaint_draft = _switching_draft()
+    monkeypatch.setattr(
+        node_module,
+        "_extract_complaint",
+        lambda _: _Extraction(ComplaintDraft(), switch="accept"),
+    )
+
+    outcome = handle_complaint(request)
+
+    # 접어두기로 한 민원이 카드로 나가면 안 된다. 빈 초안으로 다시 물어야 한다.
+    assert outcome["complaint_state"] is ComplaintState.COLLECTING
+    assert outcome["result"].missing_fields == ["location", "symptom"]
+    assert outcome["result"].complaint_draft.symptom is None
+    assert outcome["result"].complaint_draft.image_urls == []
 
 
 def test_extract_complaint_defaults_an_unknown_switch_to_same(

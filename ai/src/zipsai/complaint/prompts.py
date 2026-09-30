@@ -32,9 +32,9 @@ COMPLAINT_SYSTEM_PROMPT = (
     '  Default to "same" whenever you are not confident. Discarding a draft the resident already '
     "filled in costs far more than merging one extra turn into it.\n"
     '  If the draft is empty or has no symptom yet, always output "same".\n'
-    "  If the current turn states no symptom, judge from issue_type instead: a clearly different "
-    'issue_type is "ask"; anything else is "same". A bare answer that only supplies a missing field '
-    '(화장실이요, 어제요, 네) is always "same".\n'
+    "  The symptom is the only basis for switching. If the current turn states no symptom, output "
+    '"same" — a different issue_type on its own is never enough. A bare answer that only supplies '
+    'a missing field (화장실이요, 어제요, 네) is always "same".\n'
     "- location: where the problem is (e.g. 화장실, 주방). null if not stated in this turn. "
     "Exception: when the previous assistant turn asked for the location and the resident "
     "replies that they do not know or will not say (몰라, 모르겠어요, 안 알려줄래요), output "
@@ -48,8 +48,8 @@ COMPLAINT_SYSTEM_PROMPT = (
     "points back to the photo (네, 맞아요, 사진에 있는 그거요, 사진 봐) — use that reported "
     "observation.\n"
     '  (2) complaint_switch is "accept" — use the new complaint named inside the previous assistant '
-    "turn's switch question, quoted there between 작은따옴표. Copy it as written. Do not invent a "
-    "symptom that does not appear in that question.\n"
+    "turn's switch question, quoted there between 낫표 「」. Copy exactly what sits between 「 and 」. "
+    "Do not invent a symptom that does not appear in that question.\n"
     "  These two are the only cases where a value may come from an earlier turn.\n"
     "- occurred_at: when the problem started or was first noticed, only if stated in this turn. "
     "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
