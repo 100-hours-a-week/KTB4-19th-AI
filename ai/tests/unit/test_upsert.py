@@ -221,9 +221,13 @@ def test_reconcile_leaves_other_buildings_alone(client: QdrantClient) -> None:
     assert [point.payload["building_id"] for point in points(client)] == ["202"]
 
 
-def test_reconcile_refuses_an_empty_valid_list(client: QdrantClient) -> None:
+def test_reconcile_with_empty_list_deletes_all_documents_in_the_building(
+    client: QdrantClient,
+) -> None:
+    # 마지막 문서가 지워지면 백엔드가 빈 목록을 보낸다 — 그 건물 포인트가 전부 지워져야 한다.
     upsert_document(client, request(101, "doc-a"), [chunk("A")])
+    upsert_document(client, request(202, "doc-a"), [chunk("건물 202")])
 
-    with pytest.raises(ValueError):
-        delete_missing_documents(client, 101, [])
-    assert len(points(client)) == 1
+    delete_missing_documents(client, 101, [])
+
+    assert [point.payload["building_id"] for point in points(client)] == ["202"]
