@@ -1,5 +1,12 @@
-from openai import APIError, APIStatusError, APITimeoutError, RateLimitError
-from pydantic import BaseModel, ValidationError
+from openai import (
+    APIError,
+    APIStatusError,
+    APITimeoutError,
+    ContentFilterFinishReasonError,
+    LengthFinishReasonError,
+    RateLimitError,
+)
+from pydantic import BaseModel
 
 from zipsai.contracts.converse import ImageAnalysis, ImageObservation
 from zipsai.errors import (
@@ -9,35 +16,17 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
 )
-from zipsai.integrations.llm import _get_client, strip_json_code_fence
+from zipsai.integrations.llm import _REQUIRE_STRUCTURED_OUTPUTS, _get_client
 from zipsai.settings import get_settings
 
-_IMAGE_ANALYSIS_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "image_analysis",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "images": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "summary": {"type": ["string", "null"]},
-                            "ocr_text": {"type": ["string", "null"]},
-                        },
-                        "required": ["summary", "ocr_text"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["images"],
-            "additionalProperties": False,
-        },
-    },
-}
+
+class _ModelObservation(BaseModel):
+    summary: str | None
+    ocr_text: str | None
+
+
+class _ModelImages(BaseModel):
+    images: list[_ModelObservation]
 
 
 def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
@@ -48,13 +37,14 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
     try:
         response = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.create(
+        ).chat.completions.parse(
             model=settings.vlm_model,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": image_content},
             ],
-            response_format=_IMAGE_ANALYSIS_SCHEMA,
+            response_format=_ModelImages,
+            extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )
     except RateLimitError as error:
         raise LlmRateLimitedError("VLM rate limit exceeded") from error
@@ -64,19 +54,20 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
         if error.status_code >= 500:
             raise LlmUpstreamError("VLM provider returned an upstream error") from error
         raise LlmUnavailableError("VLM request failed") from error
+    except (LengthFinishReasonError, ContentFilterFinishReasonError) as error:
+        raise ImageAnalysisError("VLM response was truncated or filtered") from error
     except APIError as error:
         raise LlmUnavailableError("VLM request failed") from error
 
     if not response.choices:
         raise ImageAnalysisError("VLM returned an empty response")
 
-    content = response.choices[0].message.content
-    if not content:
-        raise ImageAnalysisError("VLM returned an empty response")
-    try:
-        parsed = _ModelImages.model_validate_json(strip_json_code_fence(content))
-    except ValidationError as error:
-        raise ImageAnalysisError("VLM returned an invalid image analysis") from error
+    message = response.choices[0].message
+    if message.refusal:
+        raise ImageAnalysisError(f"VLM refused to analyze the image: {message.refusal}")
+    parsed = message.parsed
+    if parsed is None:
+        raise ImageAnalysisError("VLM returned an invalid image analysis")
 
     if len(parsed.images) != len(image_urls):
         raise ImageAnalysisError(
@@ -90,12 +81,3 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
             for url, obs in zip(image_urls, parsed.images)
         ]
     )
-
-
-class _ModelObservation(BaseModel):
-    summary: str | None
-    ocr_text: str | None
-
-
-class _ModelImages(BaseModel):
-    images: list[_ModelObservation]

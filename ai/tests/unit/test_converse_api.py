@@ -358,7 +358,9 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch, caplog
 ):
     monkeypatch.setattr(
-        intent_module, "generate_text", lambda **_kwargs: '{"route": "complaint"}'
+        intent_module,
+        "generate_structured",
+        lambda **_kwargs: intent_module._RouteResponse(route=Route.COMPLAINT),
     )
     monkeypatch.setattr(
         converse_module,
