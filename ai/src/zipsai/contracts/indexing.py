@@ -25,8 +25,10 @@ class IndexingJobRequest(BaseModel):
     # 검색 결과의 출처 표기에 쓴다. 입주민에게 doc_id를 보여줄 수는 없다.
     title: StrictStr | None = None
     file_key: StrictStr | None = None
-    # 빈 목록을 허용하면 백엔드 실수 한 번에 건물 문서가 전멸한다.
-    valid_doc_ids: Annotated[list[StrictStr], Field(min_length=1)] | None = None
+    # 빈 목록은 "이 건물에 남은 유효 문서가 없다"는 뜻으로 받아들인다.
+    # 마지막 문서를 지우면 정상적으로 여기 닿는다 — 목록 자체로는 이 경우와
+    # 백엔드 버그를 구분할 수 없어, 구분은 호출자(백엔드)의 책무로 둔다.
+    valid_doc_ids: list[StrictStr] | None = None
 
     @model_validator(mode="after")
     def check_shape(self) -> "IndexingJobRequest":

@@ -55,7 +55,7 @@ def test_complaint_prompt_carries_formatted_history_without_model_repr(
 ):
     captured: dict[str, str] = {}
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_text(system_prompt: str, user_prompt: str, **_: object) -> str:
         captured["user_prompt"] = user_prompt
         return '{"location": "화장실"}'
 
@@ -83,7 +83,7 @@ def test_extract_complaint_fields_parses_llm_json(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": "leak", "location": "화장실", "symptom": "천장에서 물이 떨어져요"}'
         ),
     )
@@ -101,7 +101,7 @@ def test_extract_complaint_fields_accepts_json_code_fence(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '```json\n{"issue_type": "leak", "location": "화장실", '
             '"symptom": "천장에서 물이 떨어져요"}\n```'
         ),
@@ -118,7 +118,7 @@ def test_extract_complaint_fields_defaults_missing_keys_to_none(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": null, "location": null, "symptom": null}'
         ),
     )
@@ -132,7 +132,7 @@ def test_extract_complaint_fields_raises_on_invalid_json(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
-        node_module, "generate_text", lambda system_prompt, user_prompt: "not json"
+        node_module, "generate_text", lambda system_prompt, user_prompt, **_: "not json"
     )
 
     with pytest.raises(ComplaintExtractionError):
@@ -145,7 +145,7 @@ def test_extract_complaint_fields_raises_on_invalid_issue_type(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": "bogus", "location": null, "symptom": null}'
         ),
     )
@@ -159,7 +159,7 @@ def test_extract_complaint_fields_retries_once_then_succeeds(
 ):
     calls: list[int] = []
 
-    def flaky_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def flaky_generate_text(system_prompt: str, user_prompt: str, **_: object) -> str:
         calls.append(1)
         if len(calls) == 1:
             return "not json"
@@ -180,7 +180,7 @@ def test_extract_complaint_fields_gives_up_after_exhausting_retries(
 ):
     calls: list[int] = []
 
-    def always_broken(system_prompt: str, user_prompt: str) -> str:
+    def always_broken(system_prompt: str, user_prompt: str, **_: object) -> str:
         calls.append(1)
         return "not json"
 
@@ -214,7 +214,7 @@ def test_extract_complaint_fields_parses_occurred_at(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": null, "location": null, "symptom": null, "occurred_at": "2026-09-22"}'
         ),
     )
@@ -231,7 +231,7 @@ def test_extract_complaint_fields_passes_todays_kst_date_to_prompt(
 ):
     captured: dict[str, str] = {}
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_text(system_prompt: str, user_prompt: str, **_: object) -> str:
         captured["user_prompt"] = user_prompt
         return '{"issue_type": null, "location": null, "symptom": null, "occurred_at": null}'
 
@@ -243,15 +243,15 @@ def test_extract_complaint_fields_passes_todays_kst_date_to_prompt(
     assert f"오늘 날짜(Asia/Seoul): {today}" in captured["user_prompt"]
 
 
-def test_extract_complaint_parses_reply_and_missing(
+def test_extract_complaint_parses_reply(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": null, "location": "화장실", "symptom": null, "occurred_at": null, '
-            '"missing": ["symptom"], "reply": "어떤 증상인지 알려주시겠어요?"}'
+            '"reply": "어떤 증상인지 알려주시겠어요?"}'
         ),
     )
 
@@ -259,16 +259,15 @@ def test_extract_complaint_parses_reply_and_missing(
 
     assert extraction.draft == ComplaintDraft(location="화장실")
     assert extraction.reply == "어떤 증상인지 알려주시겠어요?"
-    assert extraction.missing == {"symptom"}
 
 
-def test_extract_complaint_defaults_missing_keys_to_empty(
+def test_extract_complaint_defaults_reply_to_empty(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"issue_type": null, "location": null, "symptom": null}'
         ),
     )
@@ -276,24 +275,6 @@ def test_extract_complaint_defaults_missing_keys_to_empty(
     extraction = _extract_complaint(_make_request("음.."))
 
     assert extraction.reply == ""
-    assert extraction.missing == set()
-
-
-def test_extract_complaint_ignores_invalid_missing_entries(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "generate_text",
-        lambda system_prompt, user_prompt: (
-            '{"issue_type": null, "location": null, "symptom": null, '
-            '"missing": ["location", "issue_type", "bogus"], "reply": "위치를 알려주세요"}'
-        ),
-    )
-
-    extraction = _extract_complaint(_make_request("음.."))
-
-    assert extraction.missing == {"location"}
 
 
 def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
@@ -448,7 +429,7 @@ def test_handle_complaint_uses_generic_reply_without_photo(
     assert reply == "어디에서 생긴 문제인가요?"
 
 
-def test_handle_complaint_uses_llm_generated_reply_when_missing_matches(
+def test_handle_complaint_uses_llm_generated_reply(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -457,32 +438,12 @@ def test_handle_complaint_uses_llm_generated_reply_when_missing_matches(
         lambda _: _Extraction(
             ComplaintDraft(),
             "화장실 세면대인지 변기 쪽인지 알려주시겠어요?",
-            frozenset({"location"}),
         ),
     )
 
     reply = handle_complaint(_make_request("화장실이 좀 이상해요"))["reply"]
 
     assert reply == "화장실 세면대인지 변기 쪽인지 알려주시겠어요?"
-
-
-def test_handle_complaint_falls_back_when_llm_missing_disagrees_with_actual(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    # LLM은 location만 빠졌다고(잘못) 생각하지만, 실제 missing_fields는 symptom이다.
-    monkeypatch.setattr(
-        node_module,
-        "_extract_complaint",
-        lambda _: _Extraction(
-            ComplaintDraft(location="화장실"),
-            "정확한 위치를 알려주시겠어요?",
-            frozenset({"location"}),
-        ),
-    )
-
-    reply = handle_complaint(_make_request("화장실이 이상해요"))["reply"]
-
-    assert reply == "어떤 불편 증상인지 알려주세요."
 
 
 def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
@@ -494,7 +455,6 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
         lambda _: _Extraction(
             ComplaintDraft(),
             "정확히 어디쯤인지 알려주시겠어요?",
-            frozenset({"location"}),
         ),
     )
     monkeypatch.setattr(
@@ -530,8 +490,6 @@ def test_handle_complaint_clears_state_when_fields_complete(
         "_extract_complaint",
         lambda _: _Extraction(
             ComplaintDraft(issue_type="leak", location="화장실", symptom="물이 새요"),
-            "",
-            frozenset(set()),
         ),
     )
 
@@ -591,7 +549,7 @@ def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
         node_module,
         "_extract_complaint",
         lambda _: _Extraction(
-            ComplaintDraft(location="화장실", symptom="이상해요"), "", frozenset(set())
+            ComplaintDraft(location="화장실", symptom="이상해요"),
         ),
     )
 
@@ -738,9 +696,7 @@ def test_handle_complaint_photo_only_logs_image_analysis(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda *_: (
-            '{"location": null, "symptom": null, "missing": ["location", "symptom"]}'
-        ),
+        lambda *_, **__: ('{"location": null, "symptom": null}'),
     )
     monkeypatch.setattr(
         node_module,
@@ -982,7 +938,7 @@ def test_extract_complaint_defaults_an_unknown_switch_to_same(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda system_prompt, user_prompt: (
+        lambda system_prompt, user_prompt, **_: (
             '{"complaint_switch": "bogus", "location": "화장실"}'
         ),
     )

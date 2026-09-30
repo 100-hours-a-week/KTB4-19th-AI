@@ -56,21 +56,19 @@ COMPLAINT_SYSTEM_PROMPT = (
     "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
     "date and omit finer precision. null if not stated in this turn. Output null when "
     'complaint_switch is "accept" unless the current message itself states a time.\n'
-    '- missing: an array listing which of "location"/"symptom" are still unknown overall — look '
-    "at the EXISTING draft below together with what you just extracted this turn, not just this "
-    'turn\'s message. Empty array if both are known. Only "location" and/or "symptom" are valid '
-    "entries; never include issue_type or occurred_at. "
+    "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — "
+    'whichever of "location"/"symptom" is still unknown overall, looking at the EXISTING draft '
+    "below together with what you just extracted this turn, not just this turn's message. Ask "
+    'about the first still-unknown field in the order "location", then "symptom". Never ask '
+    'about two fields in one turn. Empty string "" if both are already known. One short, '
+    "friendly sentence, no lists. Never ask about issue_type or occurred_at. "
     'When complaint_switch is "accept", ignore the existing draft entirely and judge only against '
-    "the new complaint — the old draft is being discarded.\n"
-    "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — the "
-    'first still-unknown field in the order "location", then "symptom". Never ask about two '
-    'fields in one turn. Empty string "" if `missing` is empty. One short, friendly sentence, '
-    "no lists. Never ask about issue_type or occurred_at. "
+    "the new complaint — the old draft is being discarded. "
     'Output "" when complaint_switch is "ask" — the service writes that question itself.\n\n'
-    "Output contract: output ONLY a JSON object with exactly these seven keys, nothing else. No "
+    "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"
     '{{"complaint_switch": "same", "issue_type": null, "location": null, "symptom": null, '
-    '"occurred_at": null, "missing": [], "reply": ""}}'
+    '"occurred_at": null, "reply": ""}}'
 )
 
 COMPLAINT_USER_TEMPLATE = (

@@ -26,8 +26,9 @@ _INTENT_SYSTEM_PROMPT = (
     '발화="민원 접수해주세요", 이미지=없음 → complaint\n'
     '발화="네", 이미지=없음, current_route=없음 → clarify\n'
     '발화="그거 말고 또 있어요?", 이미지=없음, current_route=knowledge → knowledge\n\n'
-    "Output contract: output exactly one of these three words, lowercase, nothing else — "
-    "complaint / knowledge / clarify. No punctuation, no quotes, no explanation, no other language."
+    "Output contract: output ONLY a JSON object with exactly one key, nothing else. No markdown, "
+    "no explanation, no code fences.\n"
+    '{{"route": "complaint"}}'
 )
 
 _INTENT_USER_TEMPLATE = (

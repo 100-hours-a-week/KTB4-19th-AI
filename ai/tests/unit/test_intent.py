@@ -3,7 +3,7 @@ import pytest
 import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import ConverseRequest, Route
 from zipsai.errors import IntentClassificationError, LlmUnavailableError
-from zipsai.orchestration.intent import classify_intent, parse_route
+from zipsai.orchestration.intent import _RouteResponse, classify_intent
 from zipsai.orchestration.state import AgentState
 
 
@@ -34,28 +34,14 @@ def _build_state(text: str, image_urls: list[str] | None = None) -> AgentState:
     }
 
 
-def test_parse_route_accepts_knowledge():
-    assert parse_route("knowledge") is Route.KNOWLEDGE
-
-
-def test_parse_route_rejects_unknown_response():
-    with pytest.raises(IntentClassificationError):
-        parse_route("anything_else")
-
-
 def test_classify_intent_returns_route_from_llm(monkeypatch: pytest.MonkeyPatch):
     received_prompts: list[tuple[str, str]] = []
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_structured(system_prompt: str, user_prompt: str, **kwargs):
         received_prompts.append((system_prompt, user_prompt))
-        return "knowledge"
+        return _RouteResponse(route=Route.KNOWLEDGE)
 
-    monkeypatch.setattr(
-        intent_module,
-        "generate_text",
-        fake_generate_text,
-        raising=False,
-    )
+    monkeypatch.setattr(intent_module, "generate_structured", fake_generate_structured)
 
     result = classify_intent(_build_state("쓰레기 언제 버려요?"))
 
@@ -63,16 +49,23 @@ def test_classify_intent_returns_route_from_llm(monkeypatch: pytest.MonkeyPatch)
     assert "쓰레기 언제 버려요?" in received_prompts[0][1]
 
 
+def test_classify_intent_raises_when_llm_returns_nothing_usable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """refusal이나 길이 제한으로 파싱할 내용이 없으면 generate_structured가 None을 준다."""
+    monkeypatch.setattr(
+        intent_module, "generate_structured", lambda *_, **__: None
+    )
+
+    with pytest.raises(IntentClassificationError):
+        classify_intent(_build_state("화장실에서 물이 새요"))
+
+
 def test_classify_intent_propagates_llm_failure(monkeypatch: pytest.MonkeyPatch):
-    def failing_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def failing_generate_structured(system_prompt: str, user_prompt: str, **kwargs):
         raise LlmUnavailableError("LLM request failed")
 
-    monkeypatch.setattr(
-        intent_module,
-        "generate_text",
-        failing_generate_text,
-        raising=False,
-    )
+    monkeypatch.setattr(intent_module, "generate_structured", failing_generate_structured)
 
     with pytest.raises(LlmUnavailableError):
         classify_intent(_build_state("화장실에서 물이 새요"))
@@ -81,11 +74,11 @@ def test_classify_intent_propagates_llm_failure(monkeypatch: pytest.MonkeyPatch)
 def test_classify_intent_normalizes_blank_text_with_an_image(monkeypatch):
     received_prompts: list[tuple[str, str]] = []
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_structured(system_prompt: str, user_prompt: str, **kwargs):
         received_prompts.append((system_prompt, user_prompt))
-        return "complaint"
+        return _RouteResponse(route=Route.COMPLAINT)
 
-    monkeypatch.setattr(intent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(intent_module, "generate_structured", fake_generate_structured)
 
     classify_intent(_build_state("   ", ["https://example.com/leak.jpg"]))
 

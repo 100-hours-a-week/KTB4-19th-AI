@@ -18,6 +18,14 @@ class ComplaintState(str, Enum):
     CLARIFYING = "clarifying"
 
 
+class ComplaintSwitch(str, Enum):
+    """수집 중인 민원과 이번 턴이 같은 건인지에 대한 판정. 자세한 규칙은 추출 프롬프트에 있다."""
+
+    SAME = "same"
+    ASK = "ask"
+    ACCEPT = "accept"
+
+
 def _require_complaint_state_only_for_complaint_route(
     route: Route | None, complaint_state: ComplaintState | None, field_name: str
 ) -> None:
