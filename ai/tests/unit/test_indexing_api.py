@@ -201,17 +201,17 @@ def test_index_and_cleanup_ride_on_one_request(
     assert job.valid_doc_ids == ["notice-001", "rule-2026"]
 
 
-def test_empty_valid_doc_ids_returns_422(
+def test_empty_valid_doc_ids_is_accepted_as_building_wipe(
     scheduled_jobs: list[IndexingJobRequest],
 ) -> None:
-    # 빈 목록을 받아주면 백엔드 실수 한 번에 건물 문서가 전멸한다.
+    # 마지막 문서를 지우면 백엔드가 빈 목록을 보낸다 — 정상 요청으로 받는다.
     status_code, _ = post(
         "/api/v3/ai/indexing/jobs",
         {"building_id": 101, "trace_id": "trace-001", "valid_doc_ids": []},
     )
 
-    assert status_code == 422
-    assert scheduled_jobs == []
+    assert status_code == 202
+    assert scheduled_jobs[0].valid_doc_ids == []
 
 
 def test_removed_fields_are_ignored_not_rejected(

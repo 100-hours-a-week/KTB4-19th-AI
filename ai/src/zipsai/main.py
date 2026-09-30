@@ -13,6 +13,7 @@ from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
 from zipsai.observability import configure_logging
 from zipsai.settings import API_PREFIX, missing_required_settings
+from zipsai.tracing import get_tracing_client
 
 configure_logging()
 
@@ -22,7 +23,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     missing = missing_required_settings()
     if missing:
         raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
-    yield
+    try:
+        yield
+    finally:
+        client = get_tracing_client()
+        if client is not None:
+            client.flush()
 
 
 app = FastAPI(title="zipsai", lifespan=lifespan)
