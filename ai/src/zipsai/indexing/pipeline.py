@@ -74,7 +74,7 @@ def run_indexing_job(
             with stage("embed", logger, cold=cold) as step:
                 step["texts"] = len(chunks)
                 step["batches"] = -(-len(chunks) // BATCH_SIZE)
-                embedded = embed_chunks(chunks, encoder)
+                embedded = embed_chunks(chunks, encoder, request.trace_id)
 
             with stage("upsert", logger) as step:
                 stored = upsert_document(

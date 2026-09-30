@@ -9,7 +9,7 @@ EncodeOutput = tuple[list[list[float]], list[dict[str, float]]]
 
 
 class Encoder(Protocol):
-    def encode(self, texts: list[str]) -> EncodeOutput: ...
+    def encode(self, texts: list[str], trace_id: str) -> EncodeOutput: ...
 
 
 @dataclass(frozen=True)
@@ -21,12 +21,14 @@ class EmbeddedChunk:
     sparse: dict[str, float]
 
 
-def embed_chunks(chunks: list[Chunk], encoder: Encoder) -> list[EmbeddedChunk]:
+def embed_chunks(
+    chunks: list[Chunk], encoder: Encoder, trace_id: str
+) -> list[EmbeddedChunk]:
     selected = [chunk for chunk in chunks if chunk.text.strip()]
     if not selected:
         return []
 
-    dense, sparse = encoder.encode([chunk.text for chunk in selected])
+    dense, sparse = encoder.encode([chunk.text for chunk in selected], trace_id)
     if len(dense) != len(selected) or len(sparse) != len(selected):
         raise EmbeddingError(
             f"Encoder returned {len(dense)} dense and {len(sparse)} sparse results "

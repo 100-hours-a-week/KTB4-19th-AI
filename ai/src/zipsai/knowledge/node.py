@@ -40,7 +40,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         return _fallback(request, reason="empty_question", reply=EMPTY_QUESTION_REPLY)
 
     chunks = search_chunks(
-        encode_question(question, encoder=query_encoder()),
+        encode_question(question, encoder=query_encoder(), trace_id=request.trace_id),
         request.building_id,
         client=get_client(),
     )
@@ -95,6 +95,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         "complaint_state": None,
         "reply": answer,
         "result": RouteResult(
+            complaint_draft=request.complaint_draft,
             citations=_citations(chunks),
             has_sufficient_evidence=True,
         ),
@@ -116,6 +117,7 @@ def _fallback(
         "complaint_state": None,
         "reply": reply,
         "result": RouteResult(
+            complaint_draft=request.complaint_draft,
             qa_card_draft=QaCardDraft(question=qa_question) if qa_question else None,
             has_sufficient_evidence=False,
         ),

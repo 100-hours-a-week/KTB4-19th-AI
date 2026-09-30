@@ -1,8 +1,11 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from embedding.encoder import encoder
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # CPU 추론이라 한 요청이 쥐는 메모리와 시간을 여기서 묶는다.
@@ -14,6 +17,7 @@ MAX_TEXT_CHARS = 8000
 
 class EmbedRequest(BaseModel):
     texts: list[str]
+    trace_id: str
 
 
 class EmbedResponse(BaseModel):
@@ -38,5 +42,10 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
     if not payload.texts:
         return EmbedResponse(dense=[], sparse=[])
 
+    # 구조화 로거가 없어 trace_id를 메시지 문자열에 싣는다 — CloudWatch
+    # filter-log-events로 값 검색은 되지만 필드 파싱은 안 된다.
+    logger.info(
+        "embed request trace_id=%s texts=%d", payload.trace_id, len(payload.texts)
+    )
     dense, sparse = encoder.encode(payload.texts)
     return EmbedResponse(dense=dense, sparse=sparse)

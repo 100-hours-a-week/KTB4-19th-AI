@@ -1,4 +1,4 @@
-from zipsai.contracts.converse import Route
+from zipsai.contracts.converse import Route, RouteResult
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_text
 from zipsai.orchestration.prompts import CLARIFY_PROMPT
@@ -20,4 +20,9 @@ def handle_clarify(state: AgentState) -> dict[str, str | None]:
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
         )
-    return {"reply": reply, "complaint_state": None}
+
+    return {
+        "reply": reply,
+        "complaint_state": None,
+        "result": RouteResult(complaint_draft=request.complaint_draft),
+    }

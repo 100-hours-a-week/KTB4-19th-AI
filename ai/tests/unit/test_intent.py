@@ -16,6 +16,7 @@ def _build_state(text: str, image_urls: list[str] | None = None) -> AgentState:
                 "resident_id": "linda",
                 "conversation_id": "conv-001",
                 "turn_id": "turn-001",
+                "trace_id": "trace-001",
                 "current_route": None,
                 "current_complaint_state": None,
                 "message": {

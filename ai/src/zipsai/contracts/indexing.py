@@ -18,6 +18,8 @@ class IndexingJobRequest(BaseModel):
     """
 
     building_id: StrictInt
+    # 로그를 백엔드 요청과 대조하는 유일한 값 — index든 cleanup이든 항상 온다.
+    trace_id: Annotated[StrictStr, Field(min_length=1)]
     # 빈 값이면 같은 building의 서로 다른 문서가 같은 교체 필터를 쓴다.
     doc_id: Annotated[StrictStr, Field(min_length=1)] | None = None
     # 검색 결과의 출처 표기에 쓴다. 입주민에게 doc_id를 보여줄 수는 없다.

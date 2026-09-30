@@ -49,22 +49,24 @@ class HttpEncoder:
             transport=transport,
         )
 
-    def encode(self, texts: list[str]) -> EncodeOutput:
+    def encode(self, texts: list[str], trace_id: str) -> EncodeOutput:
         dense: list[list[float]] = []
         sparse: list[dict[str, float]] = []
         for start in range(0, len(texts), BATCH_SIZE):
             batch_dense, batch_sparse = self._encode_batch(
-                texts[start : start + BATCH_SIZE]
+                texts[start : start + BATCH_SIZE], trace_id
             )
             dense.extend(batch_dense)
             sparse.extend(batch_sparse)
         return dense, sparse
 
-    def _post_with_retry(self, texts: list[str]) -> dict:
+    def _post_with_retry(self, texts: list[str], trace_id: str) -> dict:
         last: httpx.HTTPError | None = None
         for attempt in range(self._attempts):
             try:
-                response = self._client.post("/embed", json={"texts": texts})
+                response = self._client.post(
+                    "/embed", json={"texts": texts, "trace_id": trace_id}
+                )
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPError as exc:
@@ -80,6 +82,7 @@ class HttpEncoder:
                 logger.warning(
                     "embed_retry",
                     extra={
+                        "trace_id": trace_id,
                         "attempt": attempt + 1,
                         "attempts": self._attempts,
                         "status_code": _status_code(exc),
@@ -93,8 +96,8 @@ class HttpEncoder:
             f"Embedding request failed after {self._attempts} attempts: {last}"
         ) from last
 
-    def _encode_batch(self, texts: list[str]) -> EncodeOutput:
-        body = self._post_with_retry(texts)
+    def _encode_batch(self, texts: list[str], trace_id: str) -> EncodeOutput:
+        body = self._post_with_retry(texts, trace_id)
 
         try:
             dense, sparse = body["dense"], body["sparse"]

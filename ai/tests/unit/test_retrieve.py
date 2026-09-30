@@ -36,7 +36,7 @@ class FakeEncoder:
         self._sparse = sparse
 
     def encode(
-        self, texts: list[str]
+        self, texts: list[str], trace_id: str
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         self.calls.append(texts)
         dense = self._dense or [[0.0] * EMBEDDING_DIM for _ in texts]
@@ -47,7 +47,9 @@ class FakeEncoder:
 def test_encode_question_sends_one_text_and_unwraps_both_vectors() -> None:
     encoder = FakeEncoder(dense=[[0.5] * EMBEDDING_DIM], sparse=[{"7": 0.25}])
 
-    dense, sparse = encode_question("세탁실은 몇 시까지 쓸 수 있나요?", encoder=encoder)
+    dense, sparse = encode_question(
+        "세탁실은 몇 시까지 쓸 수 있나요?", encoder=encoder, trace_id="trace-001"
+    )
 
     assert encoder.calls == [["세탁실은 몇 시까지 쓸 수 있나요?"]]
     assert dense == [0.5] * EMBEDDING_DIM
