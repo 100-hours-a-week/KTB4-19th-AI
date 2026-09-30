@@ -34,20 +34,25 @@ def _build_state(text: str, image_urls: list[str] | None = None) -> AgentState:
 
 
 def test_parse_route_accepts_knowledge():
-    assert parse_route("knowledge") is Route.KNOWLEDGE
+    assert parse_route('{"route": "knowledge"}') is Route.KNOWLEDGE
 
 
 def test_parse_route_rejects_unknown_response():
     with pytest.raises(IntentClassificationError):
-        parse_route("anything_else")
+        parse_route('{"route": "anything_else"}')
+
+
+def test_parse_route_rejects_non_json_response():
+    with pytest.raises(IntentClassificationError):
+        parse_route("knowledge")
 
 
 def test_classify_intent_returns_route_from_llm(monkeypatch: pytest.MonkeyPatch):
     received_prompts: list[tuple[str, str]] = []
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_text(system_prompt: str, user_prompt: str, **kwargs) -> str:
         received_prompts.append((system_prompt, user_prompt))
-        return "knowledge"
+        return '{"route": "knowledge"}'
 
     monkeypatch.setattr(
         intent_module,
@@ -63,7 +68,7 @@ def test_classify_intent_returns_route_from_llm(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_classify_intent_propagates_llm_failure(monkeypatch: pytest.MonkeyPatch):
-    def failing_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def failing_generate_text(system_prompt: str, user_prompt: str, **kwargs) -> str:
         raise LlmUnavailableError("LLM request failed")
 
     monkeypatch.setattr(
@@ -80,9 +85,9 @@ def test_classify_intent_propagates_llm_failure(monkeypatch: pytest.MonkeyPatch)
 def test_classify_intent_normalizes_blank_text_with_an_image(monkeypatch):
     received_prompts: list[tuple[str, str]] = []
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_text(system_prompt: str, user_prompt: str, **kwargs) -> str:
         received_prompts.append((system_prompt, user_prompt))
-        return "complaint"
+        return '{"route": "complaint"}'
 
     monkeypatch.setattr(intent_module, "generate_text", fake_generate_text)
 

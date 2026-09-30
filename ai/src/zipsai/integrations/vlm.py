@@ -12,6 +12,33 @@ from zipsai.errors import (
 from zipsai.integrations.llm import _get_client, strip_json_code_fence
 from zipsai.settings import get_settings
 
+_IMAGE_ANALYSIS_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "image_analysis",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": ["string", "null"]},
+                            "ocr_text": {"type": ["string", "null"]},
+                        },
+                        "required": ["summary", "ocr_text"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["images"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 
 def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
     settings = get_settings()
@@ -27,6 +54,7 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": image_content},
             ],
+            response_format=_IMAGE_ANALYSIS_SCHEMA,
         )
     except RateLimitError as error:
         raise LlmRateLimitedError("VLM rate limit exceeded") from error

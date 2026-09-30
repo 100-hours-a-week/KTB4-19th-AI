@@ -1,3 +1,4 @@
+import json
 import logging
 
 from zipsai.contracts.converse import Route
@@ -9,6 +10,20 @@ from zipsai.orchestration.prompts import INTENT_PROMPT
 from zipsai.orchestration.state import AgentState
 
 logger = logging.getLogger(__name__)
+
+_ROUTE_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "route",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"route": {"type": "string", "enum": [r.value for r in Route]}},
+            "required": ["route"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def classify_intent(state: AgentState) -> dict[str, Route]:
@@ -27,6 +42,7 @@ def classify_intent(state: AgentState) -> dict[str, Route]:
         raw_response = generate_text(
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
+            response_format=_ROUTE_SCHEMA,
         )
         route = parse_route(raw_response)
         step["intent_route"] = route.value
@@ -37,6 +53,7 @@ def classify_intent(state: AgentState) -> dict[str, Route]:
 
 def parse_route(raw_response: str) -> Route:
     try:
-        return Route(raw_response.strip())
-    except ValueError as error:
+        data = json.loads(raw_response)
+        return Route(data["route"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
         raise IntentClassificationError("Unsupported intent route") from error

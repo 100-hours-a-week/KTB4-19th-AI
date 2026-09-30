@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
+from typing import get_args
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -11,8 +12,10 @@ from zipsai.complaint.prompts import COMPLAINT_PROMPT, VLM_ANALYSIS_PROMPT
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
+    ComplaintSwitch,
     ConverseRequest,
     ImageAnalysis,
+    IssueType,
     RouteResult,
 )
 from zipsai.errors import (
@@ -36,19 +39,46 @@ _EXTRACTION_ATTEMPTS = 2
 _REQUIRED_FIELDS = ("location", "symptom")
 _UNKNOWN_LOCATION = "모름"
 
-# 수집 중인 민원과 이번 턴이 같은 건인지에 대한 판정. 자세한 규칙은 추출 프롬프트에 있다.
-_SWITCH_SAME = "same"
-_SWITCH_ASK = "ask"
-_SWITCH_ACCEPT = "accept"
-_SWITCH_VALUES = (_SWITCH_SAME, _SWITCH_ASK, _SWITCH_ACCEPT)
+_EXTRACTION_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "complaint_extraction",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "complaint_switch": {
+                    "type": "string",
+                    "enum": [s.value for s in ComplaintSwitch],
+                },
+                "issue_type": {
+                    "type": ["string", "null"],
+                    "enum": [*get_args(IssueType), None],
+                },
+                "location": {"type": ["string", "null"]},
+                "symptom": {"type": ["string", "null"]},
+                "occurred_at": {"type": ["string", "null"]},
+                "reply": {"type": "string"},
+            },
+            "required": [
+                "complaint_switch",
+                "issue_type",
+                "location",
+                "symptom",
+                "occurred_at",
+                "reply",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 @dataclass(frozen=True)
 class _Extraction:
     draft: ComplaintDraft = field(default_factory=ComplaintDraft)
     reply: str = ""
-    missing: frozenset[str] = frozenset()
-    switch: str = _SWITCH_SAME
+    switch: ComplaintSwitch = ComplaintSwitch.SAME
 
 
 def _log_retry(attempt: int, error: Exception) -> None:
@@ -76,7 +106,11 @@ def _extract_complaint(request: ConverseRequest) -> _Extraction:
 
     last_error: Exception | None = None
     for attempt in range(1, _EXTRACTION_ATTEMPTS + 1):
-        raw = generate_text(system_message.content, user_message.content)
+        raw = generate_text(
+            system_message.content,
+            user_message.content,
+            response_format=_EXTRACTION_SCHEMA,
+        )
         try:
             data = json.loads(strip_json_code_fence(raw))
         except json.JSONDecodeError as error:
@@ -85,8 +119,11 @@ def _extract_complaint(request: ConverseRequest) -> _Extraction:
             continue
 
         reply = data.pop("reply", "")
-        missing = data.pop("missing", [])
-        switch = data.pop("complaint_switch", _SWITCH_SAME)
+        switch_raw = data.pop("complaint_switch", ComplaintSwitch.SAME.value)
+        try:
+            switch = ComplaintSwitch(switch_raw)
+        except ValueError:
+            switch = ComplaintSwitch.SAME
 
         try:
             draft = ComplaintDraft(**data)
@@ -100,10 +137,7 @@ def _extract_complaint(request: ConverseRequest) -> _Extraction:
         return _Extraction(
             draft=draft,
             reply=reply.strip() if isinstance(reply, str) else "",
-            missing=frozenset(missing) & frozenset(_REQUIRED_FIELDS)
-            if isinstance(missing, list)
-            else frozenset(),
-            switch=switch if switch in _SWITCH_VALUES else _SWITCH_SAME,
+            switch=switch,
         )
 
     raise ComplaintExtractionError(
@@ -146,16 +180,16 @@ def _settle_switch(
     accept는 떨어뜨리지 않는다. 입주민이 이미 바꾸겠다고 답한 턴이라, same으로
     돌리면 방금 접어두기로 한 민원이 완성 상태로 카드까지 나간다.
     """
-    if extraction.switch != _SWITCH_ASK:
+    if extraction.switch != ComplaintSwitch.ASK:
         return extraction
     if not (current and current.symptom):
         # 전환할 대상 자체가 없다. 평범한 수집 턴이므로 추출값은 그대로 쓴다.
-        return replace(extraction, switch=_SWITCH_SAME)
+        return replace(extraction, switch=ComplaintSwitch.SAME)
     if extraction.draft.symptom:
         return extraction
     # "다른 민원"이라면서 증상이 없다. 모순된 판정이라 이 턴의 값을 믿지 않는다.
     # 병합하면 다른 민원의 issue_type이 지금 초안에 얹혀 짜깁기 카드가 된다.
-    return _Extraction(switch=_SWITCH_SAME)
+    return _Extraction(switch=ComplaintSwitch.SAME)
 
 
 def _switch_question(current_symptom: str, new_symptom: str) -> str:
@@ -175,7 +209,7 @@ _PHOTO_ANALYZED_PREFIX = "사진은 확인했습니다. "
 _PHOTO_FAILED_PREFIX = "사진을 받았지만 분석에 실패했어요. "
 
 
-@dataclass
+@dataclass(frozen=True)
 class _ComplaintTurn:
     result: RouteResult
     reply: str
@@ -222,26 +256,24 @@ def _analyze_photos(image_urls: list[str]) -> ImageAnalysis | None:
 
 
 def _photo_label(
-    image_urls: list[str], image_analysis: ImageAnalysis | None, switch: str
+    image_urls: list[str], image_analysis: ImageAnalysis | None, switch: ComplaintSwitch
 ) -> str:
     """이번 턴 사진이 어떻게 처리됐는지 나타내는 로그 값."""
     if not image_urls:
         return "none"
-    if switch == _SWITCH_ASK:
+    if switch == ComplaintSwitch.ASK:
         # 전환을 묻는 턴은 분석도 누적도 하지 않는다. 이 URL은 여기서 사라진다.
         return "dropped"
     return "analyzed" if image_analysis else "failed"
 
 
-def _follow_up(
-    asked: str, llm_reply: str, llm_missing: frozenset[str]
-) -> tuple[str, str]:
+def _follow_up(asked: str, llm_reply: str) -> tuple[str, str]:
     """부족한 항목 하나를 묻는 문구와 그 출처.
 
-    LLM이 쓴 질문은 그것이 우리가 물으려는 항목과 정확히 같을 때만 쓴다. 어긋나면
-    두 항목을 묻거나 이미 받은 값을 다시 묻는 문구가 나간다.
+    어떤 항목이 부족한지는 이미 _missing_fields(draft)로 직접 계산했으므로, LLM
+    문구는 표현만 다듬는 역할이다. 있으면 그대로 신뢰하고, 없으면 고정 문구로 묻는다.
     """
-    if llm_reply and llm_missing == {asked}:
+    if llm_reply:
         return llm_reply, "llm"
     return _MISSING_FIELD_REPLY[asked], "fixed"
 
@@ -272,7 +304,7 @@ def _ask_for_missing(
 ) -> _ComplaintTurn:
     """부족한 항목 유도하는 턴."""
     asked = missing_fields[0]
-    question, reply_source = _follow_up(asked, extraction.reply, extraction.missing)
+    question, reply_source = _follow_up(asked, extraction.reply)
     return _ComplaintTurn(
         result=RouteResult(
             complaint_draft=draft,
@@ -332,10 +364,10 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     extraction = _settle_switch(extraction, request.complaint_draft)
     switch = extraction.switch
 
-    if switch == _SWITCH_ASK:
+    if switch == ComplaintSwitch.ASK:
         turn = _confirm_switch(request.complaint_draft, extraction.draft)
     else:
-        previous = None if switch == _SWITCH_ACCEPT else request.complaint_draft
+        previous = None if switch == ComplaintSwitch.ACCEPT else request.complaint_draft
         turn = _collect_complaint(request, extraction, previous)
 
     draft = turn.result.complaint_draft

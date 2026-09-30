@@ -17,7 +17,11 @@ from zipsai.errors import (
 from zipsai.settings import get_settings
 
 
-def generate_text(system_prompt: str, user_prompt: str) -> str:
+def generate_text(
+    system_prompt: str,
+    user_prompt: str,
+    response_format: dict | None = None,
+) -> str:
     settings = get_settings()
     try:
         response = _get_client(
@@ -28,6 +32,7 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            **({"response_format": response_format} if response_format else {}),
         )
     except RateLimitError as error:
         raise LlmRateLimitedError(

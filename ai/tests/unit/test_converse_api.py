@@ -271,7 +271,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     monkeypatch.setattr(
         complaint_node,
         "generate_text",
-        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
+        lambda *_, **__: '{"issue_type": null, "location": null, "symptom": null}',
     )
     payload = _payload()
     payload["current_route"] = "complaint"
@@ -357,7 +357,9 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
 def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch, caplog
 ):
-    monkeypatch.setattr(intent_module, "generate_text", lambda **_kwargs: "complaint")
+    monkeypatch.setattr(
+        intent_module, "generate_text", lambda **_kwargs: '{"route": "complaint"}'
+    )
     monkeypatch.setattr(
         converse_module,
         "get_settings",
@@ -366,7 +368,7 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch.setattr(
         complaint_node,
         "generate_text",
-        lambda *_: '{"issue_type": null, "location": null, "symptom": null}',
+        lambda *_, **__: '{"issue_type": null, "location": null, "symptom": null}',
     )
     payload = _payload()
     payload["current_route"] = "complaint"
