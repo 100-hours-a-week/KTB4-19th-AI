@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
 from zoneinfo import ZoneInfo
@@ -35,12 +36,19 @@ _EXTRACTION_ATTEMPTS = 2
 _REQUIRED_FIELDS = ("location", "symptom")
 _UNKNOWN_LOCATION = "모름"
 
+# 수집 중인 민원과 이번 턴이 같은 건인지에 대한 판정. 자세한 규칙은 추출 프롬프트에 있다.
+_SWITCH_SAME = "same"
+_SWITCH_ASK = "ask"
+_SWITCH_ACCEPT = "accept"
+_SWITCH_VALUES = (_SWITCH_SAME, _SWITCH_ASK, _SWITCH_ACCEPT)
 
-def extract_complaint_fields(request: ConverseRequest) -> ComplaintDraft:
-    # 단계 로그는 handle_complaint 한 곳에서만 낸다. 여기서도 내면 같은 stage 이름이
-    # 두 번 집계된다.
-    draft, _reply, _missing = _extract_complaint_fields_and_reply(request)
-    return draft
+
+@dataclass(frozen=True)
+class _Extraction:
+    draft: ComplaintDraft = field(default_factory=ComplaintDraft)
+    reply: str = ""
+    missing: frozenset[str] = frozenset()
+    switch: str = _SWITCH_SAME
 
 
 def _log_retry(attempt: int, error: Exception) -> None:
@@ -55,9 +63,8 @@ def _log_retry(attempt: int, error: Exception) -> None:
     )
 
 
-def _extract_complaint_fields_and_reply(
-    request: ConverseRequest,
-) -> tuple[ComplaintDraft, str, set[str]]:
+def _extract_complaint(request: ConverseRequest) -> _Extraction:
+    """추출 프롬프트를 한 번 돌려 이번 턴의 값과 전환 판정을 받는다."""
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
         today=datetime.now(_KST).date().isoformat(),
         conversation_history=format_history(request.conversation_history),
@@ -78,13 +85,8 @@ def _extract_complaint_fields_and_reply(
             continue
 
         reply = data.pop("reply", "")
-        if not isinstance(reply, str):
-            reply = ""
-
-        llm_missing = data.pop("missing", [])
-        if not isinstance(llm_missing, list):
-            llm_missing = []
-        llm_missing = {field for field in llm_missing if field in _REQUIRED_FIELDS}
+        missing = data.pop("missing", [])
+        switch = data.pop("complaint_switch", _SWITCH_SAME)
 
         try:
             draft = ComplaintDraft(**data)
@@ -93,7 +95,16 @@ def _extract_complaint_fields_and_reply(
             _log_retry(attempt, error)
             continue
 
-        return draft, reply.strip(), llm_missing
+        # 잘못된 값은 예외로 올리지 않고 기본값으로 강등한다. 한 필드가 어긋났다고
+        # 나머지가 멀쩡한 추출을 버리면 수집이 한 턴 헛돈다.
+        return _Extraction(
+            draft=draft,
+            reply=reply.strip() if isinstance(reply, str) else "",
+            missing=frozenset(missing) & frozenset(_REQUIRED_FIELDS)
+            if isinstance(missing, list)
+            else frozenset(),
+            switch=switch if switch in _SWITCH_VALUES else _SWITCH_SAME,
+        )
 
     raise ComplaintExtractionError(
         "LLM returned an invalid complaint draft after retry"
@@ -103,27 +114,57 @@ def _extract_complaint_fields_and_reply(
 def _merge_complaint_draft(
     current: ComplaintDraft | None, extracted: ComplaintDraft
 ) -> ComplaintDraft:
+    """기존 초안에 이번 턴에 새로 나온 값만 얹는다."""
     updates = {
         field: getattr(extracted, field)
         for field in ("issue_type", "location", "symptom", "occurred_at")
         if getattr(extracted, field) is not None
     }
-    # "모름"은 빈 칸을 채우는 값이지 이미 확인된 값을 대체하는 값이 아니다. 증상을 물은
-    # 턴에 "모르겠어요"가 오면 추출이 그걸 위치에 대한 모름으로 보고 "모름"을 넣기도 한다
-    # (실제로 관측됨). 그대로 두면 확인된 위치가 지워져 관리자가 쓸 수 없는 값이 된다.
+
     if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
         del updates["location"]
     return (current or ComplaintDraft()).model_copy(update=updates)
 
 
 def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> ComplaintDraft:
+    """초안의 사진 목록에 이번 턴 사진을 중복 없이 잇는다."""
     return draft.model_copy(
         update={"image_urls": list(dict.fromkeys([*draft.image_urls, *image_urls]))}
     )
 
 
 def _missing_fields(draft: ComplaintDraft) -> list[str]:
+    """접수에 필요한데 아직 비어 있는 항목."""
     return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
+
+
+def _settle_switch(
+    extraction: _Extraction, current: ComplaintDraft | None
+) -> _Extraction:
+    """전환 질문을 만들 재료가 없는 ask를 같은 민원으로 떨어뜨린다.
+
+    accept는 떨어뜨리지 않는다. 입주민이 이미 바꾸겠다고 답한 턴이라, same으로
+    돌리면 방금 접어두기로 한 민원이 완성 상태로 카드까지 나간다.
+    """
+    if extraction.switch != _SWITCH_ASK:
+        return extraction
+    if not (current and current.symptom):
+        # 전환할 대상 자체가 없다. 평범한 수집 턴이므로 추출값은 그대로 쓴다.
+        return replace(extraction, switch=_SWITCH_SAME)
+    if extraction.draft.symptom:
+        return extraction
+    # "다른 민원"이라면서 증상이 없다. 모순된 판정이라 이 턴의 값을 믿지 않는다.
+    # 병합하면 다른 민원의 issue_type이 지금 초안에 얹혀 짜깁기 카드가 된다.
+    return _Extraction(switch=_SWITCH_SAME)
+
+
+def _switch_question(current_symptom: str, new_symptom: str) -> str:
+    """전환 확인 문구. 수락 턴의 추출이 낫표 안에서 새 증상을 되읽는다.
+
+    입주민 발화에 낫표가 섞일 일은 없다. 따옴표를 쓰면 "에러 'E1'이 떠요" 같은
+    증상에서 경계가 겹쳐 회수가 조용히 깨진다.
+    """
+    return f"{current_symptom} 건은 접어두고 「{new_symptom}」으로 전환할까요?"
 
 
 _MISSING_FIELD_REPLY = {
@@ -132,6 +173,15 @@ _MISSING_FIELD_REPLY = {
 }
 _PHOTO_ANALYZED_PREFIX = "사진은 확인했습니다. "
 _PHOTO_FAILED_PREFIX = "사진을 받았지만 분석에 실패했어요. "
+
+
+@dataclass
+class _ComplaintTurn:
+    result: RouteResult
+    reply: str
+    complaint_state: ComplaintState | None
+    asked: str | None
+    reply_source: str
 
 
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
@@ -148,79 +198,166 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
     return f"사진은 확인했습니다 — {summary.rstrip('. ')}. "
 
 
+def _analyze_photos(image_urls: list[str]) -> ImageAnalysis | None:
+    """사진 분석 한 단계. 돌았든 안 돌았든 실패했든 줄을 하나 남긴다.
+
+    사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 로그로 구분해야 한다.
+    분석이 실패해도 예외를 올리지 않는다. 민원 수집은 텍스트만으로도 이어가고,
+    실패는 답변 문구로 입주민에게 알린다.
+    """
+    if not image_urls:
+        skipped("image_analysis", logger, skip_reason="no_image")
+        return None
+    try:
+        with stage("image_analysis", logger):
+            return analyze_images(image_urls, VLM_ANALYSIS_PROMPT)
+    except (
+        ImageAnalysisError,
+        LlmRateLimitedError,
+        LlmTimeoutError,
+        LlmUnavailableError,
+        LlmUpstreamError,
+    ):
+        return None
+
+
+def _photo_label(
+    image_urls: list[str], image_analysis: ImageAnalysis | None, switch: str
+) -> str:
+    """이번 턴 사진이 어떻게 처리됐는지 나타내는 로그 값."""
+    if not image_urls:
+        return "none"
+    if switch == _SWITCH_ASK:
+        # 전환을 묻는 턴은 분석도 누적도 하지 않는다. 이 URL은 여기서 사라진다.
+        return "dropped"
+    return "analyzed" if image_analysis else "failed"
+
+
+def _follow_up(
+    asked: str, llm_reply: str, llm_missing: frozenset[str]
+) -> tuple[str, str]:
+    """부족한 항목 하나를 묻는 문구와 그 출처.
+
+    LLM이 쓴 질문은 그것이 우리가 물으려는 항목과 정확히 같을 때만 쓴다. 어긋나면
+    두 항목을 묻거나 이미 받은 값을 다시 묻는 문구가 나간다.
+    """
+    if llm_reply and llm_missing == {asked}:
+        return llm_reply, "llm"
+    return _MISSING_FIELD_REPLY[asked], "fixed"
+
+
+def _confirm_switch(
+    current: ComplaintDraft, extracted: ComplaintDraft
+) -> _ComplaintTurn:
+    """새 민원으로 바꿀지 입주민에게 묻는 턴."""
+    skipped("image_analysis", logger, skip_reason="switch_pending")
+    # 돌려주는 초안이 옛 민원이므로 빈 칸도 옛 민원 기준으로 적는다.
+    return _ComplaintTurn(
+        result=RouteResult(
+            complaint_draft=current, missing_fields=_missing_fields(current)
+        ),
+        reply=_switch_question(current.symptom, extracted.symptom),
+        complaint_state=ComplaintState.COLLECTING,
+        asked=None,
+        reply_source="switch_ask",
+    )
+
+
+def _ask_for_missing(
+    draft: ComplaintDraft,
+    missing_fields: list[str],
+    image_analysis: ImageAnalysis | None,
+    image_urls: list[str],
+    extraction: _Extraction,
+) -> _ComplaintTurn:
+    """부족한 항목 유도하는 턴."""
+    asked = missing_fields[0]
+    question, reply_source = _follow_up(asked, extraction.reply, extraction.missing)
+    return _ComplaintTurn(
+        result=RouteResult(
+            complaint_draft=draft,
+            missing_fields=missing_fields,
+            image_analysis=image_analysis,
+        ),
+        reply=_photo_prefix(image_analysis) + question if image_urls else question,
+        complaint_state=ComplaintState.COLLECTING,
+        asked=asked,
+        reply_source=reply_source,
+    )
+
+
+def _ready_for_card(
+    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+) -> _ComplaintTurn:
+    """백엔드가 확인 카드를 만드는 유일한 경로. missing_fields가 비는 곳도 여기뿐이다."""
+    # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
+    if draft.issue_type is None:
+        draft = draft.model_copy(update={"issue_type": "other"})
+    return _ComplaintTurn(
+        result=RouteResult(
+            complaint_draft=draft, missing_fields=[], image_analysis=image_analysis
+        ),
+        reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
+        complaint_state=None,
+        asked=None,
+        reply_source="complete",
+    )
+
+
+def _collect_complaint(
+    request: ConverseRequest,
+    extraction: _Extraction,
+    previous: ComplaintDraft | None,
+) -> _ComplaintTurn:
+    """초안을 갱신하고, 접수 준비가 됐는지에 따라 두 결말 중 하나를 고른다."""
+    image_urls = request.message.image_urls
+    draft = _append_image_urls(
+        _merge_complaint_draft(previous, extraction.draft), image_urls
+    )
+    image_analysis = _analyze_photos(image_urls)
+    missing_fields = _missing_fields(draft)
+    if missing_fields:
+        return _ask_for_missing(
+            draft, missing_fields, image_analysis, image_urls, extraction
+        )
+    return _ready_for_card(draft, image_analysis)
+
+
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
+    """민원 경로의 한 턴을 처리한다."""
     started_at = perf_counter()
     with stage("text_extraction", logger):
-        extracted, llm_reply, llm_missing = _extract_complaint_fields_and_reply(request)
-    draft = _append_image_urls(
-        _merge_complaint_draft(request.complaint_draft, extracted),
-        request.message.image_urls,
-    )
-    photo_sent = bool(request.message.image_urls)
-    image_analysis = None
-    if photo_sent:
-        try:
-            with stage("image_analysis", logger):
-                image_analysis = analyze_images(
-                    request.message.image_urls, VLM_ANALYSIS_PROMPT
-                )
-        except (
-            ImageAnalysisError,
-            LlmRateLimitedError,
-            LlmTimeoutError,
-            LlmUnavailableError,
-            LlmUpstreamError,
-        ):
-            # 사진 분석이 실패해도 민원 수집은 이어간다. 답변에 실패를 알리고 텍스트로 받는다.
-            image_analysis = None
+        extraction = _extract_complaint(request)
+
+    extraction = _settle_switch(extraction, request.complaint_draft)
+    switch = extraction.switch
+
+    if switch == _SWITCH_ASK:
+        turn = _confirm_switch(request.complaint_draft, extraction.draft)
     else:
-        # 사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 구분하려면 줄이 있어야 한다.
-        skipped("image_analysis", logger, skip_reason="no_image")
+        previous = None if switch == _SWITCH_ACCEPT else request.complaint_draft
+        turn = _collect_complaint(request, extraction, previous)
 
-    missing_fields = _missing_fields(draft)
-
-    if missing_fields:
-        complaint_state = ComplaintState.COLLECTING
-        asked_now = missing_fields[0]
-        if llm_reply and llm_missing == {asked_now}:
-            follow_up = llm_reply
-            reply_source = "llm"
-        else:
-            follow_up = _MISSING_FIELD_REPLY[asked_now]
-            reply_source = "fixed"
-        reply = (
-            follow_up if not photo_sent else _photo_prefix(image_analysis) + follow_up
-        )
-    else:
-        if draft.issue_type is None:
-            draft = draft.model_copy(update={"issue_type": "other"})
-        complaint_state = None
-        reply = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
-        reply_source = "complete"
-
+    draft = turn.result.complaint_draft
     logger.info(
         "complaint_turn",
         extra={
             "conversation_id": request.conversation_id,
             "total_ms": elapsed_ms(started_at),
-            "asked": asked_now if missing_fields else None,
-            "missing": missing_fields,
+            "switch": switch,
+            "asked": turn.asked,
+            "missing": turn.result.missing_fields,
             "draft_changed": draft != request.complaint_draft,
             "location_unknown": draft.location == _UNKNOWN_LOCATION,
-            "reply_source": reply_source,
+            "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
-            "photo": "analyzed"
-            if image_analysis
-            else ("failed" if photo_sent else "none"),
+            "photo": _photo_label(
+                request.message.image_urls, turn.result.image_analysis, switch
+            ),
         },
     )
-
     return {
-        "complaint_state": complaint_state,
-        "reply": reply,
-        "result": RouteResult(
-            complaint_draft=draft,
-            missing_fields=missing_fields,
-            image_analysis=image_analysis,
-        ),
+        "complaint_state": turn.complaint_state,
+        "reply": turn.reply,
+        "result": turn.result,
     }

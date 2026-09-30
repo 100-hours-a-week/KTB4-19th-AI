@@ -53,8 +53,8 @@ def converse(
             building_id=request.building_id,
             # 경로를 리터럴로 적으면 라우터 prefix와 두 곳이 된다.
             route=http_request.url.path,
-            # 진행 중인 민원은 의도 분류를 건너뛴다(graph.py select_entry_node).
-            # 백엔드가 준 경로로 시작해 두고, 재분류가 돌면 그 결과가 덮는다.
+            # 의도 분류가 실패하면 그 단계 로그에 경로가 비어 조회가 끊긴다.
+            # 백엔드가 준 경로로 시작해 두고, 분류가 끝나면 그 결과가 덮는다.
             intent_route=(
                 request.current_route.value if request.current_route else None
             ),

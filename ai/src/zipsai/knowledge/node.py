@@ -95,6 +95,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         "complaint_state": None,
         "reply": answer,
         "result": RouteResult(
+            complaint_draft=request.complaint_draft,
             citations=_citations(chunks),
             has_sufficient_evidence=True,
         ),
@@ -116,6 +117,7 @@ def _fallback(
         "complaint_state": None,
         "reply": reply,
         "result": RouteResult(
+            complaint_draft=request.complaint_draft,
             qa_card_draft=QaCardDraft(question=qa_question) if qa_question else None,
             has_sufficient_evidence=False,
         ),

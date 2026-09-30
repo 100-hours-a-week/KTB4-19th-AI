@@ -9,7 +9,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.errors import LlmUnavailableError
-from zipsai.orchestration.graph import build_graph, select_entry_node, select_next_node
+from zipsai.orchestration.graph import build_graph, select_next_node
 from zipsai.orchestration.state import AgentState
 from zipsai.settings import EMBEDDING_DIM
 
@@ -65,31 +65,6 @@ def test_select_next_node_returns_route_node(route: Route | None, expected_node:
 
 
 @pytest.mark.parametrize(
-    ("current_route", "current_complaint_state", "expected_node"),
-    [
-        (Route.COMPLAINT, ComplaintState.COLLECTING, "complaint"),
-        (Route.COMPLAINT, ComplaintState.CLARIFYING, "classify_intent"),
-        (Route.COMPLAINT, None, "classify_intent"),
-        (Route.KNOWLEDGE, None, "classify_intent"),
-        (None, None, "classify_intent"),
-    ],
-)
-def test_select_entry_node_skips_classify_intent_when_complaint_in_progress(
-    current_route: Route | None,
-    current_complaint_state: ComplaintState | None,
-    expected_node: str,
-):
-    state: AgentState = {
-        "request": _make_request(current_route, current_complaint_state),
-        "route": None,
-        "complaint_state": current_complaint_state,
-        "reply": None,
-        "result": RouteResult(),
-    }
-    assert select_entry_node(state) == expected_node
-
-
-@pytest.mark.parametrize(
     ("route", "handler_name"),
     [
         (Route.COMPLAINT, "handle_complaint"),
@@ -115,17 +90,22 @@ def test_graph_invokes_feature_handler_for_selected_route(
     assert handled_requests == [state["request"]]
 
 
-def test_graph_skips_classify_intent_when_complaint_in_progress(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def _collecting_state() -> AgentState:
     request = _make_request(Route.COMPLAINT, ComplaintState.COLLECTING)
-    state: AgentState = {
+    return {
         "request": request,
         "route": None,
         "complaint_state": request.current_complaint_state,
         "reply": None,
         "result": RouteResult(),
     }
+
+
+def test_graph_classifies_intent_even_when_complaint_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _collecting_state()
+    classified: list[ConverseRequest] = []
     handled_requests: list[ConverseRequest] = []
 
     def handler(req: ConverseRequest) -> dict[str, object]:
@@ -136,15 +116,48 @@ def test_graph_skips_classify_intent_when_complaint_in_progress(
             "result": RouteResult(),
         }
 
-    def failing_classify_intent(_state: AgentState) -> dict[str, Route]:
-        raise AssertionError("classify_intent must not run mid-complaint")
+    def recording_classify_intent(inner: AgentState) -> dict[str, Route]:
+        classified.append(inner["request"])
+        return {"route": Route.COMPLAINT}
 
     monkeypatch.setattr(graph_module, "handle_complaint", handler)
-    monkeypatch.setattr(graph_module, "classify_intent", failing_classify_intent)
+    monkeypatch.setattr(graph_module, "classify_intent", recording_classify_intent)
 
     build_graph().invoke(state)
 
-    assert handled_requests == [request]
+    # 수집 중에도 의도 분류를 거친다. 건너뛰면 다른 화제로 넘어갈 길이 없다.
+    assert classified == [state["request"]]
+    assert handled_requests == [state["request"]]
+
+
+def test_graph_leaves_complaint_when_intent_reclassifies_mid_collection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _collecting_state()
+
+    def unexpected_complaint(_req: ConverseRequest) -> dict[str, object]:
+        raise AssertionError("complaint must not run once intent left the route")
+
+    monkeypatch.setattr(graph_module, "handle_complaint", unexpected_complaint)
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE},
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "handle_knowledge",
+        lambda _req: {
+            "complaint_state": None,
+            "reply": "22시까지 이용할 수 있습니다.",
+            "result": RouteResult(),
+        },
+    )
+
+    result = build_graph().invoke(state)
+
+    assert result["route"] is Route.KNOWLEDGE
+    assert result["complaint_state"] is None
 
 
 def test_graph_finishes_on_clarify_route(monkeypatch: pytest.MonkeyPatch):
