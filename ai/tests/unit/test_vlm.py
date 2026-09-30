@@ -1,9 +1,15 @@
-import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
-from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    ContentFilterFinishReasonError,
+    LengthFinishReasonError,
+    RateLimitError,
+)
 
 from zipsai.errors import (
     ImageAnalysisError,
@@ -13,6 +19,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.integrations import vlm as vlm_module
+from zipsai.integrations.vlm import _ModelImages, _ModelObservation
 from zipsai.settings import Settings
 
 _PROMPT = "analyze"
@@ -29,25 +36,24 @@ def _response(
     return httpx.Response(status_code, request=_request(), headers=headers or {})
 
 
-def _fake_completions_client(
-    content: str, calls: list[dict[str, object]] | None = None
+def _fake_parse_client(
+    parsed: _ModelImages | None,
+    calls: list[dict[str, object]] | None = None,
+    refusal: str | None = None,
 ) -> SimpleNamespace:
-    def create(**kwargs: object) -> SimpleNamespace:
+    def parse(**kwargs: object) -> SimpleNamespace:
         if calls is not None:
             calls.append(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-        )
+        message = SimpleNamespace(parsed=parsed, refusal=refusal)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
-    return SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=parse)))
 
 
 def _fake_empty_client() -> SimpleNamespace:
     return SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=lambda **_: SimpleNamespace(choices=[]))
+            completions=SimpleNamespace(parse=lambda **_: SimpleNamespace(choices=[]))
         )
     )
 
@@ -66,9 +72,9 @@ def test_analyze_images_returns_typed_observations(monkeypatch):
     monkeypatch.setattr(
         vlm_module,
         "_get_client",
-        lambda *_: _fake_completions_client(
-            json.dumps(
-                {"images": [{"summary": "세탁기 표시창이 켜져 있음", "ocr_text": "E1"}]}
+        lambda *_: _fake_parse_client(
+            _ModelImages(
+                images=[_ModelObservation(summary="세탁기 표시창이 켜져 있음", ocr_text="E1")]
             ),
             calls,
         ),
@@ -91,27 +97,24 @@ def test_analyze_images_returns_typed_observations(monkeypatch):
         "type": "image_url",
         "image_url": {"url": _IMAGE_URL},
     }
+    assert calls[0]["response_format"] is _ModelImages
 
 
-def test_analyze_images_accepts_json_code_fence(monkeypatch):
+def test_analyze_images_rejects_refusal(monkeypatch):
     monkeypatch.setattr(
         vlm_module,
         "_get_client",
-        lambda *_: _fake_completions_client(
-            '```json\n{"images":[{"summary":"오류 코드가 보임","ocr_text":"E1"}]}\n```'
-        ),
+        lambda *_: _fake_parse_client(None, refusal="이 이미지는 분석할 수 없습니다"),
     )
     _use_settings(monkeypatch)
 
-    result = vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+    with pytest.raises(ImageAnalysisError):
+        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
 
-    assert result.images[0].ocr_text == "E1"
 
-
-def test_analyze_images_rejects_invalid_json(monkeypatch):
-    monkeypatch.setattr(
-        vlm_module, "_get_client", lambda *_: _fake_completions_client("not json")
-    )
+def test_analyze_images_rejects_when_nothing_parsed(monkeypatch):
+    """refusal 없이도 parsed가 None이면(스키마 불일치 등) 실패로 취급한다."""
+    monkeypatch.setattr(vlm_module, "_get_client", lambda *_: _fake_parse_client(None))
     _use_settings(monkeypatch)
 
     with pytest.raises(ImageAnalysisError):
@@ -130,7 +133,7 @@ def test_analyze_images_rejects_observation_count_mismatch(monkeypatch):
     monkeypatch.setattr(
         vlm_module,
         "_get_client",
-        lambda *_: _fake_completions_client(json.dumps({"images": []})),
+        lambda *_: _fake_parse_client(_ModelImages(images=[])),
     )
     _use_settings(monkeypatch)
 
@@ -145,7 +148,7 @@ class _FakeCompletions:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    def create(self, **_kwargs: object) -> None:
+    def parse(self, **_kwargs: object) -> None:
         raise self.error
 
 
@@ -196,4 +199,24 @@ def test_connection_error_maps_to_llm_unavailable(monkeypatch):
     _use_fake_completions_client(monkeypatch, APIConnectionError(request=_request()))
 
     with pytest.raises(LlmUnavailableError):
+        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+
+
+def test_length_finish_reason_maps_to_image_analysis_error(monkeypatch):
+    error = LengthFinishReasonError(
+        completion=SimpleNamespace(
+            usage=SimpleNamespace(completion_tokens_details=None)
+        )
+    )
+    _use_fake_completions_client(monkeypatch, error)
+
+    with pytest.raises(ImageAnalysisError):
+        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+
+
+def test_content_filter_finish_reason_maps_to_image_analysis_error(monkeypatch):
+    error = ContentFilterFinishReasonError()
+    _use_fake_completions_client(monkeypatch, error)
+
+    with pytest.raises(ImageAnalysisError):
         vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
