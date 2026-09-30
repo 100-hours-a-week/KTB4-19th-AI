@@ -18,6 +18,7 @@ from zipsai.errors import (
 )
 from zipsai.integrations.llm import _REQUIRE_STRUCTURED_OUTPUTS, _get_client
 from zipsai.settings import get_settings
+from zipsai.tracing import get_tracing_client
 
 
 class _ModelObservation(BaseModel):
@@ -43,6 +44,7 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": image_content},
             ],
+            **({"name": "analyze-images"} if get_tracing_client() else {}),
             response_format=_ModelImages,
             extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )

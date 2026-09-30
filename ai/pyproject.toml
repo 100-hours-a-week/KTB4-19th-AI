@@ -13,6 +13,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "fastapi>=0.141.1",
     "httpx>=0.28",
+    "langfuse==4.15.6",
     "langgraph>=1.2.11",
     "openai>=3.14.0",
     "pydantic>=2.13.5,<3",

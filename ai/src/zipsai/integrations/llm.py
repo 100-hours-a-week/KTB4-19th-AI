@@ -18,6 +18,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.settings import get_settings
+from zipsai.tracing import get_tracing_client
 
 # OpenRouter는 같은 모델 슬러그도 여러 제공자로 라우팅한다. structured_outputs를
 # 지원 안 하는 제공자로 넘어가면 스키마가 조용히 무시될 수 있어, 요청마다 강제한다.
@@ -32,14 +33,16 @@ def generate_text(
 ) -> str:
     settings = get_settings()
     try:
-        response = _get_client(
+        client = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.create(
+        )
+        response = client.chat.completions.create(
             model=settings.llm_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            **({"name": "generate-text"} if get_tracing_client() else {}),
             **(
                 {
                     "response_format": response_format,
@@ -129,6 +132,10 @@ def strip_json_code_fence(content: str) -> str:
 
 @lru_cache
 def _get_client(api_key: str, base_url: str | None, timeout_seconds: float) -> OpenAI:
+    if get_tracing_client():
+        from langfuse.openai import OpenAI as TracedOpenAI
+
+        return TracedOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
     return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
 
 
