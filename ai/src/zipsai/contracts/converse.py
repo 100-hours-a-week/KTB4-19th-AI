@@ -95,6 +95,7 @@ class ConverseRequest(BaseModel):
     resident_id: str
     conversation_id: str
     turn_id: str
+    trace_id: str
     current_route: Route | None
     current_complaint_state: ComplaintState | None
     message: IncomingMessage
@@ -156,4 +157,5 @@ class ConverseData(BaseModel):
 class ConverseResponse(BaseModel):
     code: Literal["ai_response_success"]
     turn_id: str
+    trace_id: str
     data: ConverseData

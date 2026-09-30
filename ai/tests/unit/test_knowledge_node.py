@@ -20,6 +20,7 @@ def _request(text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?")
             "resident_id": "r-1",
             "conversation_id": "c-1",
             "turn_id": "t-1",
+            "trace_id": "trace-1",
             "current_route": "knowledge",
             "current_complaint_state": None,
             "message": {
@@ -57,7 +58,7 @@ class Spy:
 def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
     counter = Spy()
 
-    def encode(_question: str, *, encoder: object):
+    def encode(_question: str, *, encoder: object, trace_id: str):
         counter.encode_calls += 1
         return [0.0] * EMBEDDING_DIM, {"7": 0.5}
 

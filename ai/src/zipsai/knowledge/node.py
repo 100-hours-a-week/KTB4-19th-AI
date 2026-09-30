@@ -40,7 +40,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         return _fallback(request, reason="empty_question", reply=EMPTY_QUESTION_REPLY)
 
     chunks = search_chunks(
-        encode_question(question, encoder=query_encoder()),
+        encode_question(question, encoder=query_encoder(), trace_id=request.trace_id),
         request.building_id,
         client=get_client(),
     )

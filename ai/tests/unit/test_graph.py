@@ -25,6 +25,7 @@ def _make_request(
             "resident_id": "linda",
             "conversation_id": "conv-001",
             "turn_id": "turn-001",
+            "trace_id": "trace-001",
             "current_route": current_route,
             "current_complaint_state": current_complaint_state,
             "message": {
@@ -170,7 +171,7 @@ def test_graph_clears_complaint_state_for_non_complaint_route(
     monkeypatch.setattr(
         knowledge_node,
         "encode_question",
-        lambda _question, *, encoder: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
+        lambda _question, *, encoder, trace_id: ([0.0] * EMBEDDING_DIM, {"7": 0.5}),
     )
     monkeypatch.setattr(knowledge_node, "search_chunks", lambda *_a, **_kw: [])
 

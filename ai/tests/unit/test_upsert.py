@@ -24,6 +24,7 @@ def client() -> QdrantClient:
 def request(building_id: int = 101, doc_id: str = "doc-1") -> IndexingJobRequest:
     return IndexingJobRequest(
         building_id=building_id,
+        trace_id="trace-001",
         doc_id=doc_id,
         title="관리규약",
         file_key="documents/doc.pdf",

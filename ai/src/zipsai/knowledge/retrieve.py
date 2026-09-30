@@ -38,10 +38,10 @@ def query_encoder() -> HttpEncoder:
     return HttpEncoder(timeout=QUERY_TIMEOUT_SECONDS, attempts=1)
 
 
-def encode_question(question: str, *, encoder: Encoder) -> QueryVector:
+def encode_question(question: str, *, encoder: Encoder, trace_id: str) -> QueryVector:
     """질문 하나를 색인과 같은 bge-m3로 dense·sparse 벡터로 만든다."""
     with stage("encode", logger, question_len=len(question)):
-        dense, sparse = encoder.encode([question])
+        dense, sparse = encoder.encode([question], trace_id)
     return dense[0], sparse[0]
 
 

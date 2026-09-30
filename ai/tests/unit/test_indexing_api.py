@@ -71,17 +71,18 @@ def post(path: str, payload: dict | None = None) -> tuple[int, bytes]:
 def valid_payload() -> dict:
     return {
         "building_id": 101,
+        "trace_id": "trace-001",
         "doc_id": "notice-001",
         "title": "Water tank cleaning",
         "file_key": "s3://zipsai-files/buildings/101/notice-001.pdf",
     }
 
 
-def test_accepted_job_returns_202_with_an_empty_body() -> None:
+def test_accepted_job_returns_202_with_trace_id() -> None:
     status_code, body = post("/api/v3/ai/indexing/jobs", valid_payload())
 
     assert status_code == 202
-    assert body == b""
+    assert json.loads(body) == {"trace_id": "trace-001"}
 
 
 def test_job_status_lookup_is_gone() -> None:
@@ -109,7 +110,9 @@ def test_document_fields_must_be_sent_together(missing: str) -> None:
 
 
 def test_request_without_a_document_or_a_list_is_rejected() -> None:
-    status_code, _ = post("/api/v3/ai/indexing/jobs", {"building_id": 101})
+    status_code, _ = post(
+        "/api/v3/ai/indexing/jobs", {"building_id": 101, "trace_id": "trace-001"}
+    )
 
     assert status_code == 422
 
@@ -164,7 +167,7 @@ def test_dependency_failure_does_not_break_the_response(
     status_code, body = post("/api/v3/ai/indexing/jobs", valid_payload())
 
     assert status_code == 202
-    assert body == b""
+    assert json.loads(body) == {"trace_id": "trace-001"}
 
 
 def test_cleanup_only_request_carries_no_document(
@@ -172,11 +175,15 @@ def test_cleanup_only_request_carries_no_document(
 ) -> None:
     status_code, body = post(
         "/api/v3/ai/indexing/jobs",
-        {"building_id": 101, "valid_doc_ids": ["doc-a", "doc-b"]},
+        {
+            "building_id": 101,
+            "trace_id": "trace-001",
+            "valid_doc_ids": ["doc-a", "doc-b"],
+        },
     )
 
     assert status_code == 202
-    assert body == b""
+    assert json.loads(body) == {"trace_id": "trace-001"}
     job = scheduled_jobs[0]
     assert job.has_document is False
     assert job.valid_doc_ids == ["doc-a", "doc-b"]
@@ -199,7 +206,8 @@ def test_empty_valid_doc_ids_returns_422(
 ) -> None:
     # 빈 목록을 받아주면 백엔드 실수 한 번에 건물 문서가 전멸한다.
     status_code, _ = post(
-        "/api/v3/ai/indexing/jobs", {"building_id": 101, "valid_doc_ids": []}
+        "/api/v3/ai/indexing/jobs",
+        {"building_id": 101, "trace_id": "trace-001", "valid_doc_ids": []},
     )
 
     assert status_code == 422

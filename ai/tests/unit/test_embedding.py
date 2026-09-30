@@ -17,7 +17,7 @@ class FakeEncoder:
         self._sparse = sparse
 
     def encode(
-        self, texts: list[str]
+        self, texts: list[str], trace_id: str
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         self.calls.append(texts)
         dense = self._dense or [[0.0] * EMBEDDING_DIM for _ in texts]
@@ -35,7 +35,7 @@ def test_embed_chunks_preserves_chunk_metadata_and_embedding_values() -> None:
         sparse=[{"first": 1.0}, {"second": 0.5}],
     )
 
-    embedded = embed_chunks(chunks, encoder)
+    embedded = embed_chunks(chunks, encoder, "trace-001")
 
     assert all(isinstance(chunk, EmbeddedChunk) for chunk in embedded)
     assert [(chunk.text, chunk.page, chunk.section) for chunk in embedded] == [
@@ -53,6 +53,7 @@ def test_embed_chunks_calls_encoder_once_with_all_texts() -> None:
     embed_chunks(
         [Chunk("first", 1, None), Chunk("second", 1, None)],
         encoder,
+        "trace-001",
     )
 
     assert encoder.calls == [["first", "second"]]
@@ -61,7 +62,7 @@ def test_embed_chunks_calls_encoder_once_with_all_texts() -> None:
 def test_embed_chunks_returns_empty_without_calling_encoder_for_empty_input() -> None:
     encoder = FakeEncoder()
 
-    assert embed_chunks([], encoder) == []
+    assert embed_chunks([], encoder, "trace-001") == []
     assert encoder.calls == []
 
 
@@ -71,6 +72,7 @@ def test_embed_chunks_drops_whitespace_only_chunks() -> None:
     embedded = embed_chunks(
         [Chunk(" \n\t", 1, "discarded"), Chunk("kept", 2, None)],
         encoder,
+        "trace-001",
     )
 
     assert [chunk.text for chunk in embedded] == ["kept"]
@@ -81,7 +83,7 @@ def test_embed_chunks_rejects_wrong_dense_dimension() -> None:
     encoder = FakeEncoder(dense=[[0.0] * (EMBEDDING_DIM - 1)], sparse=[{}])
 
     with pytest.raises(EmbeddingError):
-        embed_chunks([Chunk("text", 1, None)], encoder)
+        embed_chunks([Chunk("text", 1, None)], encoder, "trace-001")
 
 
 def test_embed_chunks_rejects_fewer_results_than_texts() -> None:
@@ -91,4 +93,5 @@ def test_embed_chunks_rejects_fewer_results_than_texts() -> None:
         embed_chunks(
             [Chunk("first", 1, None), Chunk("second", 1, None)],
             encoder,
+            "trace-001",
         )

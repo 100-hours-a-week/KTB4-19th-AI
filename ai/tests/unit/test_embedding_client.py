@@ -30,7 +30,7 @@ def test_encode_posts_texts_and_unpacks_dense_and_sparse() -> None:
             json={"dense": [[0.1, 0.2]], "sparse": [{"7": 0.5}]},
         )
 
-    dense, sparse = encoder_returning(handler).encode(["첫 청크"])
+    dense, sparse = encoder_returning(handler).encode(["첫 청크"], "trace-001")
 
     assert dense == [[0.1, 0.2]]
     assert sparse == [{"7": 0.5}]
@@ -43,7 +43,7 @@ def test_encode_raises_typed_error_on_server_error() -> None:
         return httpx.Response(503, json={"detail": "Model is still loading"})
 
     with pytest.raises(EmbeddingError):
-        encoder_returning(handler).encode(["text"])
+        encoder_returning(handler).encode(["text"], "trace-001")
 
 
 def test_encode_raises_typed_error_on_transport_failure() -> None:
@@ -51,7 +51,7 @@ def test_encode_raises_typed_error_on_transport_failure() -> None:
         raise httpx.ConnectError("connection refused", request=request)
 
     with pytest.raises(EmbeddingError):
-        encoder_returning(handler).encode(["text"])
+        encoder_returning(handler).encode(["text"], "trace-001")
 
 
 @pytest.mark.parametrize("body", [{}, {"dense": [[0.1]]}, []])
@@ -60,7 +60,7 @@ def test_encode_raises_typed_error_on_malformed_response(body: object) -> None:
         return httpx.Response(200, json=body)
 
     with pytest.raises(EmbeddingError):
-        encoder_returning(handler).encode(["text"])
+        encoder_returning(handler).encode(["text"], "trace-001")
 
 
 def test_encode_splits_texts_into_server_sized_batches() -> None:
@@ -79,7 +79,7 @@ def test_encode_splits_texts_into_server_sized_batches() -> None:
 
     texts = [f"청크 {index}" for index in range(BATCH_SIZE + 5)]
 
-    dense, sparse = encoder_returning(handler).encode(texts)
+    dense, sparse = encoder_returning(handler).encode(texts, "trace-001")
 
     assert batch_sizes == [BATCH_SIZE, 5]
     assert dense == [[float(len(text))] for text in texts]
@@ -106,7 +106,7 @@ def test_encode_rejects_a_batch_whose_counts_do_not_match_the_request() -> None:
     texts = [f"청크 {index}" for index in range(BATCH_SIZE + 5)]
 
     with pytest.raises(EmbeddingError):
-        encoder_returning(handler).encode(texts)
+        encoder_returning(handler).encode(texts, "trace-001")
 
     # 첫 배치에서 걸려야 한다. 둘째 배치까지 갔다면 배치별 검증이 아니다.
     assert seen == [BATCH_SIZE]
@@ -121,7 +121,7 @@ def test_encode_retries_once_and_succeeds_when_the_server_was_restarting() -> No
             return httpx.Response(503, json={"detail": "Model is still loading"})
         return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
 
-    dense, _ = encoder_returning(handler).encode(["청크"])
+    dense, _ = encoder_returning(handler).encode(["청크"], "trace-001")
 
     assert dense == [[0.1]]
     assert len(attempts) == ATTEMPTS
@@ -135,7 +135,7 @@ def test_encode_gives_up_after_the_retry() -> None:
         return httpx.Response(503, json={"detail": "Model is still loading"})
 
     with pytest.raises(EmbeddingError):
-        encoder_returning(handler).encode(["청크"])
+        encoder_returning(handler).encode(["청크"], "trace-001")
 
     assert len(attempts) == ATTEMPTS
 
@@ -149,6 +149,6 @@ def test_encode_does_not_retry_a_rejected_request() -> None:
         return httpx.Response(422, json={"detail": "texts must hold at most 32 items"})
 
     with pytest.raises(EmbeddingError, match="at most 32 items"):
-        encoder_returning(handler).encode(["청크"])
+        encoder_returning(handler).encode(["청크"], "trace-001")
 
     assert len(attempts) == 1
