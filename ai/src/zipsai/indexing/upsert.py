@@ -75,11 +75,9 @@ def delete_missing_documents(
     """백엔드가 보낸 유효 목록에 없는 문서를 건물 단위로 지운다.
 
     백엔드에서 삭제된 문서는 색인 요청이 오지 않으므로 이 경로가 유일한 회수 수단이다.
+    목록이 빈 채로 오면 그 건물에 남은 유효 문서가 없다는 뜻이라, 건물 포인트를 전부 지운다
+    (마지막 문서 삭제 시 정상적으로 발생한다).
     """
-    if not valid_doc_ids:
-        # 빈 목록이면 건물 문서가 전부 지워진다. 계약에서 막지만 여기서도 막는다.
-        raise ValueError("valid_doc_ids must not be empty")
-
     client.delete(
         collection_name=collection,
         points_selector=models.FilterSelector(
