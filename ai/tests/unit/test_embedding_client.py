@@ -77,11 +77,16 @@ def test_encode_splits_texts_into_server_sized_batches() -> None:
             },
         )
 
-    texts = [f"청크 {index}" for index in range(BATCH_SIZE + 5)]
+    total = BATCH_SIZE + 5
+    texts = [f"청크 {index}" for index in range(total)]
 
     dense, sparse = encoder_returning(handler).encode(texts, "trace-001")
 
-    assert batch_sizes == [BATCH_SIZE, 5]
+    remainder = total % BATCH_SIZE
+    expected_batches = [BATCH_SIZE] * (total // BATCH_SIZE) + (
+        [remainder] if remainder else []
+    )
+    assert batch_sizes == expected_batches
     assert dense == [[float(len(text))] for text in texts]
     assert len(sparse) == len(texts)
 
