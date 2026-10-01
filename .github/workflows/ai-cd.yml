@@ -363,7 +363,8 @@ jobs:
                 cleanup_service_images "$ECR_REGISTRY/zipsai-ai-api" "$API_TAG" "$PREVIOUS_API"
               fi
               if [ "$EMBEDDING_REQUESTED" = true ]; then
-                cleanup_service_images "$ECR_REGISTRY/zipsai-embedding" "$EMBEDDING_TAG" "$PREVIOUS_EMBEDDING"
+                # Embedding은 용량이 커서 현재 정상 이미지 태그만 유지한다.
+                cleanup_service_images "$ECR_REGISTRY/zipsai-embedding" "$EMBEDDING_TAG" ""
               fi
           REMOTE_CLEANUP
             } > remote-cleanup.sh
