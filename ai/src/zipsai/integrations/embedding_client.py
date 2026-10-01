@@ -8,11 +8,12 @@ from zipsai.settings import EMBEDDING_API_URL
 
 logger = logging.getLogger(__name__)
 
-# CPU 임베딩은 배치가 크면 수십 초가 걸린다. 실측 후 조정한다.
+# CPU 임베딩은 배치가 크면 수십 초가 걸려 그동안 질의 encode가 락을 못 잡는다.
+# 질의 타임아웃(5초) 안에 한 배치가 끝나도록 작게 유지한다.
 DEFAULT_TIMEOUT_SECONDS = 120.0
-# embedding 서비스의 MAX_BATCH_SIZE와 같아야 한다. 별도 패키지라 값을 공유할
-# 수 없으므로, 올릴 때는 embedding/src/embedding/api/embed.py도 같이 올린다.
-BATCH_SIZE = 32
+# embedding 서비스의 MAX_BATCH_SIZE(상한)보다 작으면 되므로 낮추는 건 그쪽 변경이
+# 필요 없다. 올릴 때는 embedding/src/embedding/api/embed.py도 같이 올린다.
+BATCH_SIZE = 2
 # 일시 장애만 한 번 더 시도한다. embedding 컨테이너 재시작이 주 대상이라
 # 5초면 대개 되살아난다. 모자라면 다음 배치 실행이 다시 집어간다.
 ATTEMPTS = 2
