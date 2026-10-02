@@ -52,10 +52,13 @@ COMPLAINT_SYSTEM_PROMPT = (
     "Do not invent a symptom that does not appear in that question.\n"
     "  These two are the only cases where a value may come from an earlier turn.\n"
     "- occurred_at: when the problem started or was first noticed, only if stated in this turn. "
-    "Resolve relative expressions (어제, 오늘, 그저께, 3일 전, 지난주 등) against today's date, given "
-    "below as Asia/Seoul. Output an ISO 8601 date (YYYY-MM-DD); if only a time is known, keep the "
-    "date and omit finer precision. null if not stated in this turn. Output null when "
-    'complaint_switch is "accept" unless the current message itself states a time.\n'
+    "Resolve relative expressions (어제, 오늘, 그저께, N일 전, 지난주 등) against today's date, given "
+    "below as Asia/Seoul. A week-relative reference with a weekday (지난주 화요일, 이번주 금요일) means "
+    "the weekday of THAT week, not the same weekday in the current week — count back/forward by the "
+    "full week first, then to the named day. e.g. if today is 2026-10-02 (Fri), 지난주 화요일 → "
+    "2026-09-22, not 2026-09-29. Output an ISO 8601 date (YYYY-MM-DD) only; if a time of day is also "
+    "named (아침, 밤 11시), drop it and keep just the resolved date. null if not stated in this turn. "
+    'Output null when complaint_switch is "accept" unless the current message itself states a time.\n'
     "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — "
     'whichever of "location"/"symptom" is still unknown overall, looking at the EXISTING draft '
     "below together with what you just extracted this turn, not just this turn's message. Ask "
