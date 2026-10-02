@@ -41,9 +41,11 @@ class HttpEncoder:
         transport: httpx.BaseTransport | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
         attempts: int = ATTEMPTS,
+        lock_wait_seconds: float | None = None,
     ) -> None:
         self._retry_delay = retry_delay
         self._attempts = attempts
+        self._lock_wait_seconds = lock_wait_seconds
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -66,7 +68,12 @@ class HttpEncoder:
         for attempt in range(self._attempts):
             try:
                 response = self._client.post(
-                    "/embed", json={"texts": texts, "trace_id": trace_id}
+                    "/embed",
+                    json={
+                        "texts": texts,
+                        "trace_id": trace_id,
+                        "max_wait_seconds": self._lock_wait_seconds,
+                    },
                 )
                 response.raise_for_status()
                 return response.json()
