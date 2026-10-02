@@ -34,6 +34,7 @@ def classify_intent(state: AgentState) -> dict[str, Route]:
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
             response_format=_RouteResponse,
+            usage_sink=step,
         )
         if parsed is None:
             raise IntentClassificationError("LLM did not return a usable intent route")

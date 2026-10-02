@@ -35,7 +35,11 @@ def query_encoder() -> HttpEncoder:
     # 첫 질의가 들어올 때 만든다. 임포트 시점에 embedding 컨테이너로 붙지 않는다.
     # 재시도는 배치용이다. 온라인에서 5초 자고 한 번 더 부르면 백엔드가 먼저 끊는다.
     # 여기서는 바로 503을 돌려주고 다시 시도할지는 백엔드가 정한다.
-    return HttpEncoder(timeout=QUERY_TIMEOUT_SECONDS, attempts=1)
+    # 색인 배치가 락을 오래 쥐고 있으면 끝까지 기다리지 않고 3.5초에서 포기한다.
+    # 나머지 1.5초는 락을 잡은 뒤 실제 계산과 왕복에 쓸 몫이다.
+    return HttpEncoder(
+        timeout=QUERY_TIMEOUT_SECONDS, attempts=1, lock_wait_seconds=3.5
+    )
 
 
 def encode_question(question: str, *, encoder: Encoder, trace_id: str) -> QueryVector:

@@ -73,7 +73,7 @@ def test_handle_clarify_uses_llm_after_prior_clarify(
 ):
     received_prompts: list[tuple[str, str]] = []
 
-    def fake_generate_text(system_prompt: str, user_prompt: str) -> str:
+    def fake_generate_text(system_prompt: str, user_prompt: str, **_: object) -> str:
         received_prompts.append((system_prompt, user_prompt))
         return "민원이라면 어떤 시설에 문제가 있나요?"
 
