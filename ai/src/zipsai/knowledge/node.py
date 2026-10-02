@@ -76,6 +76,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         answer = generate_text(
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
+            usage_sink=step,
         )
         # 전체 일치로만 판정한다. 부분 문자열로 보면 건물 문서 본문에 이 단어가 들어 있는
         # 정상 답변이 회피로 뒤집힌다.
