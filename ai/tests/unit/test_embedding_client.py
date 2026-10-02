@@ -38,6 +38,36 @@ def test_encode_posts_texts_and_unpacks_dense_and_sparse() -> None:
     assert "첫 청크" in seen[0]["body"]
 
 
+def test_encode_sends_lock_wait_seconds_when_configured() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.read()))
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    encoder = HttpEncoder(
+        base_url="http://embedding:8000",
+        transport=httpx.MockTransport(handler),
+        retry_delay=0,
+        lock_wait_seconds=3.5,
+    )
+    encoder.encode(["텍스트"], "trace-001")
+
+    assert seen[0]["max_wait_seconds"] == 3.5
+
+
+def test_encode_sends_null_lock_wait_seconds_by_default() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.read()))
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    encoder_returning(handler).encode(["텍스트"], "trace-001")
+
+    assert seen[0]["max_wait_seconds"] is None
+
+
 def test_encode_raises_typed_error_on_server_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"detail": "Model is still loading"})

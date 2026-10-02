@@ -6,18 +6,24 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from embedding.api import embed as embed_api
 from embedding.api import health as health_api
 from embedding.api.embed import MAX_BATCH_SIZE, MAX_TEXT_CHARS
+from embedding.encoder import ModelBusyError
 from embedding.main import app
 
 
 class FakeEncoder:
-    def __init__(self, *, ready: bool = True) -> None:
+    def __init__(self, *, ready: bool = True, busy: bool = False) -> None:
         self.ready = ready
+        self.busy = busy
         self.calls: list[list[str]] = []
+        self.max_waits: list[float | None] = []
 
     def encode(
-        self, texts: list[str]
+        self, texts: list[str], max_wait: float | None = None
     ) -> tuple[list[list[float]], list[dict[str, float]]]:
         self.calls.append(texts)
+        self.max_waits.append(max_wait)
+        if self.busy:
+            raise ModelBusyError("busy")
         return [[0.1, 0.2] for _ in texts], [{"7": 0.5} for _ in texts]
 
 
@@ -125,6 +131,31 @@ def test_embed_rejects_a_batch_over_the_limit(
 
     assert response.status_code == 422
     assert encoder.calls == []
+
+
+def test_embed_passes_max_wait_seconds_to_the_encoder(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"], "trace_id": "trace-001", "max_wait_seconds": 3.5},
+    )
+
+    assert response.status_code == 200
+    assert encoder.max_waits == [3.5]
+
+
+def test_embed_reports_busy_when_the_lock_is_not_acquired_in_time(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    encoder.busy = True
+
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"], "trace_id": "trace-001", "max_wait_seconds": 3.5},
+    )
+
+    assert response.status_code == 503
 
 
 def test_embed_rejects_a_text_over_the_character_limit(

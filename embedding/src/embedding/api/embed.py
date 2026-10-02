@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from langfuse import Langfuse
 from pydantic import BaseModel
 
-from embedding.encoder import MODEL_ID, encoder
+from embedding.encoder import MODEL_ID, ModelBusyError, encoder
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -21,6 +21,7 @@ MAX_TEXT_CHARS = 8000
 class EmbedRequest(BaseModel):
     texts: list[str]
     trace_id: str
+    max_wait_seconds: float | None = None
 
 
 class EmbedResponse(BaseModel):
@@ -77,7 +78,9 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
                 len(payload.texts),
                 os.getloadavg(),
             )
-            dense, sparse = encoder.encode(payload.texts)
+            dense, sparse = encoder.encode(
+                payload.texts, max_wait=payload.max_wait_seconds
+            )
             # uvicorn 접속 로그("POST /embed ... 200 OK")엔 trace_id가 안 실린다.
             # 요청 줄과 시간순으로만 대조하던 걸 trace_id로 직접 맞출 수 있게 완료 줄을 따로 남긴다.
             logger.info(
@@ -89,6 +92,10 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
         if observation:
             observation.update(output={"status_code": error.status_code}, level="ERROR")
         raise
+    except ModelBusyError as error:
+        if observation:
+            observation.update(output={"status_code": 503}, level="ERROR")
+        raise HTTPException(status_code=503, detail="Embedding model is busy") from error
     except Exception:
         if observation:
             observation.update(output={"status_code": 500}, level="ERROR")
