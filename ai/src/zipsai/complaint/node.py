@@ -94,7 +94,9 @@ def _log_retry(attempt: int, error: Exception) -> None:
     )
 
 
-def _extract_complaint(request: ConverseRequest) -> _Extraction:
+def _extract_complaint(
+    request: ConverseRequest, usage_sink: dict[str, object] | None = None
+) -> _Extraction:
     """추출 프롬프트를 한 번 돌려 이번 턴의 값과 전환 판정을 받는다."""
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
         today=datetime.now(_KST).date().isoformat(),
@@ -111,6 +113,7 @@ def _extract_complaint(request: ConverseRequest) -> _Extraction:
             system_message.content,
             user_message.content,
             response_format=_EXTRACTION_SCHEMA,
+            usage_sink=usage_sink,
         )
         try:
             data = json.loads(strip_json_code_fence(raw))
@@ -359,8 +362,8 @@ def _collect_complaint(
 def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     """민원 경로의 한 턴을 처리한다."""
     started_at = perf_counter()
-    with stage("text_extraction", logger):
-        extraction = _extract_complaint(request)
+    with stage("text_extraction", logger) as step:
+        extraction = _extract_complaint(request, usage_sink=step)
 
     extraction = _settle_switch(extraction, request.complaint_draft)
     switch = extraction.switch

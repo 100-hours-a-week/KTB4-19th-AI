@@ -289,7 +289,7 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="화장실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="화장실")),
     )
 
     result = handle_complaint(request)["result"]
@@ -308,7 +308,7 @@ def test_handle_complaint_returns_image_analysis_without_changing_text_fields(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="욕실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="욕실")),
     )
     monkeypatch.setattr(
         node_module,
@@ -343,7 +343,7 @@ def test_handle_complaint_keeps_text_flow_when_vlm_fails(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="욕실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="욕실")),
     )
     monkeypatch.setattr(
         node_module,
@@ -369,7 +369,7 @@ def test_handle_complaint_distinguishes_photo_analysis_failure_from_no_photo(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="욕실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="욕실")),
     )
     monkeypatch.setattr(
         node_module, "analyze_images", raise_image_analysis_error, raising=False
@@ -388,7 +388,7 @@ def test_handle_complaint_acknowledges_photo_when_fields_still_missing(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft()),
+        lambda _, **__: _Extraction(ComplaintDraft()),
     )
     monkeypatch.setattr(
         node_module,
@@ -421,7 +421,7 @@ def test_handle_complaint_uses_generic_reply_without_photo(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft()),
+        lambda _, **__: _Extraction(ComplaintDraft()),
     )
 
     reply = handle_complaint(_make_request("음.."))["reply"]
@@ -435,7 +435,7 @@ def test_handle_complaint_uses_llm_generated_reply(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(),
             "화장실 세면대인지 변기 쪽인지 알려주시겠어요?",
         ),
@@ -452,7 +452,7 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(),
             "정확히 어디쯤인지 알려주시겠어요?",
         ),
@@ -488,7 +488,7 @@ def test_handle_complaint_clears_state_when_fields_complete(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(issue_type="leak", location="화장실", symptom="물이 새요"),
         ),
     )
@@ -506,7 +506,7 @@ def test_handle_complaint_keeps_collecting_when_fields_missing(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="화장실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="화장실")),
     )
 
     result = handle_complaint(_make_request("화장실이 이상해요"))
@@ -520,7 +520,7 @@ def test_handle_complaint_asks_only_about_missing_symptom(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="화장실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="화장실")),
     )
 
     reply = handle_complaint(_make_request("화장실이 이상해요"))["reply"]
@@ -534,7 +534,7 @@ def test_handle_complaint_asks_only_about_missing_location(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(symptom="물이 새요")),
+        lambda _, **__: _Extraction(ComplaintDraft(symptom="물이 새요")),
     )
 
     reply = handle_complaint(_make_request("물이 새요"))["reply"]
@@ -548,7 +548,7 @@ def test_handle_complaint_defaults_issue_type_to_other_when_unclassified(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(location="화장실", symptom="이상해요"),
         ),
     )
@@ -572,7 +572,7 @@ def test_handle_complaint_merges_occurred_at_without_erasing_existing_value(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="화장실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="화장실")),
     )
 
     result = handle_complaint(request)["result"]
@@ -587,7 +587,7 @@ def test_handle_complaint_asks_one_field_at_a_time_when_both_are_missing(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft()),
+        lambda _, **__: _Extraction(ComplaintDraft()),
     )
 
     outcome = handle_complaint(_make_request("좀 이상해요"))
@@ -603,7 +603,7 @@ def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft()),
+        lambda _, **__: _Extraction(ComplaintDraft()),
     )
     monkeypatch.setattr(
         node_module,
@@ -634,7 +634,7 @@ def test_handle_complaint_logs_stages_and_turn(
         node_module,
         "_extract_complaint",
         # 추출 프롬프트가 "모른다"는 답을 location="모름"으로 채워 올려보낸 상황.
-        lambda _: _Extraction(ComplaintDraft(location="모름")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="모름")),
     )
 
     with caplog.at_level("INFO", logger=node_module.__name__):
@@ -664,7 +664,7 @@ def test_handle_complaint_logs_image_failure_and_keeps_text_flow(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="욕실")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="욕실")),
     )
     monkeypatch.setattr(
         node_module,
@@ -737,7 +737,7 @@ def test_handle_complaint_keeps_confirmed_location_against_unknown(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(location="모름")),
+        lambda _, **__: _Extraction(ComplaintDraft(location="모름")),
     )
 
     outcome = handle_complaint(request)
@@ -767,7 +767,7 @@ def test_handle_complaint_asks_before_replacing_a_draft_with_a_new_complaint(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
         ),
     )
@@ -794,7 +794,7 @@ def test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
         ),
     )
@@ -822,7 +822,7 @@ def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="accept"
         ),
     )
@@ -845,7 +845,7 @@ def test_handle_complaint_keeps_this_turns_photo_after_accepting_a_switch(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="accept"
         ),
     )
@@ -920,7 +920,7 @@ def test_handle_complaint_does_not_file_the_abandoned_draft_when_recovery_fails(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(ComplaintDraft(), switch="accept"),
+        lambda _, **__: _Extraction(ComplaintDraft(), switch="accept"),
     )
 
     outcome = handle_complaint(request)
@@ -955,7 +955,7 @@ def test_handle_complaint_logs_the_switch_decision(
     monkeypatch.setattr(
         node_module,
         "_extract_complaint",
-        lambda _: _Extraction(
+        lambda _, **__: _Extraction(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
         ),
     )
