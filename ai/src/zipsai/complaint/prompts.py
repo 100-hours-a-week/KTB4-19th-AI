@@ -59,19 +59,10 @@ COMPLAINT_SYSTEM_PROMPT = (
     "2026-09-22, not 2026-09-29. Output an ISO 8601 date (YYYY-MM-DD) only; if a time of day is also "
     "named (아침, 밤 11시), drop it and keep just the resolved date. null if not stated in this turn. "
     'Output null when complaint_switch is "accept" unless the current message itself states a time.\n'
-    "- reply: a short, natural Korean follow-up question asking about EXACTLY ONE field — "
-    'whichever of "location"/"symptom" is still unknown overall, looking at the EXISTING draft '
-    "below together with what you just extracted this turn, not just this turn's message. Ask "
-    'about the first still-unknown field in the order "location", then "symptom". Never ask '
-    'about two fields in one turn. Empty string "" if both are already known. One short, '
-    "friendly sentence, no lists. Never ask about issue_type or occurred_at. "
-    'When complaint_switch is "accept", ignore the existing draft entirely and judge only against '
-    "the new complaint — the old draft is being discarded. "
-    'Output "" when complaint_switch is "ask" — the service writes that question itself.\n\n'
-    "Output contract: output ONLY a JSON object with exactly these six keys, nothing else. No "
+    "Output contract: output ONLY a JSON object with exactly these five keys, nothing else. No "
     "markdown, no explanation, no code fences.\n"
     '{{"complaint_switch": "same", "issue_type": null, "location": null, "symptom": null, '
-    '"occurred_at": null, "reply": ""}}'
+    '"occurred_at": null}}'
 )
 
 COMPLAINT_USER_TEMPLATE = (
@@ -84,6 +75,39 @@ COMPLAINT_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", COMPLAINT_SYSTEM_PROMPT),
         ("user", COMPLAINT_USER_TEMPLATE),
+    ]
+)
+
+
+TURN_FINALIZATION_SYSTEM_PROMPT = (
+    "You finalize one turn of a Korean residential complaint conversation. The service has already "
+    "decided all structured fields and the next action. You may only combine the supplied symptom "
+    "evidence and write the reply requested by next_action.\n\n"
+    "symptom rules:\n"
+    "- Use only facts present in previous_symptom, current_symptom, and current_message.\n"
+    "- Preserve corrections in current_message; do not keep a fact the resident explicitly denied.\n"
+    "- Do not add a cause, diagnosis, severity, location, or time that is not supplied.\n"
+    "- Output null when both symptom values are null.\n\n"
+    "reply rules:\n"
+    "- ask_location: ask only where the problem occurred.\n"
+    "- ask_symptom: ask only what problem or inconvenience occurred.\n"
+    "- complete: output an empty string; the service uses its fixed completion message.\n"
+    "- Use one short, natural Korean sentence. Never ask for a field other than next_action.\n\n"
+    "Output only a JSON object with exactly symptom and reply. No markdown or explanation.\n"
+    '{{"symptom": null, "reply": ""}}'
+)
+
+TURN_FINALIZATION_USER_TEMPLATE = (
+    "기존 증상: {previous_symptom}\n"
+    "현재 턴 증상: {current_symptom}\n"
+    "현재 발화: {current_message}\n"
+    "다음 행동: {next_action}"
+)
+
+TURN_FINALIZATION_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", TURN_FINALIZATION_SYSTEM_PROMPT),
+        ("user", TURN_FINALIZATION_USER_TEMPLATE),
     ]
 )
 

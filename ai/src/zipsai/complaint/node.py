@@ -3,13 +3,15 @@ import logging
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
-from typing import get_args
 from zoneinfo import ZoneInfo
 
-from pydantic import ValidationError
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic import BaseModel
 
-from zipsai.complaint.prompts import COMPLAINT_PROMPT, VLM_ANALYSIS_PROMPT
+from zipsai.complaint.prompts import (
+    COMPLAINT_PROMPT,
+    TURN_FINALIZATION_PROMPT,
+    VLM_ANALYSIS_PROMPT,
+)
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
@@ -28,76 +30,54 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.history import format_history
-from zipsai.integrations.llm import generate_text, strip_json_code_fence
+from zipsai.integrations.llm import generate_structured
 from zipsai.integrations.vlm import analyze_images
 from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
-_EXTRACTION_ATTEMPTS = 2
+_INTERPRETATION_ATTEMPTS = 2
 
 _REQUIRED_FIELDS = ("location", "symptom")
 _UNKNOWN_LOCATION = "모름"
 
-_EXTRACTION_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "complaint_extraction",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "complaint_switch": {
-                    "type": "string",
-                    "enum": [s.value for s in ComplaintSwitch],
-                },
-                "issue_type": {
-                    "type": ["string", "null"],
-                    "enum": [*get_args(IssueType), None],
-                },
-                "location": {"type": ["string", "null"]},
-                "symptom": {"type": ["string", "null"]},
-                "occurred_at": {"type": ["string", "null"]},
-                "reply": {"type": "string"},
-            },
-            "required": [
-                "complaint_switch",
-                "issue_type",
-                "location",
-                "symptom",
-                "occurred_at",
-                "reply",
-            ],
-            "additionalProperties": False,
-        },
-    },
-}
+
+class _InterpretationOutput(BaseModel):
+    complaint_switch: ComplaintSwitch
+    issue_type: IssueType | None
+    location: str | None
+    symptom: str | None
+    occurred_at: datetime | None
 
 
-@pydantic_dataclass(frozen=True)
-class _Extraction:
+class _TurnFinalization(BaseModel):
+    symptom: str | None
+    reply: str
+
+
+@dataclass(frozen=True)
+class _TurnInterpretation:
     draft: ComplaintDraft = field(default_factory=ComplaintDraft)
-    reply: str = ""
     switch: ComplaintSwitch = ComplaintSwitch.SAME
 
 
-def _log_retry(attempt: int, error: Exception) -> None:
+def _log_interpretation_retry(attempt: int, error: Exception) -> None:
     """재시도로 넘어간 회차를 남긴다. 다음 시도가 성공하면 1차 실패가 어디에도 안 남는다."""
     logger.warning(
-        "extraction_retry",
+        "interpretation_retry",
         extra={
-            "stage": "text_extraction",
+            "stage": "text_interpretation",
             "attempt": attempt,
             "error_type": type(error).__name__,
         },
     )
 
 
-def _extract_complaint(
+def _interpret_turn(
     request: ConverseRequest, usage_sink: dict[str, object] | None = None
-) -> _Extraction:
-    """추출 프롬프트를 한 번 돌려 이번 턴의 값과 전환 판정을 받는다."""
+) -> _TurnInterpretation:
+    """현재 발화에서 새로 말한 민원 사실과 전환 판정만 받는다."""
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
         today=datetime.now(_KST).date().isoformat(),
         conversation_history=format_history(request.conversation_history),
@@ -108,55 +88,39 @@ def _extract_complaint(
     )
 
     last_error: Exception | None = None
-    for attempt in range(1, _EXTRACTION_ATTEMPTS + 1):
-        raw = generate_text(
-            system_message.content,
-            user_message.content,
-            response_format=_EXTRACTION_SCHEMA,
+    for attempt in range(1, _INTERPRETATION_ATTEMPTS + 1):
+        parsed = generate_structured(
+            system_prompt=str(system_message.content),
+            user_prompt=str(user_message.content),
+            response_format=_InterpretationOutput,
             usage_sink=usage_sink,
         )
-        try:
-            data = json.loads(strip_json_code_fence(raw))
-        except json.JSONDecodeError as error:
-            last_error = error
-            _log_retry(attempt, error)
-            continue
-
-        reply = data.pop("reply", "")
-        switch_raw = data.pop("complaint_switch", ComplaintSwitch.SAME.value)
-        try:
-            switch = ComplaintSwitch(switch_raw)
-        except ValueError:
-            switch = ComplaintSwitch.SAME
-
-        try:
-            draft = ComplaintDraft(**data)
-        except ValidationError as error:
-            last_error = error
-            _log_retry(attempt, error)
-            continue
-
-        # 잘못된 값은 예외로 올리지 않고 기본값으로 강등한다. 한 필드가 어긋났다고
-        # 나머지가 멀쩡한 추출을 버리면 수집이 한 턴 헛돈다.
-        return _Extraction(
-            draft=draft,
-            reply=reply.strip() if isinstance(reply, str) else "",
-            switch=switch,
-        )
+        if parsed is not None:
+            return _TurnInterpretation(
+                draft=ComplaintDraft(
+                    issue_type=parsed.issue_type,
+                    location=parsed.location,
+                    symptom=parsed.symptom,
+                    occurred_at=parsed.occurred_at,
+                ),
+                switch=parsed.complaint_switch,
+            )
+        last_error = ComplaintExtractionError("LLM did not return an interpretation")
+        _log_interpretation_retry(attempt, last_error)
 
     raise ComplaintExtractionError(
-        "LLM returned an invalid complaint draft after retry"
+        "LLM did not return a valid complaint interpretation after retry"
     ) from last_error
 
 
-def _merge_complaint_draft(
-    current: ComplaintDraft | None, extracted: ComplaintDraft
+def _merge_structured_fields(
+    current: ComplaintDraft | None, interpreted: ComplaintDraft
 ) -> ComplaintDraft:
-    """기존 초안에 이번 턴에 새로 나온 값만 얹는다."""
+    """의미 결합이 필요 없는 구조 필드만 기존 초안에 얹는다."""
     updates = {
-        field: getattr(extracted, field)
-        for field in ("issue_type", "location", "symptom", "occurred_at")
-        if getattr(extracted, field) is not None
+        field: getattr(interpreted, field)
+        for field in ("issue_type", "location", "occurred_at")
+        if getattr(interpreted, field) is not None
     }
 
     if updates.get("location") == _UNKNOWN_LOCATION and current and current.location:
@@ -177,23 +141,23 @@ def _missing_fields(draft: ComplaintDraft) -> list[str]:
 
 
 def _settle_switch(
-    extraction: _Extraction, current: ComplaintDraft | None
-) -> _Extraction:
+    interpretation: _TurnInterpretation, current: ComplaintDraft | None
+) -> _TurnInterpretation:
     """전환 질문을 만들 재료가 없는 ask를 같은 민원으로 떨어뜨린다.
 
     accept는 떨어뜨리지 않는다. 입주민이 이미 바꾸겠다고 답한 턴이라, same으로
     돌리면 방금 접어두기로 한 민원이 완성 상태로 카드까지 나간다.
     """
-    if extraction.switch != ComplaintSwitch.ASK:
-        return extraction
+    if interpretation.switch != ComplaintSwitch.ASK:
+        return interpretation
     if not (current and current.symptom):
         # 전환할 대상 자체가 없다. 평범한 수집 턴이므로 추출값은 그대로 쓴다.
-        return replace(extraction, switch=ComplaintSwitch.SAME)
-    if extraction.draft.symptom:
-        return extraction
+        return replace(interpretation, switch=ComplaintSwitch.SAME)
+    if interpretation.draft.symptom:
+        return interpretation
     # "다른 민원"이라면서 증상이 없다. 모순된 판정이라 이 턴의 값을 믿지 않는다.
     # 병합하면 다른 민원의 issue_type이 지금 초안에 얹혀 짜깁기 카드가 된다.
-    return _Extraction(switch=ComplaintSwitch.SAME)
+    return _TurnInterpretation(switch=ComplaintSwitch.SAME)
 
 
 def _switch_question(current_symptom: str, new_symptom: str) -> str:
@@ -224,15 +188,18 @@ class _ComplaintTurn:
 
 @dataclass(frozen=True)
 class _TurnEvidence:
-    extraction: _Extraction
+    interpretation: _TurnInterpretation
     image_analysis: ImageAnalysis | None
     image_urls: list[str] = field(default_factory=list)
+    message_text: str = ""
 
 
 @dataclass(frozen=True)
 class _ComplaintProgress:
     draft: ComplaintDraft
     missing_fields: list[str]
+    previous_symptom: str | None = None
+    current_symptom: str | None = None
 
 
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
@@ -310,11 +277,11 @@ def _ask_for_missing(
     missing_fields: list[str],
     image_analysis: ImageAnalysis | None,
     image_urls: list[str],
-    extraction: _Extraction,
+    llm_reply: str,
 ) -> _ComplaintTurn:
     """부족한 항목 유도하는 턴."""
     asked = missing_fields[0]
-    question, reply_source = _follow_up(asked, extraction.reply)
+    question, reply_source = _follow_up(asked, llm_reply)
     return _ComplaintTurn(
         result=RouteResult(
             complaint_draft=draft,
@@ -347,55 +314,122 @@ def _ready_for_card(
 
 
 def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
-    with stage("text_extraction", logger) as step:
-        extraction = _extract_complaint(request, usage_sink=step)
-    extraction = _settle_switch(extraction, request.complaint_draft)
+    with stage("text_interpretation", logger) as step:
+        interpretation = _interpret_turn(request, usage_sink=step)
+    interpretation = _settle_switch(interpretation, request.complaint_draft)
     image_urls = request.message.image_urls
-    if extraction.switch == ComplaintSwitch.ASK:
+    if interpretation.switch == ComplaintSwitch.ASK:
         skipped("image_analysis", logger, skip_reason="switch_pending")
         image_analysis = None
     else:
         image_analysis = _run_image_analysis(image_urls)
-    return _TurnEvidence(extraction, image_analysis, image_urls)
+    return _TurnEvidence(
+        interpretation,
+        image_analysis,
+        image_urls,
+        request.message.text or "",
+    )
 
 
 def _advance_complaint(
     request: ConverseRequest, evidence: _TurnEvidence
 ) -> _ComplaintProgress:
-    extraction = evidence.extraction
-    if extraction.switch == ComplaintSwitch.ASK:
+    interpretation = evidence.interpretation
+    if interpretation.switch == ComplaintSwitch.ASK:
         draft = request.complaint_draft
         assert draft is not None
+        previous_symptom = draft.symptom
     else:
         previous = (
             None
-            if extraction.switch == ComplaintSwitch.ACCEPT
+            if interpretation.switch == ComplaintSwitch.ACCEPT
             else request.complaint_draft
         )
         draft = _append_image_urls(
-            _merge_complaint_draft(previous, extraction.draft), evidence.image_urls
+            _merge_structured_fields(previous, interpretation.draft),
+            evidence.image_urls,
+        )
+        previous_symptom = previous.symptom if previous else None
+
+    current_symptom = interpretation.draft.symptom
+    if not previous_symptom or previous_symptom == current_symptom:
+        draft = draft.model_copy(
+            update={"symptom": current_symptom or previous_symptom}
         )
     return _ComplaintProgress(
         draft=draft,
         missing_fields=_missing_fields(draft),
+        previous_symptom=previous_symptom,
+        current_symptom=current_symptom,
     )
+
+
+def _generate_turn_finalization(
+    progress: _ComplaintProgress,
+    evidence: _TurnEvidence,
+    next_action: str,
+) -> _TurnFinalization | None:
+    messages = TURN_FINALIZATION_PROMPT.format_messages(
+        previous_symptom=json.dumps(progress.previous_symptom, ensure_ascii=False),
+        current_symptom=json.dumps(progress.current_symptom, ensure_ascii=False),
+        current_message=json.dumps(evidence.message_text, ensure_ascii=False),
+        next_action=next_action,
+    )
+    try:
+        with stage("turn_finalization", logger) as step:
+            return generate_structured(
+                system_prompt=str(messages[0].content),
+                user_prompt=str(messages[1].content),
+                response_format=_TurnFinalization,
+                usage_sink=step,
+            )
+    except (
+        LlmRateLimitedError,
+        LlmTimeoutError,
+        LlmUnavailableError,
+        LlmUpstreamError,
+    ):
+        return None
 
 
 def _finalize_turn(
     progress: _ComplaintProgress, evidence: _TurnEvidence
 ) -> _ComplaintTurn:
-    extraction = evidence.extraction
-    if extraction.switch == ComplaintSwitch.ASK:
-        return _build_switch_confirmation_turn(progress.draft, extraction.draft)
+    interpretation = evidence.interpretation
+    if interpretation.switch == ComplaintSwitch.ASK:
+        skipped("turn_finalization", logger, skip_reason="switch_confirmation")
+        return _build_switch_confirmation_turn(progress.draft, interpretation.draft)
+
+    symptom_merge_needed = bool(
+        progress.previous_symptom
+        and progress.current_symptom
+        and progress.previous_symptom != progress.current_symptom
+    )
+    asked = progress.missing_fields[0] if progress.missing_fields else None
+    if not symptom_merge_needed and asked is None:
+        skipped("turn_finalization", logger, skip_reason="fixed_completion")
+        return _ready_for_card(progress.draft, evidence.image_analysis)
+
+    next_action = f"ask_{asked}" if asked else "complete"
+    finalization = _generate_turn_finalization(progress, evidence, next_action)
+    fallback_symptom = progress.current_symptom or progress.previous_symptom
+    finalized_symptom = (
+        finalization.symptom.strip()
+        if symptom_merge_needed and finalization and finalization.symptom
+        else ""
+    )
+    symptom = finalized_symptom or fallback_symptom
+    draft = progress.draft.model_copy(update={"symptom": symptom})
+
     if progress.missing_fields:
         return _ask_for_missing(
-            progress.draft,
+            draft,
             progress.missing_fields,
             evidence.image_analysis,
             evidence.image_urls,
-            extraction,
+            finalization.reply.strip() if finalization else "",
         )
-    return _ready_for_card(progress.draft, evidence.image_analysis)
+    return _ready_for_card(draft, evidence.image_analysis)
 
 
 def _log_complaint_turn(
@@ -405,7 +439,7 @@ def _log_complaint_turn(
     started_at: float,
 ) -> None:
     draft = turn.result.complaint_draft
-    switch = evidence.extraction.switch
+    switch = evidence.interpretation.switch
     logger.info(
         "complaint_turn",
         extra={
