@@ -222,6 +222,19 @@ class _ComplaintTurn:
     reply_source: str
 
 
+@dataclass(frozen=True)
+class _TurnEvidence:
+    extraction: _Extraction
+    image_analysis: ImageAnalysis | None
+    image_urls: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ComplaintProgress:
+    draft: ComplaintDraft
+    missing_fields: list[str]
+
+
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
     """사진에서 읽은 내용을 노출한다. 입주민이 확인해주면 그 발화로 symptom이 채워지므로,
     초안에 직접 넣을 때 필요한 신뢰도 임계값이 필요 없다."""
@@ -236,13 +249,7 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
     return f"사진은 확인했습니다 — {summary.rstrip('. ')}. "
 
 
-def _analyze_photos(image_urls: list[str]) -> ImageAnalysis | None:
-    """사진 분석 한 단계. 돌았든 안 돌았든 실패했든 줄을 하나 남긴다.
-
-    사진이 없어 안 돈 것과 VLM이 매달려 아직 안 찍힌 것을 로그로 구분해야 한다.
-    분석이 실패해도 예외를 올리지 않는다. 민원 수집은 텍스트만으로도 이어가고,
-    실패는 답변 문구로 입주민에게 알린다.
-    """
+def _run_image_analysis(image_urls: list[str]) -> ImageAnalysis | None:
     if not image_urls:
         skipped("image_analysis", logger, skip_reason="no_image")
         return None
@@ -282,11 +289,10 @@ def _follow_up(asked: str, llm_reply: str) -> tuple[str, str]:
     return _MISSING_FIELD_REPLY[asked], "fixed"
 
 
-def _confirm_switch(
+def _build_switch_confirmation_turn(
     current: ComplaintDraft, extracted: ComplaintDraft
 ) -> _ComplaintTurn:
     """새 민원으로 바꿀지 입주민에게 묻는 턴."""
-    skipped("image_analysis", logger, skip_reason="switch_pending")
     # 돌려주는 초안이 옛 민원이므로 빈 칸도 옛 민원 기준으로 적는다.
     return _ComplaintTurn(
         result=RouteResult(
@@ -340,41 +346,66 @@ def _ready_for_card(
     )
 
 
-def _collect_complaint(
-    request: ConverseRequest,
-    extraction: _Extraction,
-    previous: ComplaintDraft | None,
-) -> _ComplaintTurn:
-    """초안을 갱신하고, 접수 준비가 됐는지에 따라 두 결말 중 하나를 고른다."""
-    image_urls = request.message.image_urls
-    draft = _append_image_urls(
-        _merge_complaint_draft(previous, extraction.draft), image_urls
-    )
-    image_analysis = _analyze_photos(image_urls)
-    missing_fields = _missing_fields(draft)
-    if missing_fields:
-        return _ask_for_missing(
-            draft, missing_fields, image_analysis, image_urls, extraction
-        )
-    return _ready_for_card(draft, image_analysis)
-
-
-def handle_complaint(request: ConverseRequest) -> dict[str, object]:
-    """민원 경로의 한 턴을 처리한다."""
-    started_at = perf_counter()
+def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
     with stage("text_extraction", logger) as step:
         extraction = _extract_complaint(request, usage_sink=step)
-
     extraction = _settle_switch(extraction, request.complaint_draft)
-    switch = extraction.switch
-
-    if switch == ComplaintSwitch.ASK:
-        turn = _confirm_switch(request.complaint_draft, extraction.draft)
+    image_urls = request.message.image_urls
+    if extraction.switch == ComplaintSwitch.ASK:
+        skipped("image_analysis", logger, skip_reason="switch_pending")
+        image_analysis = None
     else:
-        previous = None if switch == ComplaintSwitch.ACCEPT else request.complaint_draft
-        turn = _collect_complaint(request, extraction, previous)
+        image_analysis = _run_image_analysis(image_urls)
+    return _TurnEvidence(extraction, image_analysis, image_urls)
 
+
+def _advance_complaint(
+    request: ConverseRequest, evidence: _TurnEvidence
+) -> _ComplaintProgress:
+    extraction = evidence.extraction
+    if extraction.switch == ComplaintSwitch.ASK:
+        draft = request.complaint_draft
+        assert draft is not None
+    else:
+        previous = (
+            None
+            if extraction.switch == ComplaintSwitch.ACCEPT
+            else request.complaint_draft
+        )
+        draft = _append_image_urls(
+            _merge_complaint_draft(previous, extraction.draft), evidence.image_urls
+        )
+    return _ComplaintProgress(
+        draft=draft,
+        missing_fields=_missing_fields(draft),
+    )
+
+
+def _finalize_turn(
+    progress: _ComplaintProgress, evidence: _TurnEvidence
+) -> _ComplaintTurn:
+    extraction = evidence.extraction
+    if extraction.switch == ComplaintSwitch.ASK:
+        return _build_switch_confirmation_turn(progress.draft, extraction.draft)
+    if progress.missing_fields:
+        return _ask_for_missing(
+            progress.draft,
+            progress.missing_fields,
+            evidence.image_analysis,
+            evidence.image_urls,
+            extraction,
+        )
+    return _ready_for_card(progress.draft, evidence.image_analysis)
+
+
+def _log_complaint_turn(
+    request: ConverseRequest,
+    evidence: _TurnEvidence,
+    turn: _ComplaintTurn,
+    started_at: float,
+) -> None:
     draft = turn.result.complaint_draft
+    switch = evidence.extraction.switch
     logger.info(
         "complaint_turn",
         extra={
@@ -388,10 +419,18 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
             "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
             "photo": _photo_label(
-                request.message.image_urls, turn.result.image_analysis, switch
+                evidence.image_urls, turn.result.image_analysis, switch
             ),
         },
     )
+
+
+def handle_complaint(request: ConverseRequest) -> dict[str, object]:
+    started_at = perf_counter()
+    evidence = _gather_turn_evidence(request)
+    progress = _advance_complaint(request, evidence)
+    turn = _finalize_turn(progress, evidence)
+    _log_complaint_turn(request, evidence, turn, started_at)
     return {
         "complaint_state": turn.complaint_state,
         "reply": turn.reply,

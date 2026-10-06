@@ -302,6 +302,35 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     assert result.missing_fields == []
 
 
+def test_advance_complaint_merges_collected_evidence_without_model_calls(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("화장실이요")
+    request.complaint_draft = ComplaintDraft(symptom="천장에서 물이 떨어짐")
+    evidence = node_module._TurnEvidence(
+        extraction=_Extraction(ComplaintDraft(location="화장실")),
+        image_analysis=None,
+    )
+    monkeypatch.setattr(
+        node_module,
+        "generate_text",
+        lambda *_args, **_kwargs: pytest.fail("state update called the text LLM"),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_args, **_kwargs: pytest.fail("state update called the VLM"),
+    )
+
+    progress = node_module._advance_complaint(request, evidence)
+
+    assert progress.draft == ComplaintDraft(
+        location="화장실",
+        symptom="천장에서 물이 떨어짐",
+    )
+    assert progress.missing_fields == []
+
+
 def test_handle_complaint_returns_image_analysis_without_changing_text_fields(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -696,7 +725,7 @@ def test_handle_complaint_photo_only_logs_image_analysis(
     monkeypatch.setattr(
         node_module,
         "generate_text",
-        lambda *_, **__: ('{"location": null, "symptom": null}'),
+        lambda *_, **__: '{"location": null, "symptom": null}',
     )
     monkeypatch.setattr(
         node_module,
