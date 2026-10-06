@@ -1,8 +1,10 @@
+import threading
 from datetime import datetime
 
 import pytest
 
 import zipsai.complaint.node as node_module
+from zipsai import observability
 from zipsai.complaint.node import (
     _interpret_turn,
     _TurnInterpretation,
@@ -20,6 +22,7 @@ from zipsai.errors import (
     ImageAnalysisError,
     LlmUnavailableError,
 )
+from zipsai.observability import bind, collect_timings
 
 
 def _node_records(caplog: pytest.LogCaptureFixture) -> list:
@@ -1034,3 +1037,195 @@ def test_handle_complaint_logs_the_switch_decision(
 
     turns = [r for r in _node_records(caplog) if r.getMessage() == "complaint_turn"]
     assert [(r.switch, r.reply_source) for r in turns] == [("ask", "switch_ask")]
+
+
+def test_handle_complaint_runs_text_and_image_calls_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """전환 대상이 없는 턴에서는 텍스트 해석과 VLM 호출이 겹쳐 실행돼야 한다.
+
+    둘 다 "상대가 먼저 시작했다"는 신호를 기다리게 해서, 순차 실행이면
+    타임아웃으로 멈춘다.
+    """
+    text_started = threading.Event()
+    image_started = threading.Event()
+
+    def slow_interpret(_request, **_kwargs):
+        text_started.set()
+        assert image_started.wait(timeout=1), "image analysis never started"
+        return _TurnInterpretation(ComplaintDraft(location="욕실"))
+
+    def slow_analyze(_urls, _prompt):
+        image_started.set()
+        assert text_started.wait(timeout=1), "text interpretation never started"
+        return ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg", summary=None, ocr_text=None
+                )
+            ]
+        )
+
+    monkeypatch.setattr(node_module, "_interpret_turn", slow_interpret)
+    monkeypatch.setattr(node_module, "analyze_images", slow_analyze, raising=False)
+
+    result = handle_complaint(
+        _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
+    )["result"]
+
+    assert result.complaint_draft.location == "욕실"
+    assert result.image_analysis is not None
+
+
+def test_handle_complaint_stays_sequential_when_a_switch_could_occur(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """기존 증상이 있으면 VLM은 전환 판정이 끝난 뒤에만 호출된다.
+
+    동시에 돌리면 전환을 거절당한 사진이 먼저 분석돼버릴 수 있어, 이 경우는
+    `test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking`가
+    이미 막고 있는 것과 같은 이유로 순차 실행을 유지해야 한다. 여기서는 반대로
+    전환이 아닌 경우(same)에도 텍스트가 먼저 끝나야 VLM이 시작되는지를 본다.
+    """
+    call_order: list[str] = []
+
+    def recording_interpret(_request, **_kwargs):
+        call_order.append("text")
+        return _TurnInterpretation(ComplaintDraft(location="세탁실"))
+
+    def recording_analyze(_urls, _prompt):
+        call_order.append("image")
+        return ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/new.jpg", summary=None, ocr_text=None
+                )
+            ]
+        )
+
+    monkeypatch.setattr(node_module, "_interpret_turn", recording_interpret)
+    monkeypatch.setattr(node_module, "analyze_images", recording_analyze, raising=False)
+
+    request = _make_request(
+        "탈수할 때 LE 오류가 떠요", image_urls=["https://example.com/new.jpg"]
+    )
+    request.complaint_draft = ComplaintDraft(symptom="세탁기가 작동하지 않음")
+
+    handle_complaint(request)
+
+    assert call_order == ["text", "image"]
+
+
+def test_handle_complaint_skips_text_interpretation_for_photo_only_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda *_, **__: pytest.fail("photo-only turn called the text LLM"),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg",
+                    summary="바닥에 물이 고여 있음",
+                    ocr_text=None,
+                )
+            ]
+        ),
+    )
+
+    outcome = handle_complaint(_make_request(None, ["https://example.com/leak.jpg"]))
+
+    assert outcome["result"].complaint_draft.image_urls == [
+        "https://example.com/leak.jpg"
+    ]
+
+
+def test_handle_complaint_treats_whitespace_only_text_as_photo_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """api/converse.py의 has_text, knowledge/node.py의 question과 같은 strip() 기준.
+
+    공백만 있는 메시지는 사진 전용 턴으로 취급해 텍스트 LLM을 부르지 않아야 한다.
+    """
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda *_, **__: pytest.fail("whitespace-only text called the text LLM"),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg",
+                    summary="바닥에 물이 고여 있음",
+                    ocr_text=None,
+                )
+            ]
+        ),
+    )
+
+    outcome = handle_complaint(_make_request("   ", ["https://example.com/leak.jpg"]))
+
+    assert outcome["result"].complaint_draft.image_urls == [
+        "https://example.com/leak.jpg"
+    ]
+
+
+def test_handle_complaint_propagates_interpretation_failure_from_concurrent_path(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """동시 실행 경로에서도 텍스트 해석 실패가 순차 실행과 같이 그대로 올라와야 한다."""
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda *_: ImageAnalysis(images=[]),
+        raising=False,
+    )
+
+    with pytest.raises(ComplaintExtractionError):
+        handle_complaint(
+            _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
+        )
+
+
+def test_handle_complaint_concurrent_path_keeps_bound_context_and_timings(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """copy_context()로 넘긴 스레드에서도 bind()의 필드와 collect_timings()가 보여야 한다.
+
+    `_ContextFilter`는 `configure_logging()`이 붙인 핸들러에서만 동작해 caplog로는
+    검증할 수 없다. 대신 각 스레드 안에서 ContextVar를 직접 읽어 비교한다.
+    """
+    seen_turn_ids: list[object] = []
+
+    def recording_interpret(_request, **_kwargs):
+        seen_turn_ids.append((observability._context.get() or {}).get("turn_id"))
+        return _TurnInterpretation(ComplaintDraft(location="욕실"))
+
+    def recording_analyze(*_args):
+        seen_turn_ids.append((observability._context.get() or {}).get("turn_id"))
+        return ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg", summary=None, ocr_text=None
+                )
+            ]
+        )
+
+    monkeypatch.setattr(node_module, "_interpret_turn", recording_interpret)
+    monkeypatch.setattr(node_module, "analyze_images", recording_analyze, raising=False)
+
+    with bind(turn_id="turn-concurrent"), collect_timings() as timings:
+        handle_complaint(
+            _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
+        )
+
+    assert seen_turn_ids == ["turn-concurrent", "turn-concurrent"]
+    assert {"text_interpretation", "image_analysis"} <= set(timings)

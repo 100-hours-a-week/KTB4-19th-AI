@@ -1,5 +1,7 @@
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
@@ -140,6 +142,10 @@ def _missing_fields(draft: ComplaintDraft) -> list[str]:
     return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
 
 
+def _can_switch_away_from(current: ComplaintDraft | None) -> bool:
+    return bool(current and current.symptom)
+
+
 def _settle_switch(
     interpretation: _TurnInterpretation, current: ComplaintDraft | None
 ) -> _TurnInterpretation:
@@ -150,7 +156,7 @@ def _settle_switch(
     """
     if interpretation.switch != ComplaintSwitch.ASK:
         return interpretation
-    if not (current and current.symptom):
+    if not _can_switch_away_from(current):
         # 전환할 대상 자체가 없다. 평범한 수집 턴이므로 추출값은 그대로 쓴다.
         return replace(interpretation, switch=ComplaintSwitch.SAME)
     if interpretation.draft.symptom:
@@ -313,22 +319,47 @@ def _ready_for_card(
     )
 
 
-def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
+def _interpret_with_stage(request: ConverseRequest) -> _TurnInterpretation:
     with stage("text_interpretation", logger) as step:
-        interpretation = _interpret_turn(request, usage_sink=step)
-    interpretation = _settle_switch(interpretation, request.complaint_draft)
+        return _interpret_turn(request, usage_sink=step)
+
+
+def _collect_evidence_concurrently(
+    request: ConverseRequest, image_urls: list[str]
+) -> tuple[_TurnInterpretation, ImageAnalysis | None]:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        interpretation_future = executor.submit(
+            copy_context().run, _interpret_with_stage, request
+        )
+        image_future = executor.submit(
+            copy_context().run, _run_image_analysis, image_urls
+        )
+        return interpretation_future.result(), image_future.result()
+
+
+def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
+    text = (request.message.text or "").strip()
     image_urls = request.message.image_urls
-    if interpretation.switch == ComplaintSwitch.ASK:
-        skipped("image_analysis", logger, skip_reason="switch_pending")
-        image_analysis = None
-    else:
+    current = request.complaint_draft
+
+    if not text:
+        skipped("text_interpretation", logger, skip_reason="no_text")
+        interpretation = _settle_switch(_TurnInterpretation(), current)
         image_analysis = _run_image_analysis(image_urls)
-    return _TurnEvidence(
-        interpretation,
-        image_analysis,
-        image_urls,
-        request.message.text or "",
-    )
+    elif image_urls and not _can_switch_away_from(current):
+        interpretation, image_analysis = _collect_evidence_concurrently(
+            request, image_urls
+        )
+        interpretation = _settle_switch(interpretation, current)
+    else:
+        interpretation = _settle_switch(_interpret_with_stage(request), current)
+        if interpretation.switch == ComplaintSwitch.ASK:
+            skipped("image_analysis", logger, skip_reason="switch_pending")
+            image_analysis = None
+        else:
+            image_analysis = _run_image_analysis(image_urls)
+
+    return _TurnEvidence(interpretation, image_analysis, image_urls, text)
 
 
 def _advance_complaint(
