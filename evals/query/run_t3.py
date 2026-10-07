@@ -58,6 +58,19 @@ def classify_one(item: GoldItem) -> str:
     return result["route"].value
 
 
+def classify_one_extension(item) -> str:
+    """확장 47문항(partial·attacks·followups)용 — 실제 history를 실어서 분류한다.
+
+    GoldItem에는 history가 없어 request_for()가 항상 빈 history를 쓰지만,
+    후속질문 12건은 맥락이 없으면 애초에 못 푸는 질문이라 실제 history가 필요하다.
+    """
+    from run_ext_answer import request_for as extension_request_for
+    from zipsai.orchestration.intent import classify_intent
+
+    result = classify_intent({"request": extension_request_for(item)})
+    return result["route"].value
+
+
 def score_all(items: list[GoldItem], classify) -> list[RouteRecord]:
     from zipsai.errors import (
         IntentClassificationError,
@@ -120,7 +133,9 @@ def main() -> None:
 
     get_settings()
     print(f"분류 시작  문항 {total}  Qdrant와 embedding에는 접속하지 않습니다", flush=True)
-    rows = score_all(items, classify_one) + score_all(extension_items, classify_one)
+    rows = score_all(items, classify_one) + score_all(
+        extension_items, classify_one_extension
+    )
     print(format_report(aggregate(rows)), end="")
 
 

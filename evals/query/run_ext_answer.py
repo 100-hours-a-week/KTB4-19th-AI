@@ -83,7 +83,7 @@ def load_items(buildings: dict[str, int]) -> list[Item]:
     return items
 
 
-def _request(item: Item):
+def request_for(item: Item):
     from zipsai.contracts.converse import ConverseRequest, HistoryTurn, IncomingMessage
 
     history = [
@@ -144,7 +144,7 @@ def score_all(items: list[Item]) -> list[AnswerRow]:
         ok = False
         breach = False
         try:
-            reply = str(handle_knowledge(_request(item))["reply"])
+            reply = str(handle_knowledge(request_for(item))["reply"])
             ok, breach = _judge(item, reply)
         except caught as error:
             failed = True

@@ -119,6 +119,46 @@ def test_request_sends_only_the_question() -> None:
     assert request.conversation_history == []
 
 
+def test_extension_classifier_sends_real_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import run_ext_answer
+    import run_t3
+
+    item = run_ext_answer.Item(
+        id="f-01",
+        kind="followup",
+        building_id=1,
+        question="그래서 언제야?",
+        attack=None,
+        quote=None,
+        history=(
+            ("user", "물탱크 청소는 언제 하나요?"),
+            ("assistant", "9월 20일입니다"),
+        ),
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_classify_intent(payload: dict[str, object]) -> dict[str, object]:
+        captured["request"] = payload["request"]
+
+        class _Route:
+            value = "knowledge"
+
+        return {"route": _Route()}
+
+    monkeypatch.setattr(
+        "zipsai.orchestration.intent.classify_intent", fake_classify_intent
+    )
+
+    run_t3.classify_one_extension(item)
+
+    request = captured["request"]
+    assert len(request.conversation_history) == 2
+    assert request.conversation_history[0].text == "물탱크 청소는 언제 하나요?"
+
+
 def test_score_all_keeps_a_failed_call_in_the_rows() -> None:
     import run_t3
 
