@@ -1,7 +1,11 @@
-"""합성문서 T3. 235문항이 knowledge로 분류되는 비율(C1)을 낸다.
+"""합성문서 235문항 + 확장 47문항이 knowledge로 분류되는 비율(C1, 모집단 282)을 낸다.
 
 classify_intent만 호출한다. 검색과 답변 생성은 하지 않는다.
 운영 Qdrant와 컬렉션 documents 는 거절한다. Qdrant와 embedding에는 접속하지 않는다.
+
+확장 47문항(partial·attacks·followups)은 run_ext_answer.py가 생성 품질만
+보려고 라우터를 안 거치고 handle_knowledge를 바로 부르는데, 그 문항들이
+실제로 knowledge로 분류되는지는 여기서 본다(A-100-00 §4).
 
 실행 (KTB4-19th-AI/ai 에서):
 
@@ -94,11 +98,19 @@ def main() -> None:
     parser.add_argument("--collection", default=COLLECTION)
     args = parser.parse_args()
 
-    items, _errors = load_gold(REPRODUCE, load_manifest(REPRODUCE))
+    docs = load_manifest(REPRODUCE)
+    items, _errors = load_gold(REPRODUCE, docs)
     if len(items) != EXPECTED:
         _die(f"골드셋이 {len(items)}건입니다. {EXPECTED}건이어야 합니다.")
+
+    from run_ext_answer import load_items as load_extension_items
+
+    buildings = {doc.building_code: doc.building_id for doc in docs}
+    extension_items = load_extension_items(buildings)
+    total = len(items) + len(extension_items)
+
     if args.check:
-        print(f"확인  문항 {len(items)}  컬렉션은 보지 않았습니다")
+        print(f"확인  문항 {total}({len(items)}+{len(extension_items)})  컬렉션은 보지 않았습니다")
         return
 
     qdrant_target(args.qdrant, allow_remote=False)
@@ -107,8 +119,8 @@ def main() -> None:
     from zipsai.settings import get_settings
 
     get_settings()
-    print(f"분류 시작  문항 {len(items)}  Qdrant와 embedding에는 접속하지 않습니다", flush=True)
-    rows = score_all(items, classify_one)
+    print(f"분류 시작  문항 {total}  Qdrant와 embedding에는 접속하지 않습니다", flush=True)
+    rows = score_all(items, classify_one) + score_all(extension_items, classify_one)
     print(format_report(aggregate(rows)), end="")
 
 
