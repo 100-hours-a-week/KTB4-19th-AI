@@ -117,7 +117,7 @@ def test_interpret_turn_maps_structured_output_to_current_turn_draft(
 
     result = _interpret_turn(_make_request("화장실 천장에서 물이 계속 떨어져요"))
 
-    assert result.draft == ComplaintDraft(
+    assert result.fields == ComplaintDraft(
         issue_type="leak",
         location="화장실",
         symptom="천장에서 물이 떨어져요",
@@ -133,7 +133,7 @@ def test_interpret_turn_retries_empty_structured_output_once(
 
     result = _interpret_turn(_make_request("화장실이요"))
 
-    assert result.draft.location == "화장실"
+    assert result.fields.location == "화장실"
 
 
 def test_interpret_turn_gives_up_after_empty_structured_outputs(
@@ -882,13 +882,13 @@ def test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking(
             ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
         ),
     )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: (_ for _ in ()).throw(
-            AssertionError("VLM must not run while a switch is pending")
-        ),
-    )
+    image_calls: list[list[str]] = []
+
+    def record_image_analysis(urls, _prompt):
+        image_calls.append(urls)
+        return ImageAnalysis(images=[])
+
+    monkeypatch.setattr(node_module, "analyze_images", record_image_analysis)
 
     outcome = handle_complaint(request)
 
@@ -896,6 +896,7 @@ def test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking(
     assert outcome["result"].complaint_draft.image_urls == [
         "https://example.com/old.jpg"
     ]
+    assert image_calls == [["https://example.com/new.jpg"]]
 
 
 def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
@@ -976,7 +977,7 @@ def test_settle_switch_discards_a_contradictory_ask_extraction():
         ComplaintDraft(symptom="물이 새요"),
     )
     assert settled.switch == "same"
-    assert settled.draft.issue_type is None
+    assert settled.fields.issue_type is None
 
 
 def test_settle_switch_keeps_extraction_when_there_is_nothing_to_switch_from():
@@ -985,7 +986,7 @@ def test_settle_switch_keeps_extraction_when_there_is_nothing_to_switch_from():
         _TurnInterpretation(ComplaintDraft(symptom="물이 새요"), switch="ask"), None
     )
     assert settled.switch == "same"
-    assert settled.draft.symptom == "물이 새요"
+    assert settled.fields.symptom == "물이 새요"
 
 
 def test_settle_switch_never_demotes_accept():
@@ -1077,24 +1078,25 @@ def test_handle_complaint_runs_text_and_image_calls_concurrently(
     assert result.image_analysis is not None
 
 
-def test_handle_complaint_stays_sequential_when_a_switch_could_occur(
+def test_handle_complaint_collects_text_and_images_before_settling_switch(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """기존 증상이 있으면 VLM은 전환 판정이 끝난 뒤에만 호출된다.
-
-    동시에 돌리면 전환을 거절당한 사진이 먼저 분석돼버릴 수 있어, 이 경우는
-    `test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking`가
-    이미 막고 있는 것과 같은 이유로 순차 실행을 유지해야 한다. 여기서는 반대로
-    전환이 아닌 경우(same)에도 텍스트가 먼저 끝나야 VLM이 시작되는지를 본다.
-    """
-    call_order: list[str] = []
+    """전환 관계 판단 전에도 텍스트와 이미지 근거를 함께 수집한다."""
+    started = {"text": threading.Event(), "image": threading.Event()}
+    release = threading.Event()
 
     def recording_interpret(_request, **_kwargs):
-        call_order.append("text")
-        return _TurnInterpretation(ComplaintDraft(location="세탁실"))
+        started["text"].set()
+        assert started["image"].wait(timeout=1)
+        release.wait(timeout=1)
+        return _TurnInterpretation(
+            ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
+        )
 
     def recording_analyze(_urls, _prompt):
-        call_order.append("image")
+        started["image"].set()
+        assert started["text"].wait(timeout=1)
+        release.set()
         return ImageAnalysis(
             images=[
                 ImageObservation(
@@ -1111,9 +1113,9 @@ def test_handle_complaint_stays_sequential_when_a_switch_could_occur(
     )
     request.complaint_draft = ComplaintDraft(symptom="세탁기가 작동하지 않음")
 
-    handle_complaint(request)
+    outcome = handle_complaint(request)
 
-    assert call_order == ["text", "image"]
+    assert outcome["result"].complaint_draft.symptom == "세탁기가 작동하지 않음"
 
 
 def test_handle_complaint_skips_text_interpretation_for_photo_only_turn(

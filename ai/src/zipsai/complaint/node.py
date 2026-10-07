@@ -60,7 +60,7 @@ class _TurnFinalization(BaseModel):
 
 @dataclass(frozen=True)
 class _TurnInterpretation:
-    draft: ComplaintDraft = field(default_factory=ComplaintDraft)
+    fields: ComplaintDraft = field(default_factory=ComplaintDraft)
     switch: ComplaintSwitch = ComplaintSwitch.SAME
 
 
@@ -99,7 +99,7 @@ def _interpret_turn(
         )
         if parsed is not None:
             return _TurnInterpretation(
-                draft=ComplaintDraft(
+                fields=ComplaintDraft(
                     issue_type=parsed.issue_type,
                     location=parsed.location,
                     symptom=parsed.symptom,
@@ -159,7 +159,7 @@ def _settle_switch(
     if not _can_switch_away_from(current):
         # 전환할 대상 자체가 없다. 평범한 수집 턴이므로 추출값은 그대로 쓴다.
         return replace(interpretation, switch=ComplaintSwitch.SAME)
-    if interpretation.draft.symptom:
+    if interpretation.fields.symptom:
         return interpretation
     # "다른 민원"이라면서 증상이 없다. 모순된 판정이라 이 턴의 값을 믿지 않는다.
     # 병합하면 다른 민원의 issue_type이 지금 초안에 얹혀 짜깁기 카드가 된다.
@@ -202,6 +202,7 @@ class _TurnEvidence:
 
 @dataclass(frozen=True)
 class _ComplaintProgress:
+    interpretation: _TurnInterpretation
     draft: ComplaintDraft
     missing_fields: list[str]
     previous_symptom: str | None = None
@@ -340,24 +341,18 @@ def _collect_evidence_concurrently(
 def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
     text = (request.message.text or "").strip()
     image_urls = request.message.image_urls
-    current = request.complaint_draft
 
     if not text:
         skipped("text_interpretation", logger, skip_reason="no_text")
-        interpretation = _settle_switch(_TurnInterpretation(), current)
+        interpretation = _TurnInterpretation()
         image_analysis = _run_image_analysis(image_urls)
-    elif image_urls and not _can_switch_away_from(current):
+    elif image_urls:
         interpretation, image_analysis = _collect_evidence_concurrently(
             request, image_urls
         )
-        interpretation = _settle_switch(interpretation, current)
     else:
-        interpretation = _settle_switch(_interpret_with_stage(request), current)
-        if interpretation.switch == ComplaintSwitch.ASK:
-            skipped("image_analysis", logger, skip_reason="switch_pending")
-            image_analysis = None
-        else:
-            image_analysis = _run_image_analysis(image_urls)
+        interpretation = _interpret_with_stage(request)
+        image_analysis = _run_image_analysis(image_urls)
 
     return _TurnEvidence(interpretation, image_analysis, image_urls, text)
 
@@ -365,7 +360,9 @@ def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
 def _advance_complaint(
     request: ConverseRequest, evidence: _TurnEvidence
 ) -> _ComplaintProgress:
-    interpretation = evidence.interpretation
+    interpretation = _settle_switch(
+        evidence.interpretation, request.complaint_draft
+    )
     if interpretation.switch == ComplaintSwitch.ASK:
         draft = request.complaint_draft
         assert draft is not None
@@ -377,17 +374,18 @@ def _advance_complaint(
             else request.complaint_draft
         )
         draft = _append_image_urls(
-            _merge_structured_fields(previous, interpretation.draft),
+            _merge_structured_fields(previous, interpretation.fields),
             evidence.image_urls,
         )
         previous_symptom = previous.symptom if previous else None
 
-    current_symptom = interpretation.draft.symptom
+    current_symptom = interpretation.fields.symptom
     if not previous_symptom or previous_symptom == current_symptom:
         draft = draft.model_copy(
             update={"symptom": current_symptom or previous_symptom}
         )
     return _ComplaintProgress(
+        interpretation=interpretation,
         draft=draft,
         missing_fields=_missing_fields(draft),
         previous_symptom=previous_symptom,
@@ -426,10 +424,10 @@ def _generate_turn_finalization(
 def _finalize_turn(
     progress: _ComplaintProgress, evidence: _TurnEvidence
 ) -> _ComplaintTurn:
-    interpretation = evidence.interpretation
+    interpretation = progress.interpretation
     if interpretation.switch == ComplaintSwitch.ASK:
         skipped("turn_finalization", logger, skip_reason="switch_confirmation")
-        return _build_switch_confirmation_turn(progress.draft, interpretation.draft)
+        return _build_switch_confirmation_turn(progress.draft, interpretation.fields)
 
     symptom_merge_needed = bool(
         progress.previous_symptom
