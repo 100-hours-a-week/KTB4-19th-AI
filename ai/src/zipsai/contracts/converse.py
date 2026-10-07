@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from zipsai.settings import ALLOW_DATA_URL_IMAGES
+
 
 class Route(str, Enum):
     COMPLAINT = "complaint"
@@ -93,9 +95,15 @@ class IncomingMessage(BaseModel):
     def validate_images(self) -> "IncomingMessage":
         for image in self.images:
             parsed_url = urlparse(image.url)
-            if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-                raise ValueError("Image URL must be an absolute HTTP(S) URL")
-            extension = parsed_url.path.rsplit(".", 1)[-1].lower()
+            # data URL은 평가 전용이다(`ALLOW_DATA_URL_IMAGES`). 운영 기본값(꺼짐)에서는
+            # data: 스킴이 아래 HTTP(S) 검사에서 그대로 거절된다.
+            if parsed_url.scheme == "data" and ALLOW_DATA_URL_IMAGES:
+                mime = image.url.split(",", 1)[0].removeprefix("data:").split(";", 1)[0]
+                extension = mime.rsplit("/", 1)[-1].lower()
+            else:
+                if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+                    raise ValueError("Image URL must be an absolute HTTP(S) URL")
+                extension = parsed_url.path.rsplit(".", 1)[-1].lower()
             if extension not in {"jpg", "jpeg", "png", "webp"}:
                 raise ValueError(f"Unsupported image extension: {image.url}")
         return self

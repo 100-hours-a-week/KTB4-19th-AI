@@ -80,6 +80,7 @@ def generate_structured[T: BaseModel](
     user_prompt: str,
     response_format: type[T],
     *,
+    model: str | None = None,
     usage_sink: dict[str, object] | None = None,
 ) -> T | None:
     settings = get_settings()
@@ -87,7 +88,7 @@ def generate_structured[T: BaseModel](
         response = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
         ).chat.completions.parse(
-            model=settings.llm_model,
+            model=model if model is not None else settings.llm_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
