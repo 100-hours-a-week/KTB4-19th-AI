@@ -56,7 +56,9 @@ def _row(
 
 
 def test_sample_keeps_table_b_and_the_strata() -> None:
-    items, _errors = score.load_gold(score.REPRODUCE, score.load_manifest(score.REPRODUCE))
+    items, _errors = score.load_gold(
+        score.REPRODUCE, score.load_manifest(score.REPRODUCE)
+    )
     sample = score_t2.select_sample(items)
     ids = {item.id for item in sample}
 
@@ -72,9 +74,30 @@ def test_g2_counts_only_model_declines_among_answerable() -> None:
     metrics = score_t2.aggregate(
         [
             _row("hit"),
-            _row("blocked", outcome="no_hit", answer_chars=None, citation_ids=(), retrieved_ids=(), unsupported=None),
-            _row("declined", outcome="declined", citation_ids=(), retrieved_ids=("b001-doc",), unsupported=None),
-            _row("absent", answerable=False, outcome="no_hit", answer_chars=None, citation_ids=(), retrieved_ids=(), unsupported=None),
+            _row(
+                "blocked",
+                outcome="no_hit",
+                answer_chars=None,
+                citation_ids=(),
+                retrieved_ids=(),
+                unsupported=None,
+            ),
+            _row(
+                "declined",
+                outcome="declined",
+                citation_ids=(),
+                retrieved_ids=("b001-doc",),
+                unsupported=None,
+            ),
+            _row(
+                "absent",
+                answerable=False,
+                outcome="no_hit",
+                answer_chars=None,
+                citation_ids=(),
+                retrieved_ids=(),
+                unsupported=None,
+            ),
         ]
     )
 
@@ -109,7 +132,14 @@ def test_report_lists_items_with_unsupported_claims() -> None:
 
 def test_report_names_the_twenty_rows() -> None:
     rows = [
-        _row(item_id, outcome="no_hit", answer_chars=None, citation_ids=(), retrieved_ids=(), unsupported=None)
+        _row(
+            item_id,
+            outcome="no_hit",
+            answer_chars=None,
+            citation_ids=(),
+            retrieved_ids=(),
+            unsupported=None,
+        )
         for item_id in score_t2.TABLE_B
     ]
     text = score_t2.format_report(score_t2.aggregate(rows), rows)

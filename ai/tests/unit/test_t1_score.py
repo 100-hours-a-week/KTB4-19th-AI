@@ -122,7 +122,12 @@ def test_doc_id_follows_markdown_name_and_scan_file_uses_title() -> None:
 def test_rank_ignores_nfd_nfc_difference() -> None:
     nfd = unicodedata.normalize("NFD", "세탁실")
     metrics = score.aggregate(
-        [_row(expected_doc_id=f"b001-{nfd}", hit_doc_ids=(f"b001-{score.nfc('세탁실')}",))]
+        [
+            _row(
+                expected_doc_id=f"b001-{nfd}",
+                hit_doc_ids=(f"b001-{score.nfc('세탁실')}",),
+            )
+        ]
     )
 
     assert metrics["R4"] == 1
@@ -145,7 +150,9 @@ def test_gold_files_match_the_sheet_counts() -> None:
     assert scan.build_name == "b001-소방시설_점검-스캔본.pdf"
 
 
-def test_refuses_production_qdrant_and_the_live_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refuses_production_qdrant_and_the_live_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("EMBEDDING_URL", raising=False)
     with pytest.raises(SystemExit):
         run_t1.qdrant_target("http://qdrant.example:6333", allow_remote=False)
@@ -156,5 +163,7 @@ def test_refuses_production_qdrant_and_the_live_collection(monkeypatch: pytest.M
     with pytest.raises(SystemExit):
         run_t1.embedding_target(None)
 
-    assert run_t1.qdrant_target("http://127.0.0.1:6333", allow_remote=False).endswith("6333")
+    assert run_t1.qdrant_target("http://127.0.0.1:6333", allow_remote=False).endswith(
+        "6333"
+    )
     assert run_t1.collection_name("documents_eval") == "documents_eval"

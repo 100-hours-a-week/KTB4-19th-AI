@@ -12,7 +12,9 @@ import score
 import score_t3
 
 
-def _row(item_id: str, route: str | None, *, failed: bool = False) -> score_t3.RouteRecord:
+def _row(
+    item_id: str, route: str | None, *, failed: bool = False
+) -> score_t3.RouteRecord:
     return score_t3.RouteRecord(item_id=item_id, route=route, failed=failed)
 
 
@@ -92,7 +94,9 @@ def test_report_shows_rate_and_counts() -> None:
 
 
 def test_gold_set_has_235_questions() -> None:
-    items, _errors = score.load_gold(score.REPRODUCE, score.load_manifest(score.REPRODUCE))
+    items, _errors = score.load_gold(
+        score.REPRODUCE, score.load_manifest(score.REPRODUCE)
+    )
 
     assert len(items) == 235
 

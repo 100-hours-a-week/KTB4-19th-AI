@@ -30,7 +30,9 @@ LLM_JUDGE_MODEL: Final = os.getenv("LLM_JUDGE_MODEL") or None
 # 평가 전용. 채점 사진은 공개 URL이 없어 data URL로 넣는다. 운영 compose는
 # 이 값을 절대 설정하지 않는다 — 켜지면 /converse가 임의 크기의 base64 사진을
 # image_urls로 받는다.
-ALLOW_DATA_URL_IMAGES: Final = os.getenv("ALLOW_DATA_URL_IMAGES", "false").lower() == "true"
+ALLOW_DATA_URL_IMAGES: Final = (
+    os.getenv("ALLOW_DATA_URL_IMAGES", "false").lower() == "true"
+)
 
 REQUIRED_SETTINGS: Final = ("QDRANT_URL", "S3_BUCKET")
 
