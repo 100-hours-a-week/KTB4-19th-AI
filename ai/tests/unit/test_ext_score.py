@@ -85,43 +85,15 @@ def test_route_accuracy_splits_complaint_and_clarify() -> None:
 def test_complaint_exact_match_and_invention_count() -> None:
     metrics = score_m.aggregate_complaints(
         [
-            score_m.ComplaintRow(
-                "ok",
-                True,
-                True,
-                True,
-                True,
-                True,
-                False,
-                False,
-                False,
-                False,
-                "leak",
-                False,
-            ),
-            score_m.ComplaintRow(
-                "invent",
-                False,
-                True,
-                True,
-                False,
-                False,
-                True,
-                False,
-                True,
-                False,
-                "other",
-                False,
-            ),
+            score_m.ComplaintRow("ok", True, True, True, False, False, "leak", False),
+            score_m.ComplaintRow("invent", False, True, True, True, False, "other", False),
         ]
     )
 
     assert metrics["M1"] == pytest.approx(3 / 4)
     assert metrics["M2"] == pytest.approx(1)
-    assert metrics["M3"] == pytest.approx(1)
-    assert metrics["M4"] == pytest.approx(0)
-    assert metrics["M10"] == 1
-    assert metrics["M11"] == pytest.approx(1 / 2)
+    assert metrics["M8"] == 1
+    assert metrics["M9"] == pytest.approx(1 / 2)
 
 
 def test_blank_expected_matches_only_blank_result() -> None:
@@ -144,9 +116,9 @@ def test_photo_ocr_and_failure_notice() -> None:
     assert score_m.ocr_same(" E04 ", "E04")
     assert score_m.summary_ok("보일러에 E04가 보입니다.", ["보일러", "E04"], ["누수"])
     assert not score_m.summary_ok("보일러 누수", ["보일러"], ["누수"])
+    assert metrics["M4"] == pytest.approx(0.5)
+    assert metrics["M5"] == pytest.approx(1)
     assert metrics["M6"] == pytest.approx(0.5)
-    assert metrics["M7"] == pytest.approx(1)
-    assert metrics["M8"] == pytest.approx(0.5)
 
 
 def test_extension_files_have_the_approved_counts() -> None:
