@@ -131,6 +131,12 @@ def _record_usage(sink: dict[str, object] | None, usage: object | None) -> None:
     reasoning_tokens = getattr(details, "reasoning_tokens", None) if details else None
     if reasoning_tokens is not None:
         sink["reasoning_tokens"] = reasoning_tokens
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    cached_tokens = (
+        getattr(prompt_details, "cached_tokens", None) if prompt_details else None
+    )
+    if cached_tokens is not None:
+        sink["cached_tokens"] = cached_tokens
 
 
 def strip_json_code_fence(content: str) -> str:

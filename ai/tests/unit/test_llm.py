@@ -143,6 +143,40 @@ def test_usage_sink_includes_reasoning_tokens_when_model_reports_them(monkeypatc
     }
 
 
+def test_usage_sink_includes_cached_tokens_when_model_reports_them(monkeypatch):
+    # 캐시 적중 분량은 prompt_tokens 안에 섞여 들어오고, 적중분은 과금이 싸다 —
+    # 교체한 모델의 캐시 적중률을 실측하려면 별도 필드로 복원해야 한다.
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=3,
+        total_tokens=103,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=80),
+    )
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+        usage=usage,
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+
+    sink: dict[str, object] = {}
+    llm_module.generate_text("system", "user", usage_sink=sink)
+
+    assert sink == {
+        "input_tokens": 100,
+        "output_tokens": 3,
+        "total_tokens": 103,
+        "cached_tokens": 80,
+    }
+
+
 def test_usage_sink_left_untouched_without_sink(monkeypatch):
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
     response = SimpleNamespace(
