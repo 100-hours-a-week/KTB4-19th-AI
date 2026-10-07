@@ -341,6 +341,46 @@ def test_handle_complaint_merges_text_and_photo_symptoms(
     assert result.complaint_draft.symptom == "욕실 천장 모서리에서 물이 떨어짐"
 
 
+def test_handle_complaint_skips_finalizer_when_text_and_photo_symptoms_match(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    symptom = "바닥에 물이 고여 있음"
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(symptom=symptom, location="욕실")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda _, __: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg",
+                    summary=symptom,
+                    ocr_text=None,
+                )
+            ]
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        lambda **_: pytest.fail(
+            "matching text and photo symptoms called the finalizer"
+        ),
+    )
+
+    result = handle_complaint(
+        _make_request("바닥에 물이 고여 있음", ["https://example.com/leak.jpg"])
+    )["result"]
+
+    assert result.complaint_draft.symptom == symptom
+
+
 def test_handle_complaint_keeps_text_flow_when_vlm_fails(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -436,7 +476,7 @@ def test_handle_complaint_uses_generic_reply_without_photo(
     assert reply == "어디에서 생긴 문제인가요?"
 
 
-def test_handle_complaint_uses_llm_generated_reply(
+def test_handle_complaint_uses_fixed_reply_for_a_simple_missing_field(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -447,15 +487,12 @@ def test_handle_complaint_uses_llm_generated_reply(
     monkeypatch.setattr(
         node_module,
         "generate_structured",
-        lambda **_: node_module._TurnFinalization(
-            symptom=None,
-            reply="화장실 세면대인지 변기 쪽인지 알려주시겠어요?",
-        ),
+        lambda **_: pytest.fail("simple missing-field turn called the finalizer"),
     )
 
     reply = handle_complaint(_make_request("화장실이 좀 이상해요"))["reply"]
 
-    assert reply == "화장실 세면대인지 변기 쪽인지 알려주시겠어요?"
+    assert reply == "어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_uses_finalizer_to_merge_symptoms(
@@ -493,18 +530,9 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
-def test_handle_complaint_uses_finalizer_reply_for_the_decided_missing_field(
+def test_handle_complaint_uses_fixed_reply_for_the_decided_missing_field(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    captured: dict[str, str] = {}
-
-    def finalize(**kwargs):
-        captured["user_prompt"] = kwargs["user_prompt"]
-        return node_module._TurnFinalization(
-            symptom=None,
-            reply="화장실에서 어떤 불편이 생겼는지 알려주시겠어요?",
-        )
-
     monkeypatch.setattr(
         node_module,
         "_interpret_turn",
@@ -515,14 +543,13 @@ def test_handle_complaint_uses_finalizer_reply_for_the_decided_missing_field(
     monkeypatch.setattr(
         node_module,
         "generate_structured",
-        finalize,
+        lambda **_: pytest.fail("simple missing-field turn called the finalizer"),
     )
 
     outcome = handle_complaint(_make_request("화장실이요"))
 
     assert outcome["result"].missing_fields == ["symptom"]
-    assert outcome["reply"] == "화장실에서 어떤 불편이 생겼는지 알려주시겠어요?"
-    assert "다음 행동: ask_symptom" in captured["user_prompt"]
+    assert outcome["reply"] == "어떤 불편 증상인지 알려주세요."
 
 
 def test_handle_complaint_does_not_rewrite_a_single_symptom_while_asking_location(
@@ -595,7 +622,7 @@ def test_handle_complaint_skips_finalizer_for_complete_single_symptom(
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
-def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
+def test_handle_complaint_prefixes_fixed_reply_when_photo_analyzed(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -606,10 +633,7 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
     monkeypatch.setattr(
         node_module,
         "generate_structured",
-        lambda **_: node_module._TurnFinalization(
-            symptom=None,
-            reply="정확히 어디쯤인지 알려주시겠어요?",
-        ),
+        lambda **_: pytest.fail("simple photo turn called the finalizer"),
     )
     monkeypatch.setattr(
         node_module,
@@ -632,7 +656,7 @@ def test_handle_complaint_prefixes_llm_reply_when_photo_analyzed(
 
     assert (
         reply
-        == "사진은 확인했습니다 — 바닥에 물이 고여 있음. 정확히 어디쯤인지 알려주시겠어요?"
+        == "사진은 확인했습니다 — 바닥에 물이 고여 있음. 어디에서 생긴 문제인가요?"
     )
 
 

@@ -372,9 +372,7 @@ def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
 def _advance_complaint(
     request: ConverseRequest, evidence: _TurnEvidence
 ) -> _ComplaintProgress:
-    interpretation = _settle_switch(
-        evidence.interpretation, request.complaint_draft
-    )
+    interpretation = _settle_switch(evidence.interpretation, request.complaint_draft)
     if interpretation.switch == ComplaintSwitch.ASK:
         draft = request.complaint_draft
         assert draft is not None
@@ -452,22 +450,32 @@ def _finalize_turn(
         )
         or (
             progress.image_symptom
-            and evidence.interpretation.fields.symptom
-            and progress.image_symptom != evidence.interpretation.fields.symptom
+            and progress.interpretation.fields.symptom
+            and progress.image_symptom != progress.interpretation.fields.symptom
         )
     )
     asked = progress.missing_fields[0] if progress.missing_fields else None
-    if not symptom_merge_needed and asked is None:
-        skipped("turn_finalization", logger, skip_reason="fixed_completion")
+    if not symptom_merge_needed:
+        skipped(
+            "turn_finalization",
+            logger,
+            skip_reason="fixed_completion" if asked is None else "fixed_missing_field",
+        )
+        if asked:
+            return _ask_for_missing(
+                progress.draft,
+                progress.missing_fields,
+                evidence.image_analysis,
+                evidence.image_urls,
+                "",
+            )
         return _ready_for_card(progress.draft, evidence.image_analysis)
 
     next_action = f"ask_{asked}" if asked else "complete"
     finalization = _generate_turn_finalization(progress, evidence, next_action)
     fallback_symptom = progress.current_symptom or progress.previous_symptom
     finalized_symptom = (
-        finalization.symptom.strip()
-        if symptom_merge_needed and finalization and finalization.symptom
-        else ""
+        finalization.symptom.strip() if finalization and finalization.symptom else ""
     )
     symptom = finalized_symptom or fallback_symptom
     draft = progress.draft.model_copy(update={"symptom": symptom})
@@ -486,11 +494,12 @@ def _finalize_turn(
 def _log_complaint_turn(
     request: ConverseRequest,
     evidence: _TurnEvidence,
+    progress: _ComplaintProgress,
     turn: _ComplaintTurn,
     started_at: float,
 ) -> None:
     draft = turn.result.complaint_draft
-    switch = evidence.interpretation.switch
+    switch = progress.interpretation.switch
     logger.info(
         "complaint_turn",
         extra={
@@ -515,7 +524,7 @@ def handle_complaint(request: ConverseRequest) -> dict[str, object]:
     evidence = _gather_turn_evidence(request)
     progress = _advance_complaint(request, evidence)
     turn = _finalize_turn(progress, evidence)
-    _log_complaint_turn(request, evidence, turn, started_at)
+    _log_complaint_turn(request, evidence, progress, turn, started_at)
     return {
         "complaint_state": turn.complaint_state,
         "reply": turn.reply,
