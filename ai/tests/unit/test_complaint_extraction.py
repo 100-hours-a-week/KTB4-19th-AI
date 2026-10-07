@@ -238,7 +238,7 @@ def test_advance_complaint_merges_collected_evidence_without_model_calls(
     assert progress.missing_fields == []
 
 
-def test_handle_complaint_returns_image_analysis_without_changing_text_fields(
+def test_handle_complaint_includes_image_summary_in_the_draft(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -266,8 +266,79 @@ def test_handle_complaint_returns_image_analysis_without_changing_text_fields(
     )["result"]
 
     assert result.complaint_draft.location == "욕실"
+    assert result.complaint_draft.symptom == "바닥에 물이 고여 있음"
     assert result.complaint_draft.image_urls == ["https://example.com/leak.jpg"]
     assert result.image_analysis.images[0].ocr_text == "E1"
+
+
+def test_handle_complaint_uses_photo_summary_as_symptom_when_text_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda _, __: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg",
+                    summary="바닥에 물이 고여 있음",
+                    ocr_text=None,
+                )
+            ]
+        ),
+        raising=False,
+    )
+
+    result = handle_complaint(
+        _make_request("이거 보세요", ["https://example.com/leak.jpg"])
+    )["result"]
+
+    assert result.complaint_draft.symptom == "바닥에 물이 고여 있음"
+
+
+def test_handle_complaint_merges_text_and_photo_symptoms(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(location="욕실", symptom="물이 새요")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "analyze_images",
+        lambda _, __: ImageAnalysis(
+            images=[
+                ImageObservation(
+                    url="https://example.com/leak.jpg",
+                    summary="천장 모서리에서 물이 떨어짐",
+                    ocr_text=None,
+                )
+            ]
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        node_module,
+        "_generate_turn_finalization",
+        lambda progress, _evidence, _next_action: node_module._TurnFinalization(
+            symptom="욕실 천장 모서리에서 물이 떨어짐",
+            reply="",
+        ),
+    )
+
+    result = handle_complaint(
+        _make_request("물이 새요", ["https://example.com/leak.jpg"])
+    )["result"]
+
+    assert result.complaint_draft.symptom == "욕실 천장 모서리에서 물이 떨어짐"
 
 
 def test_handle_complaint_keeps_text_flow_when_vlm_fails(
@@ -798,7 +869,7 @@ def test_handle_complaint_photo_only_logs_image_analysis(
         outcome = handle_complaint(_make_request(None, [image_url]))
 
     assert outcome["result"].complaint_draft.image_urls == [image_url]
-    assert outcome["result"].missing_fields == ["location", "symptom"]
+    assert outcome["result"].missing_fields == ["location"]
     assert outcome["reply"].startswith("사진은 확인했습니다 — 바닥에 물이 고여 있음.")
     records = _node_records(caplog)
     analyzed = [

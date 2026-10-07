@@ -137,6 +137,17 @@ def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> Complain
     )
 
 
+def _image_symptom(image_analysis: ImageAnalysis | None) -> str | None:
+    if image_analysis is None:
+        return None
+    summaries = [
+        observation.summary.strip()
+        for observation in image_analysis.images
+        if observation.summary and observation.summary.strip()
+    ]
+    return " ".join(summaries) or None
+
+
 def _missing_fields(draft: ComplaintDraft) -> list[str]:
     """접수에 필요한데 아직 비어 있는 항목."""
     return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
@@ -207,6 +218,7 @@ class _ComplaintProgress:
     missing_fields: list[str]
     previous_symptom: str | None = None
     current_symptom: str | None = None
+    image_symptom: str | None = None
 
 
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
@@ -379,7 +391,8 @@ def _advance_complaint(
         )
         previous_symptom = previous.symptom if previous else None
 
-    current_symptom = interpretation.fields.symptom
+    image_symptom = _image_symptom(evidence.image_analysis)
+    current_symptom = interpretation.fields.symptom or image_symptom
     if not previous_symptom or previous_symptom == current_symptom:
         draft = draft.model_copy(
             update={"symptom": current_symptom or previous_symptom}
@@ -390,6 +403,7 @@ def _advance_complaint(
         missing_fields=_missing_fields(draft),
         previous_symptom=previous_symptom,
         current_symptom=current_symptom,
+        image_symptom=image_symptom,
     )
 
 
@@ -401,6 +415,7 @@ def _generate_turn_finalization(
     messages = TURN_FINALIZATION_PROMPT.format_messages(
         previous_symptom=json.dumps(progress.previous_symptom, ensure_ascii=False),
         current_symptom=json.dumps(progress.current_symptom, ensure_ascii=False),
+        image_summary=json.dumps(progress.image_symptom, ensure_ascii=False),
         current_message=json.dumps(evidence.message_text, ensure_ascii=False),
         next_action=next_action,
     )
@@ -430,9 +445,16 @@ def _finalize_turn(
         return _build_switch_confirmation_turn(progress.draft, interpretation.fields)
 
     symptom_merge_needed = bool(
-        progress.previous_symptom
-        and progress.current_symptom
-        and progress.previous_symptom != progress.current_symptom
+        (
+            progress.previous_symptom
+            and progress.current_symptom
+            and progress.previous_symptom != progress.current_symptom
+        )
+        or (
+            progress.image_symptom
+            and evidence.interpretation.fields.symptom
+            and progress.image_symptom != evidence.interpretation.fields.symptom
+        )
     )
     asked = progress.missing_fields[0] if progress.missing_fields else None
     if not symptom_merge_needed and asked is None:

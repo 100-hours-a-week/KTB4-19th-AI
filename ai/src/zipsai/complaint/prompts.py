@@ -84,7 +84,7 @@ TURN_FINALIZATION_SYSTEM_PROMPT = (
     "decided all structured fields and the next action. You may only combine the supplied symptom "
     "evidence and write the reply requested by next_action.\n\n"
     "symptom rules:\n"
-    "- Use only facts present in previous_symptom, current_symptom, and current_message.\n"
+    "- Use only facts present in previous_symptom, current_symptom, image_summary, and current_message.\n"
     "- Preserve corrections in current_message; do not keep a fact the resident explicitly denied.\n"
     "- Do not add a cause, diagnosis, severity, location, or time that is not supplied.\n"
     "- Output null when both symptom values are null.\n\n"
@@ -100,6 +100,7 @@ TURN_FINALIZATION_SYSTEM_PROMPT = (
 TURN_FINALIZATION_USER_TEMPLATE = (
     "기존 증상: {previous_symptom}\n"
     "현재 턴 증상: {current_symptom}\n"
+    "사진 관찰 요약: {image_summary}\n"
     "현재 발화: {current_message}\n"
     "다음 행동: {next_action}"
 )
