@@ -2,7 +2,7 @@ import pytest
 from qdrant_client import models
 
 import zipsai.knowledge.node as node_module
-from zipsai.contracts.converse import ConverseRequest
+from zipsai.contracts.converse import ConverseRequest, ImageAnalysis, ImageObservation
 from zipsai.knowledge.node import (
     EMPTY_QUESTION_REPLY,
     NO_EVIDENCE_REPLY,
@@ -12,7 +12,11 @@ from zipsai.knowledge.node import (
 from zipsai.settings import EMBEDDING_DIM
 
 
-def _request(text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?") -> ConverseRequest:
+def _request(
+    text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?",
+    *,
+    history: list[dict[str, object]] | None = None,
+) -> ConverseRequest:
     return ConverseRequest.model_validate(
         {
             "building_id": 1,
@@ -26,9 +30,9 @@ def _request(text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?")
             "message": {
                 "message_id": "m-1",
                 "text": text,
-                "image_urls": [] if text else ["https://example.com/a.jpg"],
+                "images": [],
             },
-            "conversation_history": [],
+            "conversation_history": history or [],
             "complaint_draft": None,
         }
     )
@@ -52,6 +56,8 @@ class Spy:
         self.encode_calls = 0
         self.search_calls = 0
         self.generate_calls = 0
+        self.encoded_questions: list[str] = []
+        self.prompt_inputs: list[dict[str, object]] = []
 
 
 @pytest.fixture
@@ -60,6 +66,7 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
 
     def encode(_question: str, *, encoder: object, trace_id: str):
         counter.encode_calls += 1
+        counter.encoded_questions.append(_question)
         return [0.0] * EMBEDDING_DIM, {"7": 0.5}
 
     monkeypatch.setattr(node_module, "get_client", lambda: object())
@@ -79,8 +86,9 @@ def _stub_search(
 
 
 def _stub_llm(monkeypatch: pytest.MonkeyPatch, spy: Spy, answer: str) -> None:
-    def generate(**_kwargs: object) -> str:
+    def generate(**kwargs: object) -> str:
         spy.generate_calls += 1
+        spy.prompt_inputs.append(kwargs)
         return answer
 
     monkeypatch.setattr(node_module, "generate_text", generate)
@@ -208,3 +216,53 @@ def test_asks_for_the_question_instead_of_filing_an_empty_card(
     assert spy.encode_calls == 0
     assert spy.search_calls == 0
     assert spy.generate_calls == 0
+
+
+def test_uses_new_image_analysis_as_search_context(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(
+        monkeypatch,
+        spy,
+        [_chunk("음식물 쓰레기는 전용 수거함에 버립니다.", title="음식물 배출 안내")],
+    )
+    _stub_llm(monkeypatch, spy, "음식물 쓰레기 전용 수거함에 버리면 됩니다.")
+    analysis = ImageAnalysis(
+        images=[
+            ImageObservation(
+                attachmentId=123, summary="돼지껍데기 조각", ocrText="음식물"
+            )
+        ]
+    )
+
+    result = handle_knowledge(
+        _request("이거 어디다 버려요?"), image_analysis=analysis
+    )
+
+    assert spy.encoded_questions == [
+        "이거 어디다 버려요?\n사진 맥락: 돼지껍데기 조각; 음식물"
+    ]
+    user_prompt = str(spy.prompt_inputs[0]["user_prompt"])
+    assert "질문: 이거 어디다 버려요?" in user_prompt
+    assert "사진 분석 맥락: 돼지껍데기 조각; 음식물" in user_prompt
+    assert result["reply"] == "음식물 쓰레기 전용 수거함에 버리면 됩니다."
+
+
+def test_uses_prior_user_question_for_photo_only_followup(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [])
+    history = [
+        {"message_id": "m1", "role": "user", "text": "돼지껍데기는 어디 버려요?"},
+        {"message_id": "m2", "role": "assistant", "text": "사진을 보내주시겠어요?"},
+    ]
+    analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=123, summary="돼지껍데기", ocrText=None)]
+    )
+
+    result = handle_knowledge(_request(None, history=history), image_analysis=analysis)
+
+    assert spy.encoded_questions == [
+        "돼지껍데기는 어디 버려요?\n사진 맥락: 돼지껍데기"
+    ]
+    assert result["result"].qa_card_draft.question == "돼지껍데기는 어디 버려요?"

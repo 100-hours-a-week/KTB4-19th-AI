@@ -153,7 +153,7 @@ def test_graph_leaves_complaint_when_intent_reclassifies_mid_collection(
     monkeypatch.setattr(
         graph_module,
         "handle_knowledge",
-        lambda _req: {
+        lambda _req, **_kwargs: {
             "complaint_state": None,
             "reply": "22시까지 이용할 수 있습니다.",
             "result": RouteResult(),
@@ -208,3 +208,54 @@ def test_graph_propagates_intent_classification_failure(
 
     with pytest.raises(LlmUnavailableError):
         build_graph().invoke(_make_state(None))
+
+
+def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.MonkeyPatch):
+    state = _make_state(Route.KNOWLEDGE)
+    received: list[object] = []
+
+    def classify(_state: AgentState) -> dict[str, object]:
+        from zipsai.contracts.converse import ImageAnalysis, ImageObservation
+
+        return {
+            "route": Route.KNOWLEDGE,
+            "image_analysis": ImageAnalysis(
+                images=[ImageObservation(attachmentId=123, summary="세탁기")]
+            ),
+        }
+
+    def knowledge(_request: ConverseRequest, *, image_analysis=None):
+        received.append(image_analysis)
+        return {"reply": "안내", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "classify_intent", classify)
+    monkeypatch.setattr(graph_module, "handle_knowledge", knowledge)
+
+    result = build_graph().invoke(state)
+
+    assert received[0].images[0].attachment_id == 123
+    assert result["result"].image_analysis == received[0]
+
+
+def test_graph_passes_intent_image_analysis_to_complaint(monkeypatch: pytest.MonkeyPatch):
+    state = _make_state(Route.COMPLAINT)
+    analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
+    )
+    received: list[object] = []
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.COMPLAINT, "image_analysis": analysis},
+    )
+
+    def complaint(_request: ConverseRequest, *, image_analysis=None):
+        received.append(image_analysis)
+        return {"reply": "확인", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "handle_complaint", complaint)
+
+    build_graph().invoke(state)
+
+    assert received == [analysis]
