@@ -19,7 +19,9 @@ def select_next_node(state: AgentState) -> str:
 
 
 def _run_complaint(state: AgentState) -> dict[str, object]:
-    result = handle_complaint(state["request"]) or {}
+    result = handle_complaint(
+        state["request"], image_analysis=state.get("image_analysis")
+    ) or {}
     return {"route": Route.COMPLAINT, **result}
 
 

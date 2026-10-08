@@ -5,6 +5,8 @@ import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
     ComplaintState,
     ConverseRequest,
+    ImageAnalysis,
+    ImageObservation,
     Route,
     RouteResult,
 )
@@ -31,7 +33,7 @@ def _make_request(
             "message": {
                 "message_id": "msg-001",
                 "text": "도와주세요",
-                "image_urls": [],
+                "images": [],
             },
             "conversation_history": [],
             "complaint_draft": None,
@@ -80,8 +82,9 @@ def test_graph_invokes_feature_handler_for_selected_route(
     state = _make_state(route)
     handled_requests: list[ConverseRequest] = []
 
-    def handler(request: ConverseRequest) -> None:
+    def handler(request: ConverseRequest, **_kwargs: object) -> dict[str, object]:
         handled_requests.append(request)
+        return {"reply": "ok", "result": RouteResult()}
 
     monkeypatch.setattr(graph_module, handler_name, handler)
     monkeypatch.setattr(graph_module, "classify_intent", _stub_classify_intent)
@@ -109,7 +112,7 @@ def test_graph_classifies_intent_even_when_complaint_in_progress(
     classified: list[ConverseRequest] = []
     handled_requests: list[ConverseRequest] = []
 
-    def handler(req: ConverseRequest) -> dict[str, object]:
+    def handler(req: ConverseRequest, **_kwargs: object) -> dict[str, object]:
         handled_requests.append(req)
         return {
             "complaint_state": ComplaintState.COLLECTING,
@@ -136,7 +139,9 @@ def test_graph_leaves_complaint_when_intent_reclassifies_mid_collection(
 ):
     state = _collecting_state()
 
-    def unexpected_complaint(_req: ConverseRequest) -> dict[str, object]:
+    def unexpected_complaint(
+        _req: ConverseRequest, **_kwargs: object
+    ) -> dict[str, object]:
         raise AssertionError("complaint must not run once intent left the route")
 
     monkeypatch.setattr(graph_module, "handle_complaint", unexpected_complaint)
