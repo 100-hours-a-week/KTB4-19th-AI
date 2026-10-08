@@ -28,7 +28,7 @@ def test_converse_request_accepts_real_example():
         "message": {
             "message_id": "msg-003",
             "text": None,
-            "image_urls": ["https://example.com/leak.jpg"],
+            "images": [{"attachmentId": 1, "url": "https://example.com/leak.jpg"}],
         },
         "conversation_history": [],
         "complaint_draft": None,
@@ -52,7 +52,6 @@ def test_converse_request_rejects_complaint_state_for_non_complaint_route():
                 "message": {
                     "message_id": "msg-001",
                     "text": "주차는요?",
-                    "image_urls": [],
                 },
                 "conversation_history": [],
                 "complaint_draft": None,
@@ -75,7 +74,6 @@ def test_converse_request_rejects_legacy_conversation_state_field():
                 "message": {
                     "message_id": "msg-001",
                     "text": "주차는요?",
-                    "image_urls": [],
                 },
                 "conversation_history": [],
                 "complaint_draft": None,
@@ -89,7 +87,6 @@ def test_incoming_message_rejects_legacy_user_action_field():
             {
                 "message_id": "msg-001",
                 "text": "민원 접수해주세요",
-                "image_urls": [],
                 "user_action": "REQUEST_REGISTER",
             }
         )
@@ -105,15 +102,18 @@ def test_incoming_message_accepts_presigned_s3_url_with_allowed_extension():
         {
             "message_id": "msg-001",
             "text": None,
-            "image_urls": [
-                (
-                    "https://zipsai-dev-uploads.s3.ap-northeast-2.amazonaws.com/"
-                    "leak.PNG?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300"
-                )
+            "images": [
+                {
+                    "attachmentId": 1,
+                    "url": (
+                        "https://zipsai-dev-uploads.s3.ap-northeast-2.amazonaws.com/"
+                        "leak.PNG?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=300"
+                    ),
+                }
             ],
         }
     )
-    assert message.image_urls[0].endswith("X-Amz-Expires=300")
+    assert message.images[0].url.endswith("X-Amz-Expires=300")
 
 
 def test_incoming_message_rejects_unsupported_image_extension():
@@ -122,7 +122,7 @@ def test_incoming_message_rejects_unsupported_image_extension():
             {
                 "message_id": "msg-001",
                 "text": None,
-                "image_urls": ["https://example.com/leak.gif"],
+                "images": [{"attachmentId": 1, "url": "https://example.com/leak.gif"}],
             }
         )
 
@@ -162,14 +162,12 @@ def test_history_and_citation_follow_api_contract():
             "message": {
                 "message_id": "msg-002",
                 "text": "점검 일정은요?",
-                "image_urls": [],
             },
             "conversation_history": [
                 {
                     "message_id": "msg-001",
                     "role": "assistant",
                     "text": None,
-                    "image_urls": ["https://example.com/image.jpg"],
                 }
             ],
             "complaint_draft": None,
@@ -201,7 +199,7 @@ def test_agent_state_keeps_request_route_and_complaint_state():
             "message": {
                 "message_id": "msg-001",
                 "text": None,
-                "image_urls": ["https://example.com/image.jpg"],
+                "images": [{"attachmentId": 1, "url": "https://example.com/image.jpg"}],
             },
             "conversation_history": [],
             "complaint_draft": None,

@@ -8,7 +8,12 @@ from openai import (
 )
 from pydantic import BaseModel
 
-from zipsai.contracts.converse import ImageAnalysis, ImageAttachment, ImageObservation, Route
+from zipsai.contracts.converse import (
+    ImageAnalysis,
+    ImageAttachment,
+    ImageObservation,
+    Route,
+)
 from zipsai.errors import (
     ImageAnalysisError,
     LlmRateLimitedError,
