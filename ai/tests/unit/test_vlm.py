@@ -11,6 +11,7 @@ from openai import (
     RateLimitError,
 )
 
+from zipsai.contracts.converse import ImageAttachment, Route
 from zipsai.errors import (
     ImageAnalysisError,
     LlmRateLimitedError,
@@ -19,11 +20,15 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.integrations import vlm as vlm_module
-from zipsai.integrations.vlm import _ModelImages, _ModelObservation
+from zipsai.integrations.vlm import _ModelIntentAndImages, _ModelObservation
 from zipsai.settings import Settings
 
-_PROMPT = "analyze"
-_IMAGE_URL = "https://zipsai-dev-uploads.s3.ap-northeast-2.amazonaws.com/leak.jpg?X-Amz-Signature=abc"
+_SYSTEM_PROMPT = "classify and analyze"
+_USER_PROMPT = "세탁기 밑으로 물이 새요"
+_IMAGE = ImageAttachment(
+    attachmentId=123,
+    url="https://zipsai-dev-uploads.s3.ap-northeast-2.amazonaws.com/leak.jpg?signature=abc",
+)
 
 
 def _request() -> httpx.Request:
@@ -37,7 +42,7 @@ def _response(
 
 
 def _fake_parse_client(
-    parsed: _ModelImages | None,
+    parsed: _ModelIntentAndImages | None,
     calls: list[dict[str, object]] | None = None,
     refusal: str | None = None,
 ) -> SimpleNamespace:
@@ -64,84 +69,73 @@ def _use_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-# --- analyze_images: response parsing -----------------------------------
+def _classify(images: list[ImageAttachment] | None = None):
+    return vlm_module.classify_and_analyze(
+        [_IMAGE] if images is None else images,
+        system_prompt=_SYSTEM_PROMPT,
+        user_prompt=_USER_PROMPT,
+    )
 
 
-def test_analyze_images_returns_typed_observations(monkeypatch):
+def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypatch):
     calls: list[dict[str, object]] = []
+    parsed = _ModelIntentAndImages(
+        route=Route.COMPLAINT,
+        images=[_ModelObservation(summary="세탁기 아래 물이 고여 있음", ocr_text="E1")],
+    )
     monkeypatch.setattr(
-        vlm_module,
-        "_get_client",
-        lambda *_: _fake_parse_client(
-            _ModelImages(
-                images=[_ModelObservation(summary="세탁기 표시창이 켜져 있음", ocr_text="E1")]
-            ),
-            calls,
-        ),
+        vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
     )
     _use_settings(monkeypatch)
 
-    result = vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+    route, analysis = _classify()
 
-    assert result.model_dump() == {
-        "images": [
-            {
-                "url": _IMAGE_URL,
-                "summary": "세탁기 표시창이 켜져 있음",
-                "ocr_text": "E1",
-            }
-        ]
+    assert route is Route.COMPLAINT
+    assert analysis.model_dump() == {
+        "images": [{"attachment_id": 123, "summary": "세탁기 아래 물이 고여 있음", "ocr_text": "E1"}]
     }
-    assert calls[0]["messages"][0] == {"role": "system", "content": _PROMPT}
-    assert calls[0]["messages"][1]["content"][0] == {
-        "type": "image_url",
-        "image_url": {"url": _IMAGE_URL},
-    }
-    assert calls[0]["response_format"] is _ModelImages
+    assert calls[0]["messages"][0] == {"role": "system", "content": _SYSTEM_PROMPT}
+    assert calls[0]["messages"][1]["content"] == [
+        {"type": "text", "text": _USER_PROMPT},
+        {"type": "image_url", "image_url": {"url": _IMAGE.url}},
+    ]
+    assert calls[0]["response_format"] is _ModelIntentAndImages
 
 
-def test_analyze_images_rejects_refusal(monkeypatch):
+def test_classify_and_analyze_supports_text_only_intent(monkeypatch):
+    calls: list[dict[str, object]] = []
+    parsed = _ModelIntentAndImages(route=Route.KNOWLEDGE, images=[])
     monkeypatch.setattr(
-        vlm_module,
-        "_get_client",
-        lambda *_: _fake_parse_client(None, refusal="이 이미지는 분석할 수 없습니다"),
+        vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
     )
     _use_settings(monkeypatch)
 
-    with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+    route, analysis = _classify([])
+
+    assert route is Route.KNOWLEDGE
+    assert analysis.images == []
+    assert calls[0]["messages"][1]["content"] == [
+        {"type": "text", "text": _USER_PROMPT}
+    ]
 
 
-def test_analyze_images_rejects_when_nothing_parsed(monkeypatch):
-    """refusal 없이도 parsed가 None이면(스키마 불일치 등) 실패로 취급한다."""
-    monkeypatch.setattr(vlm_module, "_get_client", lambda *_: _fake_parse_client(None))
+@pytest.mark.parametrize(
+    "client",
+    [
+        lambda: _fake_parse_client(None, refusal="blocked"),
+        lambda: _fake_parse_client(None),
+        _fake_empty_client,
+        lambda: _fake_parse_client(_ModelIntentAndImages(route=Route.CLARIFY, images=[])),
+    ],
+)
+def test_classify_and_analyze_rejects_refusal_invalid_or_mismatched_response(
+    monkeypatch: pytest.MonkeyPatch, client
+):
+    monkeypatch.setattr(vlm_module, "_get_client", lambda *_: client())
     _use_settings(monkeypatch)
 
     with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_analyze_images_rejects_empty_model_response(monkeypatch):
-    monkeypatch.setattr(vlm_module, "_get_client", lambda *_: _fake_empty_client())
-    _use_settings(monkeypatch)
-
-    with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_analyze_images_rejects_observation_count_mismatch(monkeypatch):
-    monkeypatch.setattr(
-        vlm_module,
-        "_get_client",
-        lambda *_: _fake_parse_client(_ModelImages(images=[])),
-    )
-    _use_settings(monkeypatch)
-
-    with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-# --- analyze_images: OpenAI error mapping -------------------------------
+        _classify()
 
 
 class _FakeCompletions:
@@ -164,59 +158,27 @@ def _use_fake_completions_client(
     _use_settings(monkeypatch)
 
 
-def test_rate_limit_error_maps_to_llm_rate_limited(monkeypatch):
-    error = RateLimitError("rate limited", response=_response(429), body=None)
+@pytest.mark.parametrize(
+    ("error", "error_type"),
+    [
+        (RateLimitError("rate limited", response=_response(429), body=None), LlmRateLimitedError),
+        (APITimeoutError(_request()), LlmTimeoutError),
+        (APIStatusError("bad gateway", response=_response(502), body=None), LlmUpstreamError),
+        (APIStatusError("bad request", response=_response(400), body=None), LlmUnavailableError),
+        (APIConnectionError(request=_request()), LlmUnavailableError),
+        (
+            LengthFinishReasonError(
+                completion=SimpleNamespace(usage=SimpleNamespace(completion_tokens_details=None))
+            ),
+            ImageAnalysisError,
+        ),
+        (ContentFilterFinishReasonError(), ImageAnalysisError),
+    ],
+)
+def test_provider_errors_keep_their_existing_error_mapping(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, error_type: type[Exception]
+):
     _use_fake_completions_client(monkeypatch, error)
 
-    with pytest.raises(LlmRateLimitedError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_timeout_error_maps_to_llm_timeout(monkeypatch):
-    _use_fake_completions_client(monkeypatch, APITimeoutError(_request()))
-
-    with pytest.raises(LlmTimeoutError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_upstream_5xx_maps_to_llm_upstream_error(monkeypatch):
-    error = APIStatusError("bad gateway", response=_response(502), body=None)
-    _use_fake_completions_client(monkeypatch, error)
-
-    with pytest.raises(LlmUpstreamError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_client_side_status_error_maps_to_llm_unavailable(monkeypatch):
-    error = APIStatusError("bad request", response=_response(400), body=None)
-    _use_fake_completions_client(monkeypatch, error)
-
-    with pytest.raises(LlmUnavailableError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_connection_error_maps_to_llm_unavailable(monkeypatch):
-    _use_fake_completions_client(monkeypatch, APIConnectionError(request=_request()))
-
-    with pytest.raises(LlmUnavailableError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_length_finish_reason_maps_to_image_analysis_error(monkeypatch):
-    error = LengthFinishReasonError(
-        completion=SimpleNamespace(
-            usage=SimpleNamespace(completion_tokens_details=None)
-        )
-    )
-    _use_fake_completions_client(monkeypatch, error)
-
-    with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
-
-
-def test_content_filter_finish_reason_maps_to_image_analysis_error(monkeypatch):
-    error = ContentFilterFinishReasonError()
-    _use_fake_completions_client(monkeypatch, error)
-
-    with pytest.raises(ImageAnalysisError):
-        vlm_module.analyze_images([_IMAGE_URL], _PROMPT)
+    with pytest.raises(error_type):
+        _classify()

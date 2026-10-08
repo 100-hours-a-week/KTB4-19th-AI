@@ -8,7 +8,7 @@ from openai import (
 )
 from pydantic import BaseModel
 
-from zipsai.contracts.converse import ImageAnalysis, ImageObservation
+from zipsai.contracts.converse import ImageAnalysis, ImageAttachment, ImageObservation, Route
 from zipsai.errors import (
     ImageAnalysisError,
     LlmRateLimitedError,
@@ -30,22 +30,31 @@ class _ModelImages(BaseModel):
     images: list[_ModelObservation]
 
 
-def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
+class _ModelIntentAndImages(_ModelImages):
+    route: Route
+
+
+def classify_and_analyze(
+    images: list[ImageAttachment], *, system_prompt: str, user_prompt: str
+) -> tuple[Route, ImageAnalysis]:
     settings = get_settings()
-    image_content = [
-        {"type": "image_url", "image_url": {"url": url}} for url in image_urls
-    ]
+    content: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": image.url}}
+        for image in images
+        if image.url
+    )
     try:
         response = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
         ).chat.completions.parse(
             model=settings.vlm_model,
             messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": image_content},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
             ],
-            **({"name": "analyze-images"} if get_tracing_client() else {}),
-            response_format=_ModelImages,
+            **({"name": "intent-and-image-analysis"} if get_tracing_client() else {}),
+            response_format=_ModelIntentAndImages,
             extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )
     except RateLimitError as error:
@@ -61,25 +70,20 @@ def analyze_images(image_urls: list[str], prompt: str) -> ImageAnalysis:
     except APIError as error:
         raise LlmUnavailableError("VLM request failed") from error
 
-    if not response.choices:
-        raise ImageAnalysisError("VLM returned an empty response")
-
-    message = response.choices[0].message
-    if message.refusal:
-        raise ImageAnalysisError(f"VLM refused to analyze the image: {message.refusal}")
-    parsed = message.parsed
-    if parsed is None:
-        raise ImageAnalysisError("VLM returned an invalid image analysis")
-
-    if len(parsed.images) != len(image_urls):
-        raise ImageAnalysisError(
-            "VLM returned observations that do not match input images"
-        )
-
-    # 모델 출력에는 URL을 요구하지 않고, 입력 순서로 원본 URL을 되붙인다.
-    return ImageAnalysis(
+    if not response.choices or response.choices[0].message.parsed is None:
+        raise ImageAnalysisError("VLM returned an invalid intent or image analysis")
+    if response.choices[0].message.refusal:
+        raise ImageAnalysisError("VLM refused intent or image analysis")
+    parsed = response.choices[0].message.parsed
+    if len(parsed.images) != len(images):
+        raise ImageAnalysisError("VLM returned observations that do not match input images")
+    return parsed.route, ImageAnalysis(
         images=[
-            ImageObservation(url=url, summary=obs.summary, ocr_text=obs.ocr_text)
-            for url, obs in zip(image_urls, parsed.images)
+            ImageObservation(
+                attachmentId=image.attachment_id,
+                summary=observation.summary,
+                ocrText=observation.ocr_text,
+            )
+            for image, observation in zip(images, parsed.images)
         ]
     )
