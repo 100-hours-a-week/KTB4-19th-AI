@@ -26,7 +26,10 @@ def _run_complaint(state: AgentState) -> dict[str, object]:
 
 
 def _run_knowledge(state: AgentState) -> dict[str, object]:
-    return handle_knowledge(state["request"])
+    result = handle_knowledge(
+        state["request"], image_analysis=state.get("image_analysis")
+    )
+    return _include_image_analysis(result, state)
 
 
 def _run_classify_intent(state: AgentState) -> dict[str, object]:
@@ -34,7 +37,17 @@ def _run_classify_intent(state: AgentState) -> dict[str, object]:
 
 
 def _run_clarify(state: AgentState) -> dict[str, object]:
-    return handle_clarify(state)
+    return _include_image_analysis(handle_clarify(state), state)
+
+
+def _include_image_analysis(
+    result: dict[str, object], state: AgentState
+) -> dict[str, object]:
+    analysis = state.get("image_analysis")
+    route_result = result.get("result")
+    if analysis and route_result:
+        result["result"] = route_result.model_copy(update={"image_analysis": analysis})
+    return result
 
 
 @lru_cache(maxsize=1)

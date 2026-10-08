@@ -16,6 +16,8 @@ def _request(
     text: str | None = "세탁실은 몇 시까지 쓸 수 있나요?",
     *,
     history: list[dict[str, object]] | None = None,
+    images: list[dict[str, object]] | None = None,
+    current_route: str = "knowledge",
 ) -> ConverseRequest:
     return ConverseRequest.model_validate(
         {
@@ -25,12 +27,12 @@ def _request(
             "conversation_id": "c-1",
             "turn_id": "t-1",
             "trace_id": "trace-1",
-            "current_route": "knowledge",
+            "current_route": current_route,
             "current_complaint_state": None,
             "message": {
                 "message_id": "m-1",
                 "text": text,
-                "images": [],
+                "images": images or [],
             },
             "conversation_history": history or [],
             "complaint_draft": None,
@@ -90,6 +92,19 @@ def _stub_llm(monkeypatch: pytest.MonkeyPatch, spy: Spy, answer: str) -> None:
         spy.generate_calls += 1
         spy.prompt_inputs.append(kwargs)
         return answer
+
+    monkeypatch.setattr(node_module, "generate_text", generate)
+
+
+def _stub_llm_sequence(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy, outputs: list[str]
+) -> None:
+    remaining = iter(outputs)
+
+    def generate(**kwargs: object) -> str:
+        spy.generate_calls += 1
+        spy.prompt_inputs.append(kwargs)
+        return next(remaining)
 
     monkeypatch.setattr(node_module, "generate_text", generate)
 
@@ -226,7 +241,11 @@ def test_uses_new_image_analysis_as_search_context(
         spy,
         [_chunk("음식물 쓰레기는 전용 수거함에 버립니다.", title="음식물 배출 안내")],
     )
-    _stub_llm(monkeypatch, spy, "음식물 쓰레기 전용 수거함에 버리면 됩니다.")
+    _stub_llm_sequence(
+        monkeypatch,
+        spy,
+        ["돼지껍데기는 음식물 쓰레기로 어디에 버리나요?", "음식물 쓰레기 전용 수거함에 버리면 됩니다."],
+    )
     analysis = ImageAnalysis(
         images=[
             ImageObservation(
@@ -236,15 +255,33 @@ def test_uses_new_image_analysis_as_search_context(
     )
 
     result = handle_knowledge(
-        _request("이거 어디다 버려요?"), image_analysis=analysis
+        _request(
+            "이거 어디다 버려요?",
+            history=[
+                {
+                    "message_id": "old-image",
+                    "role": "user",
+                    "text": "건조기가 멈췄어요.",
+                    "images": [
+                        {"attachmentId": 9, "summary": "건조기 화면 E3", "ocrText": "E3"}
+                    ],
+                }
+            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/photo.jpg"}],
+        ),
+        image_analysis=analysis,
     )
 
     assert spy.encoded_questions == [
-        "이거 어디다 버려요?\n사진 맥락: 돼지껍데기 조각; 음식물"
+        "돼지껍데기는 음식물 쓰레기로 어디에 버리나요?"
     ]
-    user_prompt = str(spy.prompt_inputs[0]["user_prompt"])
-    assert "질문: 이거 어디다 버려요?" in user_prompt
-    assert "사진 분석 맥락: 돼지껍데기 조각; 음식물" in user_prompt
+    rewrite_prompt = str(spy.prompt_inputs[0]["user_prompt"])
+    assert "질문: 이거 어디다 버려요?" in rewrite_prompt
+    assert "사진 분석 맥락: 돼지껍데기 조각; 음식물" in rewrite_prompt
+    assert "건조기 화면 E3" not in rewrite_prompt
+    answer_prompt = str(spy.prompt_inputs[1]["user_prompt"])
+    assert "질문: 돼지껍데기는 음식물 쓰레기로 어디에 버리나요?" in answer_prompt
+    assert "사진 분석 맥락:" not in answer_prompt
     assert result["reply"] == "음식물 쓰레기 전용 수거함에 버리면 됩니다."
 
 
@@ -252,6 +289,9 @@ def test_uses_prior_user_question_for_photo_only_followup(
     monkeypatch: pytest.MonkeyPatch, spy: Spy
 ) -> None:
     _stub_search(monkeypatch, spy, [])
+    _stub_llm_sequence(
+        monkeypatch, spy, ["돼지껍데기는 어디에 버리나요?"]
+    )
     history = [
         {"message_id": "m1", "role": "user", "text": "돼지껍데기는 어디 버려요?"},
         {"message_id": "m2", "role": "assistant", "text": "사진을 보내주시겠어요?"},
@@ -260,9 +300,95 @@ def test_uses_prior_user_question_for_photo_only_followup(
         images=[ImageObservation(attachmentId=123, summary="돼지껍데기", ocrText=None)]
     )
 
-    result = handle_knowledge(_request(None, history=history), image_analysis=analysis)
+    result = handle_knowledge(
+        _request(
+            None,
+            history=history,
+            images=[{"attachmentId": 123, "url": "https://example.com/photo.jpg"}],
+        ),
+        image_analysis=analysis,
+    )
 
     assert spy.encoded_questions == [
-        "돼지껍데기는 어디 버려요?\n사진 맥락: 돼지껍데기"
+        "돼지껍데기는 어디에 버리나요?"
     ]
-    assert result["result"].qa_card_draft.question == "돼지껍데기는 어디 버려요?"
+    assert result["result"].qa_card_draft.question == spy.encoded_questions[0]
+
+
+def test_uses_images_from_the_latest_user_turn_for_a_later_question(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [])
+    _stub_llm_sequence(monkeypatch, spy, ["건조기 E3 오류는 무엇을 뜻하나요?"])
+    history = [
+        {
+            "message_id": "m1",
+            "role": "user",
+            "text": "이거 어디 버려요?",
+            "images": [{"attachmentId": 1, "summary": "돼지껍데기"}],
+        },
+        {"message_id": "m2", "role": "assistant", "text": "음식물로 배출하세요."},
+        {
+            "message_id": "m3",
+            "role": "user",
+            "text": "건조기가 멈췄어요.",
+            "images": [{"attachmentId": 2, "summary": "건조기 화면 E3", "ocrText": "E3"}],
+        },
+        {"message_id": "m4", "role": "assistant", "text": "어떤 점이 궁금하신가요?"},
+    ]
+
+    result = handle_knowledge(
+        _request("이 오류가 무슨 뜻이에요?", history=history, current_route="clarify")
+    )
+
+    assert spy.encoded_questions == ["건조기 E3 오류는 무엇을 뜻하나요?"]
+    rewrite_prompt = str(spy.prompt_inputs[0]["user_prompt"])
+    assert "사진 첨부 때 발화: 건조기가 멈췄어요." in rewrite_prompt
+    assert "건조기 화면 E3; E3" in rewrite_prompt
+    assert "돼지껍데기" not in rewrite_prompt
+    assert result["result"].qa_card_draft.question == spy.encoded_questions[0]
+
+
+def test_ignores_older_images_when_the_latest_user_turn_has_no_image(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [])
+    history = [
+        {
+            "message_id": "m1",
+            "role": "user",
+            "text": "이거 어디 버려요?",
+            "images": [{"attachmentId": 1, "summary": "돼지껍데기"}],
+        },
+        {"message_id": "m2", "role": "assistant", "text": "음식물로 배출하세요."},
+        {"message_id": "m3", "role": "user", "text": "주차 등록은 어디서 해요?"},
+    ]
+
+    result = handle_knowledge(_request("등록 방법을 알려주세요.", history=history))
+
+    assert spy.encoded_questions == ["등록 방법을 알려주세요."]
+    assert spy.generate_calls == 0
+    assert result["result"].qa_card_draft.question == "등록 방법을 알려주세요."
+
+
+def test_does_not_use_history_images_without_a_clarification_followup(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [])
+    history = [
+        {
+            "message_id": "m1",
+            "role": "user",
+            "text": "이거 어디 버려요?",
+            "images": [{"attachmentId": 1, "summary": "돼지껍데기"}],
+        },
+        {"message_id": "m2", "role": "assistant", "text": "음식물로 배출하세요."},
+    ]
+
+    result = handle_knowledge(
+        _request("주차 등록은 어디서 해요?", history=history, current_route="knowledge")
+    )
+
+    assert spy.encoded_questions == ["주차 등록은 어디서 해요?"]
+    assert spy.generate_calls == 0
+    assert result["result"].qa_card_draft.question == "주차 등록은 어디서 해요?"

@@ -7,6 +7,7 @@ from zipsai.contracts.converse import (
     ConverseRequest,
     ImageAnalysis,
     QaCardDraft,
+    Route,
     RouteResult,
 )
 from zipsai.integrations.llm import generate_text
@@ -38,22 +39,41 @@ SNIPPET_LENGTH = 200
 def handle_knowledge(
     request: ConverseRequest, image_analysis: ImageAnalysis | None = None
 ) -> dict[str, object]:
-    question = (request.message.text or "").strip() or next(
-        (
-            (turn.text or "").strip()
-            for turn in reversed(request.conversation_history)
-            if turn.role == "user" and (turn.text or "").strip()
-        ),
-        "",
-    )
+    question = (request.message.text or "").strip()
+    if not question and request.message.images:
+        question = next(
+            (
+                (turn.text or "").strip()
+                for turn in reversed(request.conversation_history)
+                if turn.role == "user" and (turn.text or "").strip()
+            ),
+            "",
+        )
     if not question:
         for name in ("encode", "gate", "hybrid", "context", "generate"):
             skipped(name, logger, skip_reason="empty_question")
         return _fallback(request, reason="empty_question", reply=EMPTY_QUESTION_REPLY)
 
+    previous_image_turn = None
+    image_observations = image_analysis.images if image_analysis else []
+    if (
+        not request.message.images
+        and request.message.text
+        and request.current_route is Route.CLARIFY
+    ):
+        previous_image_turn = next(
+            (
+                turn
+                for turn in reversed(request.conversation_history)
+                if turn.role == "user"
+            ),
+            None,
+        )
+        image_observations = previous_image_turn.images or [] if previous_image_turn else []
+
     observations = [
         value.strip()
-        for image in (image_analysis.images if image_analysis else [])
+        for image in image_observations
         for value in (image.summary, image.ocr_text)
         if value and value.strip()
     ]
@@ -61,9 +81,15 @@ def handle_knowledge(
     search_question = question
     if image_context:
         with stage("query_rewrite", logger) as step:
+            prompt_parts = [f"질문: {question}"]
+            if previous_image_turn and previous_image_turn.text:
+                prompt_parts.append(
+                    f"사진 첨부 때 발화: {previous_image_turn.text.strip()}"
+                )
+            prompt_parts.append(f"사진 분석 맥락: {image_context}")
             rewritten = generate_text(
                 system_prompt=IMAGE_QUESTION_PROMPT,
-                user_prompt=f"질문: {question}\n사진 분석 맥락: {image_context}",
+                user_prompt="\n".join(prompt_parts),
                 usage_sink=step,
             ).strip()
             search_question = rewritten or question
