@@ -1,9 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Route(str, Enum):
@@ -33,19 +33,6 @@ def _require_complaint_state_only_for_complaint_route(
         raise ValueError(f"{field_name} requires route=complaint")
 
 
-_ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
-
-
-def _check_image_extensions(urls: list[str]) -> list[str]:
-    for url in urls:
-        extension = urlparse(url).path.rsplit(".", 1)[-1].lower()
-        if extension not in _ALLOWED_IMAGE_EXTENSIONS:
-            raise ValueError(f"Unsupported image extension: {url}")
-    return urls
-
-
-ImageUrls = Annotated[list[str], AfterValidator(_check_image_extensions)]
-
 IssueType = Literal[
     "water_supply",
     "drain",
@@ -62,18 +49,29 @@ MissingField = Literal["location", "symptom"]
 CitationSource = Literal["building_document", "qa_history", "web"]
 
 
+class ImageObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    attachment_id: int = Field(alias="attachmentId")
+    summary: str | None = None
+    ocr_text: str | None = Field(default=None, alias="ocrText")
+
+
+class ImageAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    attachment_id: int = Field(alias="attachmentId")
+    url: str
+
+
 class ComplaintDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     issue_type: IssueType | None = None
     location: str | None = None
     symptom: str | None = None
     occurred_at: datetime | None = None
-    image_urls: list[str] = Field(default_factory=list)
-
-
-class ImageObservation(BaseModel):
-    url: str
-    summary: str | None
-    ocr_text: str | None
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
 class ImageAnalysis(BaseModel):
@@ -85,14 +83,28 @@ class IncomingMessage(BaseModel):
 
     message_id: str
     text: str | None
-    image_urls: ImageUrls
+    images: list[ImageAttachment] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_images(self) -> "IncomingMessage":
+        for image in self.images:
+            extension = urlparse(image.url).path.rsplit(".", 1)[-1].lower()
+            if extension not in {"jpg", "jpeg", "png", "webp"}:
+                raise ValueError(f"Unsupported image extension: {image.url}")
+        return self
 
 
 class HistoryTurn(BaseModel):
     message_id: str
     role: Literal["user", "assistant"]
     text: str | None
-    image_urls: ImageUrls
+    images: list[ImageObservation] | None = None
+
+    @model_validator(mode="after")
+    def validate_images_role(self) -> "HistoryTurn":
+        if self.role == "assistant" and "images" in self.model_fields_set:
+            raise ValueError("Assistant history turns must not include images")
+        return self
 
 
 class ConverseRequest(BaseModel):
