@@ -93,11 +93,15 @@ def test_complaint_exact_match_and_invention_count() -> None:
             score_m.ComplaintRow(
                 "invent", False, True, True, True, False, "other", False
             ),
-        ]
+        ],
+        total_turns=2,
+        retry_turns=0,
+        retry_events=0,
     )
 
     assert metrics["M1"] == pytest.approx(3 / 4)
     assert metrics["M2"] == pytest.approx(1)
+    assert metrics["M7"] == 0
     assert metrics["M8"] == 1
     assert metrics["M9"] == pytest.approx(1 / 2)
 

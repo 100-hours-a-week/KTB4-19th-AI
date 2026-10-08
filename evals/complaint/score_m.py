@@ -1,12 +1,15 @@
-"""M1·M2·M4·M5·M6·M8·M9 집계. 네트워크와 모델 호출은 없다.
+"""M1·M2·M4·M5·M6·M7·M8·M9 집계. 네트워크와 모델 호출은 없다.
 
 위치·증상·유형은 앞뒤 공백을 뺀 완전 일치다. 빈 기대는 빈 결과만 맞다.
 M8은 빈 기대를 결과가 채운 필드 수다.
 실패한 호출은 맞춘 수에서 빠지고 분모에는 남는다.
 
-M3(LLM 재질문 채택률)과 M7(추출 재시도율)은 로컬 38문항 벤치마크에 그 신호가
-없어 여기서 집계하지 않는다(A-200-00 §2·§4) — M3는 운영 로그로만, M7은
-로컬 러너 아직 미구현.
+M7(추출 재시도율)은 재시도가 발생한 턴 수 ÷ 전체 추출 턴 수다(턴 단위로
+중복 제거). 한 턴에서 재시도가 여러 번 나도 분자는 1만 올라가고, 원본
+이벤트 수는 retry_events로 따로 남긴다 — run_m1.py가 로그를 캡처해 넘긴다.
+
+M3(LLM 재질문 채택률)은 로컬 38문항 벤치마크에 그 신호가 없어 여기서
+집계하지 않는다(A-200-00 §2·§4) — 운영 로그로만 집계한다.
 """
 
 from __future__ import annotations
@@ -63,7 +66,13 @@ def summary_ok(summary: object, must_include: list[str], must_not: list[str]) ->
     )
 
 
-def aggregate_complaints(rows: list[ComplaintRow]) -> dict[str, object]:
+def aggregate_complaints(
+    rows: list[ComplaintRow],
+    *,
+    total_turns: int,
+    retry_turns: int,
+    retry_events: int,
+) -> dict[str, object]:
     n = len(rows)
     location_ok = sum(1 for row in rows if row.location_ok and not row.failed)
     symptom_ok = sum(1 for row in rows if row.symptom_ok and not row.failed)
@@ -79,6 +88,10 @@ def aggregate_complaints(rows: list[ComplaintRow]) -> dict[str, object]:
         "symptom_ok": symptom_ok,
         "M2": (type_ok / n) if n else None,
         "type_ok": type_ok,
+        "M7": (retry_turns / total_turns) if total_turns else None,
+        "retry_turns": retry_turns,
+        "retry_events": retry_events,
+        "total_turns": total_turns,
         "M8": invented,
         "M9": (other / n) if n else None,
         "other": other,
@@ -123,6 +136,11 @@ def format_complaint_report(metrics: dict[str, object]) -> str:
             f"/{int(metrics['n']) * 2})"
         ),
         f"M2 택소노미 {_fmt(metrics['M2'])}  ({metrics['type_ok']}/{metrics['n']})",
+        (
+            f"M7 추출 재시도율 {_fmt(metrics['M7'])}  "
+            f"({metrics['retry_turns']}/{metrics['total_turns']}, "
+            f"이벤트 {metrics['retry_events']}건)"
+        ),
         f"M8 필드 환각 {metrics['M8']}건",
         f"M9 other 도피율 {_fmt(metrics['M9'])}  ({metrics['other']}/{metrics['n']})",
         f"실패 {metrics['failed']}",
