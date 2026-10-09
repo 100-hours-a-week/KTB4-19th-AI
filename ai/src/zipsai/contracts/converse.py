@@ -74,6 +74,10 @@ class ComplaintDraft(BaseModel):
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
+class CompletedComplaintDraft(ComplaintDraft):
+    representative_attachment_id: int | None = None
+
+
 class ImageAnalysis(BaseModel):
     images: list[ImageObservation]
 
@@ -153,7 +157,7 @@ class Citation(BaseModel):
 
 
 class RouteResult(BaseModel):
-    complaint_draft: ComplaintDraft | None = None
+    complaint_draft: CompletedComplaintDraft | ComplaintDraft | None = None
     qa_card_draft: QaCardDraft | None = None
     missing_fields: list[MissingField] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)

@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
@@ -13,6 +14,7 @@ from zipsai.complaint.prompts import (
 )
 from zipsai.contracts.converse import (
     ComplaintDraft,
+    CompletedComplaintDraft,
     ComplaintState,
     ComplaintSwitch,
     ConverseRequest,
@@ -24,6 +26,7 @@ from zipsai.contracts.converse import (
 )
 from zipsai.errors import (
     ComplaintExtractionError,
+    EmbeddingError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -31,6 +34,7 @@ from zipsai.errors import (
 )
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_structured
+from zipsai.knowledge.retrieve import query_encoder
 from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
@@ -322,21 +326,112 @@ def _ask_for_missing(
 
 
 def _ready_for_card(
-    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+    request: ConverseRequest,
+    draft: ComplaintDraft,
+    image_analysis: ImageAnalysis | None,
 ) -> _ComplaintTurn:
     """백엔드가 확인 카드를 만드는 유일한 경로. missing_fields가 비는 곳도 여기뿐이다."""
     # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
     if draft.issue_type is None:
         draft = draft.model_copy(update={"issue_type": "other"})
+    representative_id = _representative_attachment_id(
+        request, draft, image_analysis
+    )
+    response_draft = CompletedComplaintDraft(
+        **draft.model_dump(), representative_attachment_id=representative_id
+    )
     return _ComplaintTurn(
         result=RouteResult(
-            complaint_draft=draft, missing_fields=[], image_analysis=image_analysis
+            complaint_draft=response_draft,
+            missing_fields=[],
+            image_analysis=image_analysis,
         ),
         reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
         complaint_state=None,
         asked=None,
         reply_source="complete",
     )
+
+
+def _representative_attachment_id(
+    request: ConverseRequest,
+    draft: ComplaintDraft,
+    image_analysis: ImageAnalysis | None,
+) -> int | None:
+    attachment_ids = list(dict.fromkeys(draft.attachment_ids))
+    if not attachment_ids:
+        # 사진 없는 민원이 다수라 여기서부터 로그를 남기면 신호 없는 줄만 늘어난다.
+        return None
+    if len(attachment_ids) == 1:
+        skipped("representative_image", logger, skip_reason="single_attachment")
+        return attachment_ids[0]
+
+    summaries = {
+        image.attachment_id: image.summary.strip()
+        for turn in request.conversation_history
+        if turn.role == "user"
+        for image in turn.images or []
+        if image.summary and image.summary.strip()
+    }
+    if image_analysis:
+        summaries.update(
+            {
+                image.attachment_id: image.summary.strip()
+                for image in image_analysis.images
+                if image.summary and image.summary.strip()
+            }
+        )
+
+    candidate_summaries = [
+        summaries.get(attachment_id) for attachment_id in attachment_ids
+    ]
+    # 사진이 있으면 대표 사진도 항상 있어야 한다. 유사도를 못 구하는 경우엔
+    # 첫 번째 사진으로 떨어진다 — 전부 null보다는 기계적 선택이라도 낫다.
+    if any(summary is None for summary in candidate_summaries):
+        skipped("representative_image", logger, skip_reason="missing_summary")
+        return attachment_ids[0]
+
+    complaint_text = " ".join(
+        value.strip()
+        for value in (draft.issue_type, draft.location, draft.symptom)
+        if value and value.strip()
+    )
+    texts = [complaint_text, *(summary for summary in candidate_summaries if summary)]
+    try:
+        with stage("representative_image", logger) as step:
+            dense, _ = query_encoder().encode(texts, request.trace_id)
+            if len(dense) != len(texts):
+                raise EmbeddingError("embedding count did not match requested texts")
+            complaint_vector = dense[0]
+            scored: list[tuple[float, int]] = []
+            for attachment_id, vector in zip(attachment_ids, dense[1:], strict=True):
+                score = _cosine_similarity(complaint_vector, vector)
+                if score is None:
+                    raise EmbeddingError("cosine similarity undefined for embedding")
+                scored.append((score, attachment_id))
+            representative_id = max(scored, key=lambda item: item[0])[1]
+            step["representative_attachment_id"] = representative_id
+            return representative_id
+    except EmbeddingError as error:
+        logger.warning(
+            "representative_image_embedding_failed",
+            extra={"trace_id": request.trace_id, "error_type": type(error).__name__},
+        )
+        return attachment_ids[0]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
+    if not left or len(left) != len(right):
+        return None
+    if any(not math.isfinite(value) for value in left) or any(
+        not math.isfinite(value) for value in right
+    ):
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return None
+    return sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
 
 
 def _interpret_with_stage(
@@ -457,7 +552,9 @@ def _generate_turn_finalization(
 
 
 def _finalize_turn(
-    progress: _ComplaintProgress, evidence: _TurnEvidence
+    request: ConverseRequest,
+    progress: _ComplaintProgress,
+    evidence: _TurnEvidence,
 ) -> _ComplaintTurn:
     interpretation = progress.interpretation
     if interpretation.switch == ComplaintSwitch.ASK:
@@ -493,7 +590,7 @@ def _finalize_turn(
                 evidence.images,
                 "",
             )
-        return _ready_for_card(progress.draft, evidence.image_analysis)
+        return _ready_for_card(request, progress.draft, evidence.image_analysis)
 
     next_action = f"ask_{asked}" if asked else "complete"
     finalization = _generate_turn_finalization(progress, evidence, next_action)
@@ -512,7 +609,7 @@ def _finalize_turn(
             evidence.images,
             finalization.reply.strip() if finalization else "",
         )
-    return _ready_for_card(draft, evidence.image_analysis)
+    return _ready_for_card(request, draft, evidence.image_analysis)
 
 
 def _log_complaint_turn(
@@ -549,7 +646,7 @@ def handle_complaint(
     started_at = perf_counter()
     evidence = _gather_turn_evidence(request, image_analysis)
     progress = _advance_complaint(request, evidence)
-    turn = _finalize_turn(progress, evidence)
+    turn = _finalize_turn(request, progress, evidence)
     _log_complaint_turn(request, evidence, progress, turn, started_at)
     return {
         "complaint_state": turn.complaint_state,

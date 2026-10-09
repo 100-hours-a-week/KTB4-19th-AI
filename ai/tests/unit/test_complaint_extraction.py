@@ -198,11 +198,14 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
 
     result = handle_complaint(request)["result"]
 
-    assert result.complaint_draft == ComplaintDraft(
+    assert result.complaint_draft.model_dump(
+        exclude={"representative_attachment_id"}
+    ) == ComplaintDraft(
         issue_type="water_supply",
         location="화장실",
         symptom="온수가 나오지 않음",
-    )
+    ).model_dump()
+    assert result.complaint_draft.representative_attachment_id is None
     assert result.missing_fields == []
 
 
@@ -303,11 +306,14 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
 
     outcome = handle_complaint(request)
 
-    assert outcome["result"].complaint_draft == ComplaintDraft(
+    assert outcome["result"].complaint_draft.model_dump(
+        exclude={"representative_attachment_id"}
+    ) == ComplaintDraft(
         issue_type="facility",
         location="세탁실",
         symptom="세탁기가 작동하지 않고 탈수할 때 LE 오류가 표시됨",
-    )
+    ).model_dump()
+    assert outcome["result"].complaint_draft.representative_attachment_id is None
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
