@@ -88,7 +88,10 @@ class IncomingMessage(BaseModel):
     @model_validator(mode="after")
     def validate_images(self) -> "IncomingMessage":
         for image in self.images:
-            extension = urlparse(image.url).path.rsplit(".", 1)[-1].lower()
+            parsed_url = urlparse(image.url)
+            if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+                raise ValueError("Image URL must be an absolute HTTP(S) URL")
+            extension = parsed_url.path.rsplit(".", 1)[-1].lower()
             if extension not in {"jpg", "jpeg", "png", "webp"}:
                 raise ValueError(f"Unsupported image extension: {image.url}")
         return self

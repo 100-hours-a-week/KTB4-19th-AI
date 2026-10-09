@@ -127,6 +127,18 @@ def test_incoming_message_rejects_unsupported_image_extension():
         )
 
 
+@pytest.mark.parametrize("url", ["/images/leak.jpg", "file:///tmp/leak.jpg"])
+def test_incoming_message_rejects_non_http_image_url(url: str):
+    with pytest.raises(ValidationError):
+        IncomingMessage.model_validate(
+            {
+                "message_id": "msg-001",
+                "text": None,
+                "images": [{"attachmentId": 1, "url": url}],
+            }
+        )
+
+
 def test_converse_data_rejects_complaint_state_for_non_complaint_route():
     with pytest.raises(ValidationError):
         ConverseData(

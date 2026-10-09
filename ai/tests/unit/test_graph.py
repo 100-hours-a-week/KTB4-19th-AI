@@ -237,7 +237,9 @@ def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.Monkey
     assert result["result"].image_analysis == received[0]
 
 
-def test_graph_passes_intent_image_analysis_to_complaint(monkeypatch: pytest.MonkeyPatch):
+def test_graph_passes_intent_image_analysis_to_complaint(
+    monkeypatch: pytest.MonkeyPatch,
+):
     state = _make_state(Route.COMPLAINT)
     analysis = ImageAnalysis(
         images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
@@ -259,3 +261,67 @@ def test_graph_passes_intent_image_analysis_to_complaint(monkeypatch: pytest.Mon
     build_graph().invoke(state)
 
     assert received == [analysis]
+
+
+@pytest.mark.parametrize("route", [Route.COMPLAINT, Route.KNOWLEDGE])
+def test_graph_discloses_image_failure_while_answering_from_text(
+    monkeypatch: pytest.MonkeyPatch, route: Route
+):
+    state = _make_state(route)
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": route,
+            "image_analysis": None,
+            "image_analysis_failed": True,
+        },
+    )
+    handler_name = (
+        "handle_complaint" if route is Route.COMPLAINT else "handle_knowledge"
+    )
+    monkeypatch.setattr(
+        graph_module,
+        handler_name,
+        lambda *_args, **_kwargs: {
+            "reply": "계속 안내합니다.",
+            "result": RouteResult(),
+        },
+    )
+
+    result = build_graph().invoke(state)
+
+    assert result["reply"].startswith("사진을 확인하지 못했지만")
+    assert result["reply"].endswith("계속 안내합니다.")
+
+
+def test_graph_asks_to_retry_or_describe_when_image_only_analysis_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _make_state(Route.CLARIFY)
+    state["request"] = state["request"].model_copy(
+        update={
+            "message": state["request"].message.model_copy(
+                update={
+                    "text": None,
+                    "images": [
+                        {"attachmentId": 123, "url": "https://example.com/image.jpg"}
+                    ],
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": Route.CLARIFY,
+            "image_analysis": None,
+            "image_analysis_failed": True,
+        },
+    )
+
+    result = build_graph().invoke(state)
+
+    assert "사진을 확인하지 못했어요" in result["reply"]
+    assert "다시 첨부" in result["reply"]

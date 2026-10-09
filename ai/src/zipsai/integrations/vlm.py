@@ -21,7 +21,11 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
 )
-from zipsai.integrations.llm import _REQUIRE_STRUCTURED_OUTPUTS, _get_client
+from zipsai.integrations.llm import (
+    _REQUIRE_STRUCTURED_OUTPUTS,
+    _get_client,
+    _retry_after,
+)
 from zipsai.settings import get_settings
 from zipsai.tracing import get_tracing_client
 
@@ -63,17 +67,19 @@ def classify_and_analyze(
             extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )
     except RateLimitError as error:
-        raise LlmRateLimitedError("VLM rate limit exceeded") from error
-    except APITimeoutError as error:
-        raise LlmTimeoutError("VLM request timed out") from error
+        raise LlmRateLimitedError(
+            "VLM rate limit exceeded", retry_after_seconds=_retry_after(error)
+        ) from None
+    except APITimeoutError:
+        raise LlmTimeoutError("VLM request timed out") from None
     except APIStatusError as error:
         if error.status_code >= 500:
-            raise LlmUpstreamError("VLM provider returned an upstream error") from error
-        raise LlmUnavailableError("VLM request failed") from error
-    except (LengthFinishReasonError, ContentFilterFinishReasonError) as error:
-        raise ImageAnalysisError("VLM response was truncated or filtered") from error
-    except APIError as error:
-        raise LlmUnavailableError("VLM request failed") from error
+            raise LlmUpstreamError("VLM provider returned an upstream error") from None
+        raise LlmUnavailableError("VLM request failed") from None
+    except (LengthFinishReasonError, ContentFilterFinishReasonError):
+        raise ImageAnalysisError("VLM response was truncated or filtered") from None
+    except APIError:
+        raise LlmUnavailableError("VLM request failed") from None
 
     if not response.choices or response.choices[0].message.parsed is None:
         raise ImageAnalysisError("VLM returned an invalid intent or image analysis")
@@ -81,7 +87,9 @@ def classify_and_analyze(
         raise ImageAnalysisError("VLM refused intent or image analysis")
     parsed = response.choices[0].message.parsed
     if len(parsed.images) != len(images):
-        raise ImageAnalysisError("VLM returned observations that do not match input images")
+        raise ImageAnalysisError(
+            "VLM returned observations that do not match input images"
+        )
     return parsed.route, ImageAnalysis(
         images=[
             ImageObservation(
