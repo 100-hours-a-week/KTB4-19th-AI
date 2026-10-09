@@ -360,8 +360,10 @@ def _representative_attachment_id(
 ) -> int | None:
     attachment_ids = list(dict.fromkeys(draft.attachment_ids))
     if not attachment_ids:
+        # 사진 없는 민원이 다수라 여기서부터 로그를 남기면 신호 없는 줄만 늘어난다.
         return None
     if len(attachment_ids) == 1:
+        skipped("representative_image", logger, skip_reason="single_attachment")
         return attachment_ids[0]
 
     summaries = {
@@ -384,8 +386,9 @@ def _representative_attachment_id(
         summaries.get(attachment_id) for attachment_id in attachment_ids
     ]
     # 사진이 있으면 대표 사진도 항상 있어야 한다. 유사도를 못 구하는 경우엔
-    # 첫 번째 사진으로 떨어진다
+    # 첫 번째 사진으로 떨어진다 — 전부 null보다는 기계적 선택이라도 낫다.
     if any(summary is None for summary in candidate_summaries):
+        skipped("representative_image", logger, skip_reason="missing_summary")
         return attachment_ids[0]
 
     complaint_text = " ".join(
@@ -395,24 +398,26 @@ def _representative_attachment_id(
     )
     texts = [complaint_text, *(summary for summary in candidate_summaries if summary)]
     try:
-        dense, _ = query_encoder().encode(texts, request.trace_id)
+        with stage("representative_image", logger) as step:
+            dense, _ = query_encoder().encode(texts, request.trace_id)
+            if len(dense) != len(texts):
+                raise EmbeddingError("embedding count did not match requested texts")
+            complaint_vector = dense[0]
+            scored: list[tuple[float, int]] = []
+            for attachment_id, vector in zip(attachment_ids, dense[1:], strict=True):
+                score = _cosine_similarity(complaint_vector, vector)
+                if score is None:
+                    raise EmbeddingError("cosine similarity undefined for embedding")
+                scored.append((score, attachment_id))
+            representative_id = max(scored, key=lambda item: item[0])[1]
+            step["representative_attachment_id"] = representative_id
+            return representative_id
     except EmbeddingError as error:
         logger.warning(
             "representative_image_embedding_failed",
             extra={"trace_id": request.trace_id, "error_type": type(error).__name__},
         )
         return attachment_ids[0]
-
-    if len(dense) != len(texts):
-        return attachment_ids[0]
-    complaint_vector = dense[0]
-    scored: list[tuple[float, int]] = []
-    for attachment_id, vector in zip(attachment_ids, dense[1:], strict=True):
-        score = _cosine_similarity(complaint_vector, vector)
-        if score is None:
-            return attachment_ids[0]
-        scored.append((score, attachment_id))
-    return max(scored, key=lambda item: item[0])[1] if scored else attachment_ids[0]
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
