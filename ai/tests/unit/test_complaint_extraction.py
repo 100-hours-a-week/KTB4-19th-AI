@@ -1,10 +1,8 @@
-import threading
 from datetime import datetime
 
 import pytest
 
 import zipsai.complaint.node as node_module
-from zipsai import observability
 from zipsai.complaint.node import (
     _interpret_turn,
     _TurnInterpretation,
@@ -14,15 +12,11 @@ from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
     ConverseRequest,
-    ImageAnalysis,
-    ImageObservation,
 )
 from zipsai.errors import (
     ComplaintExtractionError,
-    ImageAnalysisError,
     LlmUnavailableError,
 )
-from zipsai.observability import bind, collect_timings
 
 
 def _node_records(caplog: pytest.LogCaptureFixture) -> list:
@@ -37,7 +31,7 @@ def _stub_structured_llm(monkeypatch: pytest.MonkeyPatch):
 
 def _make_request(
     text: str | None,
-    image_urls: list[str] | None = None,
+    image_files: list[str] | None = None,
     current_complaint_state: str = "collecting",
     conversation_history: list[dict[str, object]] | None = None,
 ) -> ConverseRequest:
@@ -54,7 +48,10 @@ def _make_request(
             "message": {
                 "message_id": "msg-001",
                 "text": text,
-                "image_urls": image_urls or [],
+                "images": [
+                    {"attachmentId": index, "url": url}
+                    for index, url in enumerate(image_files or [], start=1)
+                ],
             },
             "conversation_history": conversation_history or [],
             "complaint_draft": None,
@@ -91,7 +88,7 @@ def test_complaint_prompt_carries_formatted_history_without_model_repr(
                     "message_id": "msg-h1",
                     "role": "user",
                     "text": "물이 새요",
-                    "image_urls": [],
+                    "images": [],
                 }
             ],
         )
@@ -201,11 +198,14 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
 
     result = handle_complaint(request)["result"]
 
-    assert result.complaint_draft == ComplaintDraft(
+    assert result.complaint_draft.model_dump(
+        exclude={"representative_attachment_id"}
+    ) == ComplaintDraft(
         issue_type="water_supply",
         location="화장실",
         symptom="온수가 나오지 않음",
-    )
+    ).model_dump()
+    assert result.complaint_draft.representative_attachment_id is None
     assert result.missing_fields == []
 
 
@@ -223,12 +223,6 @@ def test_advance_complaint_merges_collected_evidence_without_model_calls(
         "generate_structured",
         lambda *_args, **_kwargs: pytest.fail("state update called the text LLM"),
     )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_args, **_kwargs: pytest.fail("state update called the VLM"),
-    )
-
     progress = node_module._advance_complaint(request, evidence)
 
     assert progress.draft == ComplaintDraft(
@@ -238,228 +232,18 @@ def test_advance_complaint_merges_collected_evidence_without_model_calls(
     assert progress.missing_fields == []
 
 
-def test_handle_complaint_includes_image_summary_in_the_draft(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="바닥에 물이 고여 있음",
-                    ocr_text="E1",
-                )
-            ]
-        ),
-        raising=False,
-    )
-
-    result = handle_complaint(
-        _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.complaint_draft.location == "욕실"
-    assert result.complaint_draft.symptom == "바닥에 물이 고여 있음"
-    assert result.complaint_draft.image_urls == ["https://example.com/leak.jpg"]
-    assert result.image_analysis.images[0].ocr_text == "E1"
 
 
-def test_handle_complaint_uses_photo_summary_as_symptom_when_text_has_none(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="바닥에 물이 고여 있음",
-                    ocr_text=None,
-                )
-            ]
-        ),
-        raising=False,
-    )
-
-    result = handle_complaint(
-        _make_request("이거 보세요", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.complaint_draft.symptom == "바닥에 물이 고여 있음"
 
 
-def test_handle_complaint_merges_text_and_photo_symptoms(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(location="욕실", symptom="물이 새요")
-        ),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="천장 모서리에서 물이 떨어짐",
-                    ocr_text=None,
-                )
-            ]
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        node_module,
-        "_generate_turn_finalization",
-        lambda progress, _evidence, _next_action: node_module._TurnFinalization(
-            symptom="욕실 천장 모서리에서 물이 떨어짐",
-            reply="",
-        ),
-    )
-
-    result = handle_complaint(
-        _make_request("물이 새요", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.complaint_draft.symptom == "욕실 천장 모서리에서 물이 떨어짐"
 
 
-def test_handle_complaint_skips_finalizer_when_text_and_photo_symptoms_match(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    symptom = "바닥에 물이 고여 있음"
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(symptom=symptom, location="욕실")
-        ),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary=symptom,
-                    ocr_text=None,
-                )
-            ]
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        node_module,
-        "generate_structured",
-        lambda **_: pytest.fail(
-            "matching text and photo symptoms called the finalizer"
-        ),
-    )
-
-    result = handle_complaint(
-        _make_request("바닥에 물이 고여 있음", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.complaint_draft.symptom == symptom
 
 
-def test_handle_complaint_keeps_text_flow_when_vlm_fails(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    def raise_image_analysis_error(_: list[str], __: str) -> ImageAnalysis:
-        raise ImageAnalysisError("VLM returned an invalid image analysis")
-
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        raise_image_analysis_error,
-        raising=False,
-    )
-
-    result = handle_complaint(
-        _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.image_analysis is None
-    assert result.complaint_draft.image_urls == ["https://example.com/leak.jpg"]
 
 
-def test_handle_complaint_distinguishes_photo_analysis_failure_from_no_photo(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    def raise_image_analysis_error(_: list[str], __: str) -> ImageAnalysis:
-        raise ImageAnalysisError("VLM returned an invalid image analysis")
-
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
-    )
-    monkeypatch.setattr(
-        node_module, "analyze_images", raise_image_analysis_error, raising=False
-    )
-
-    reply = handle_complaint(
-        _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
-    )["reply"]
-
-    assert reply == "사진을 받았지만 분석에 실패했어요. 어떤 불편 증상인지 알려주세요."
 
 
-def test_handle_complaint_acknowledges_photo_when_fields_still_missing(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft()),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="천장에서 물이 흐르는 흔적",
-                    ocr_text=None,
-                )
-            ]
-        ),
-        raising=False,
-    )
-
-    reply = handle_complaint(
-        _make_request("이거 보세요", ["https://example.com/leak.jpg"])
-    )["reply"]
-
-    assert (
-        reply
-        == "사진은 확인했습니다 — 천장에서 물이 흐르는 흔적. 어디에서 생긴 문제인가요?"
-    )
 
 
 def test_handle_complaint_uses_generic_reply_without_photo(
@@ -522,11 +306,14 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
 
     outcome = handle_complaint(request)
 
-    assert outcome["result"].complaint_draft == ComplaintDraft(
+    assert outcome["result"].complaint_draft.model_dump(
+        exclude={"representative_attachment_id"}
+    ) == ComplaintDraft(
         issue_type="facility",
         location="세탁실",
         symptom="세탁기가 작동하지 않고 탈수할 때 LE 오류가 표시됨",
-    )
+    ).model_dump()
+    assert outcome["result"].complaint_draft.representative_attachment_id is None
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
@@ -622,42 +409,6 @@ def test_handle_complaint_skips_finalizer_for_complete_single_symptom(
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
-def test_handle_complaint_prefixes_fixed_reply_when_photo_analyzed(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft()),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "generate_structured",
-        lambda **_: pytest.fail("simple photo turn called the finalizer"),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="바닥에 물이 고여 있음",
-                    ocr_text=None,
-                )
-            ]
-        ),
-        raising=False,
-    )
-
-    reply = handle_complaint(
-        _make_request("이거 보세요", ["https://example.com/leak.jpg"])
-    )["reply"]
-
-    assert (
-        reply
-        == "사진은 확인했습니다 — 바닥에 물이 고여 있음. 어디에서 생긴 문제인가요?"
-    )
 
 
 def test_handle_complaint_clears_state_when_fields_complete(
@@ -774,33 +525,6 @@ def test_handle_complaint_asks_one_field_at_a_time_when_both_are_missing(
     assert "증상" not in outcome["reply"]
 
 
-def test_handle_complaint_falls_back_to_plain_prefix_when_photo_has_no_summary(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    # VLM이 요약을 못 준 경우까지 사진 내용을 노출하려 들면 빈 문장이 붙는다.
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft()),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/blur.jpg", summary=None, ocr_text=None
-                )
-            ]
-        ),
-        raising=False,
-    )
-
-    reply = handle_complaint(
-        _make_request("이것 좀 봐주세요", image_urls=["https://example.com/blur.jpg"])
-    )["reply"]
-
-    assert reply == "사진은 확인했습니다. 어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_logs_stages_and_turn(
@@ -823,7 +547,6 @@ def test_handle_complaint_logs_stages_and_turn(
     stages = [r for r in records if r.getMessage() == "stage_done"]
     assert [(r.stage, r.outcome) for r in stages] == [
         ("text_interpretation", "ok"),
-        ("image_analysis", "skipped"),
         ("turn_finalization", "skipped"),
     ]
     assert all(r.duration_ms >= 0 for r in stages)
@@ -837,73 +560,8 @@ def test_handle_complaint_logs_stages_and_turn(
     assert turn.total_ms >= 0
 
 
-def test_handle_complaint_logs_image_failure_and_keeps_text_flow(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-):
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(ComplaintDraft(location="욕실")),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: (_ for _ in ()).throw(ImageAnalysisError("invalid image")),
-    )
-
-    with caplog.at_level("INFO", logger=node_module.__name__):
-        result = handle_complaint(
-            _make_request("물이 새요", ["https://example.com/leak.jpg"])
-        )
-
-    assert result["result"].image_analysis is None
-    failed = [
-        r
-        for r in _node_records(caplog)
-        if r.getMessage() == "stage_done" and r.outcome == "fail"
-    ]
-    assert [(r.stage, r.error_type, r.error) for r in failed] == [
-        ("image_analysis", "ImageAnalysisError", "invalid image")
-    ]
-    assert failed[0].duration_ms >= 0
 
 
-def test_handle_complaint_photo_only_logs_image_analysis(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-):
-    image_url = "https://example.com/leak.jpg"
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda *_, **__: _TurnInterpretation(ComplaintDraft()),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url=image_url, summary="바닥에 물이 고여 있음", ocr_text=None
-                )
-            ]
-        ),
-    )
-
-    with caplog.at_level("INFO", logger=node_module.__name__):
-        outcome = handle_complaint(_make_request(None, [image_url]))
-
-    assert outcome["result"].complaint_draft.image_urls == [image_url]
-    assert outcome["result"].missing_fields == ["location"]
-    assert outcome["reply"].startswith("사진은 확인했습니다 — 바닥에 물이 고여 있음.")
-    records = _node_records(caplog)
-    analyzed = [
-        r
-        for r in records
-        if r.getMessage() == "stage_done" and r.stage == "image_analysis"
-    ]
-    assert [r.outcome for r in analyzed] == ["ok"]
-    assert analyzed[0].duration_ms >= 0
-    assert records[-1].photo == "analyzed"
 
 
 def test_handle_complaint_keeps_confirmed_location_against_unknown(
@@ -934,7 +592,7 @@ def _switching_draft() -> ComplaintDraft:
     return ComplaintDraft(
         issue_type="leak",
         symptom="천장에서 물이 떨어져요",
-        image_urls=["https://example.com/old.jpg"],
+        attachmentIds=[99],
     )
 
 
@@ -963,35 +621,6 @@ def test_handle_complaint_asks_before_replacing_a_draft_with_a_new_complaint(
     assert "「세탁기가 안 돌아감」" in outcome["reply"]
 
 
-def test_handle_complaint_does_not_attach_photos_to_the_draft_while_asking(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    request = _make_request(
-        "세탁기가 안 돌아가요", image_urls=["https://example.com/new.jpg"]
-    )
-    request.complaint_draft = _switching_draft()
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
-        ),
-    )
-    image_calls: list[list[str]] = []
-
-    def record_image_analysis(urls, _prompt):
-        image_calls.append(urls)
-        return ImageAnalysis(images=[])
-
-    monkeypatch.setattr(node_module, "analyze_images", record_image_analysis)
-
-    outcome = handle_complaint(request)
-
-    # 새 민원의 사진을 옛 초안에 붙이면 관리자가 엉뚱한 사진을 보게 된다.
-    assert outcome["result"].complaint_draft.image_urls == [
-        "https://example.com/old.jpg"
-    ]
-    assert image_calls == [["https://example.com/new.jpg"]]
 
 
 def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
@@ -1014,36 +643,9 @@ def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
     assert draft.location is None
     assert draft.issue_type is None
     # 사진도 같이 비워져야 한다. 텍스트만 비우면 옛 사진이 새 카드에 딸려간다.
-    assert draft.image_urls == []
+    assert draft.attachment_ids == []
 
 
-def test_handle_complaint_keeps_this_turns_photo_after_accepting_a_switch(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    request = _make_request("네", image_urls=["https://example.com/new.jpg"])
-    request.complaint_draft = _switching_draft()
-    monkeypatch.setattr(
-        node_module,
-        "_interpret_turn",
-        lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="accept"
-        ),
-    )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda _, __: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/new.jpg", summary=None, ocr_text=None
-                )
-            ]
-        ),
-    )
-
-    draft = handle_complaint(request)["result"].complaint_draft
-
-    assert draft.image_urls == ["https://example.com/new.jpg"]
 
 
 @pytest.mark.parametrize(
@@ -1111,7 +713,7 @@ def test_handle_complaint_does_not_file_the_abandoned_draft_when_recovery_fails(
     assert outcome["complaint_state"] is ComplaintState.COLLECTING
     assert outcome["result"].missing_fields == ["location", "symptom"]
     assert outcome["result"].complaint_draft.symptom is None
-    assert outcome["result"].complaint_draft.image_urls == []
+    assert outcome["result"].complaint_draft.attachment_ids == []
 
 
 def test_handle_complaint_logs_the_switch_decision(
@@ -1135,82 +737,8 @@ def test_handle_complaint_logs_the_switch_decision(
     assert [(r.switch, r.reply_source) for r in turns] == [("ask", "switch_ask")]
 
 
-def test_handle_complaint_runs_text_and_image_calls_concurrently(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """전환 대상이 없는 턴에서는 텍스트 해석과 VLM 호출이 겹쳐 실행돼야 한다.
-
-    둘 다 "상대가 먼저 시작했다"는 신호를 기다리게 해서, 순차 실행이면
-    타임아웃으로 멈춘다.
-    """
-    text_started = threading.Event()
-    image_started = threading.Event()
-
-    def slow_interpret(_request, **_kwargs):
-        text_started.set()
-        assert image_started.wait(timeout=1), "image analysis never started"
-        return _TurnInterpretation(ComplaintDraft(location="욕실"))
-
-    def slow_analyze(_urls, _prompt):
-        image_started.set()
-        assert text_started.wait(timeout=1), "text interpretation never started"
-        return ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg", summary=None, ocr_text=None
-                )
-            ]
-        )
-
-    monkeypatch.setattr(node_module, "_interpret_turn", slow_interpret)
-    monkeypatch.setattr(node_module, "analyze_images", slow_analyze, raising=False)
-
-    result = handle_complaint(
-        _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
-    )["result"]
-
-    assert result.complaint_draft.location == "욕실"
-    assert result.image_analysis is not None
 
 
-def test_handle_complaint_collects_text_and_images_before_settling_switch(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """전환 관계 판단 전에도 텍스트와 이미지 근거를 함께 수집한다."""
-    started = {"text": threading.Event(), "image": threading.Event()}
-    release = threading.Event()
-
-    def recording_interpret(_request, **_kwargs):
-        started["text"].set()
-        assert started["image"].wait(timeout=1)
-        release.wait(timeout=1)
-        return _TurnInterpretation(
-            ComplaintDraft(symptom="세탁기가 안 돌아감"), switch="ask"
-        )
-
-    def recording_analyze(_urls, _prompt):
-        started["image"].set()
-        assert started["text"].wait(timeout=1)
-        release.set()
-        return ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/new.jpg", summary=None, ocr_text=None
-                )
-            ]
-        )
-
-    monkeypatch.setattr(node_module, "_interpret_turn", recording_interpret)
-    monkeypatch.setattr(node_module, "analyze_images", recording_analyze, raising=False)
-
-    request = _make_request(
-        "탈수할 때 LE 오류가 떠요", image_urls=["https://example.com/new.jpg"]
-    )
-    request.complaint_draft = ComplaintDraft(symptom="세탁기가 작동하지 않음")
-
-    outcome = handle_complaint(request)
-
-    assert outcome["result"].complaint_draft.symptom == "세탁기가 작동하지 않음"
 
 
 def test_handle_complaint_skips_text_interpretation_for_photo_only_turn(
@@ -1221,25 +749,9 @@ def test_handle_complaint_skips_text_interpretation_for_photo_only_turn(
         "_interpret_turn",
         lambda *_, **__: pytest.fail("photo-only turn called the text LLM"),
     )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="바닥에 물이 고여 있음",
-                    ocr_text=None,
-                )
-            ]
-        ),
-    )
-
     outcome = handle_complaint(_make_request(None, ["https://example.com/leak.jpg"]))
 
-    assert outcome["result"].complaint_draft.image_urls == [
-        "https://example.com/leak.jpg"
-    ]
+    assert outcome["result"].complaint_draft.attachment_ids == [1]
 
 
 def test_handle_complaint_treats_whitespace_only_text_as_photo_only(
@@ -1254,75 +766,17 @@ def test_handle_complaint_treats_whitespace_only_text_as_photo_only(
         "_interpret_turn",
         lambda *_, **__: pytest.fail("whitespace-only text called the text LLM"),
     )
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg",
-                    summary="바닥에 물이 고여 있음",
-                    ocr_text=None,
-                )
-            ]
-        ),
-    )
-
     outcome = handle_complaint(_make_request("   ", ["https://example.com/leak.jpg"]))
 
-    assert outcome["result"].complaint_draft.image_urls == [
-        "https://example.com/leak.jpg"
-    ]
+    assert outcome["result"].complaint_draft.attachment_ids == [1]
 
 
-def test_handle_complaint_propagates_interpretation_failure_from_concurrent_path(
+def test_handle_complaint_propagates_interpretation_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """동시 실행 경로에서도 텍스트 해석 실패가 순차 실행과 같이 그대로 올라와야 한다."""
-    monkeypatch.setattr(
-        node_module,
-        "analyze_images",
-        lambda *_: ImageAnalysis(images=[]),
-        raising=False,
-    )
+    """텍스트 해석 실패는 민원 노드 호출자에게 전달한다."""
 
     with pytest.raises(ComplaintExtractionError):
         handle_complaint(
             _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
         )
-
-
-def test_handle_complaint_concurrent_path_keeps_bound_context_and_timings(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """copy_context()로 넘긴 스레드에서도 bind()의 필드와 collect_timings()가 보여야 한다.
-
-    `_ContextFilter`는 `configure_logging()`이 붙인 핸들러에서만 동작해 caplog로는
-    검증할 수 없다. 대신 각 스레드 안에서 ContextVar를 직접 읽어 비교한다.
-    """
-    seen_turn_ids: list[object] = []
-
-    def recording_interpret(_request, **_kwargs):
-        seen_turn_ids.append((observability._context.get() or {}).get("turn_id"))
-        return _TurnInterpretation(ComplaintDraft(location="욕실"))
-
-    def recording_analyze(*_args):
-        seen_turn_ids.append((observability._context.get() or {}).get("turn_id"))
-        return ImageAnalysis(
-            images=[
-                ImageObservation(
-                    url="https://example.com/leak.jpg", summary=None, ocr_text=None
-                )
-            ]
-        )
-
-    monkeypatch.setattr(node_module, "_interpret_turn", recording_interpret)
-    monkeypatch.setattr(node_module, "analyze_images", recording_analyze, raising=False)
-
-    with bind(turn_id="turn-concurrent"), collect_timings() as timings:
-        handle_complaint(
-            _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
-        )
-
-    assert seen_turn_ids == ["turn-concurrent", "turn-concurrent"]
-    assert {"text_interpretation", "image_analysis"} <= set(timings)

@@ -88,7 +88,7 @@ def _handle(
     message = request.message
     received = {
         "has_text": bool(message.text and message.text.strip()),
-        "has_image": bool(message.image_urls),
+        "has_image": bool(message.images),
         "history_turns": len(request.conversation_history),
         "in_flight": in_flight,
         # 인코더·Qdrant 클라이언트를 만드는 첫 질의는 수 초가 더 걸린다.
@@ -109,7 +109,7 @@ def _handle(
         return error_response(
             status_code=400,
             code="MISSING_REQUIRED_FIELD",
-            detail="A message requires text or image_urls",
+            detail="A message requires text or images",
             turn_id=request.turn_id,
             trace_id=request.trace_id,
             retryable=False,
@@ -124,6 +124,7 @@ def _handle(
                 "complaint_state": request.current_complaint_state,
                 "reply": None,
                 "result": RouteResult(),
+                "image_analysis": None,
             }
         )
     except AGENT_ERRORS as error:

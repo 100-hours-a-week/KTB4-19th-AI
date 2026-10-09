@@ -66,7 +66,7 @@ def trace_turn(request: ConverseRequest):
             name="converse-turn",
             input={
                 "has_text": bool(request.message.text),
-                "image_count": len(request.message.image_urls),
+                "image_count": len(request.message.images),
                 "history_turns": len(request.conversation_history),
             },
             metadata={"turn_id": request.turn_id, "trace_id": request.trace_id},

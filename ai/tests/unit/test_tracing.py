@@ -50,7 +50,7 @@ def test_converse_trace_keeps_usage_and_excludes_private_content(monkeypatch):
         )
 
     request = SimpleNamespace(
-        message=SimpleNamespace(text="PRIVATE_INPUT", image_urls=[]),
+        message=SimpleNamespace(text="PRIVATE_INPUT", images=[]),
         conversation_history=[],
         conversation_id="conversation-1",
         turn_id="turn-1",

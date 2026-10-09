@@ -27,14 +27,12 @@ def _make_state(
             "message": {
                 "message_id": "msg-001",
                 "text": "그거요",
-                "image_urls": [],
             },
             "conversation_history": [
                 {
                     "message_id": "msg-000",
                     "role": "assistant",
                     "text": CLARIFY_REPLY,
-                    "image_urls": [],
                 }
             ],
             "complaint_draft": complaint_draft,
