@@ -171,7 +171,7 @@ def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
     assert result["image_analysis"] is None
     assert result["image_analysis_failed"] is True
     assert calls and "세탁기 어떻게 돌려?" in calls[0][1]
-    assert "Image analysis failed" in calls[0][0]
+    assert "could not be analyzed" in calls[0][0]
 
 
 @pytest.mark.parametrize(
