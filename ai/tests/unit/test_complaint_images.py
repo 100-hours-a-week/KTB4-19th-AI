@@ -9,6 +9,7 @@ from zipsai.contracts.converse import (
     ImageAnalysis,
     ImageObservation,
 )
+from zipsai.errors import EmbeddingError
 
 
 @pytest.fixture(autouse=True)
@@ -366,3 +367,179 @@ def test_accepting_switch_attaches_only_the_pending_user_turn_image(
 
     assert result.complaint_draft.attachment_ids == [123]
     assert result.complaint_draft.symptom == "세탁기 아래 물이 고임"
+
+
+def test_no_attachment_ids_skips_representative_selection_even_with_history_images(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "query_encoder",
+        lambda: pytest.fail("no candidates means no embedding request"),
+    )
+    request = _request(
+        text="세탁기가 고장 났어요.",
+        history=[
+            {
+                "message_id": "old-photo",
+                "role": "user",
+                "text": "참고 사진",
+                "images": [{"attachmentId": 11, "summary": "세탁기"}],
+            }
+        ],
+        draft=ComplaintDraft(
+            issue_type="facility", location="세탁실", symptom="세탁기가 고장 남"
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.missing_fields == []
+    assert result.complaint_draft.attachment_ids == []
+    assert result.complaint_draft.representative_attachment_id is None
+
+
+def test_single_attachment_is_recommended_without_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "query_encoder",
+        lambda: pytest.fail("a single candidate does not need embedding"),
+    )
+    request = _request(
+        text="세탁기가 고장 났어요.",
+        draft=ComplaintDraft(
+            issue_type="facility",
+            location="세탁실",
+            symptom="세탁기가 고장 남",
+            attachmentIds=[123],
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft.representative_attachment_id == 123
+
+
+def test_multiple_attachments_select_highest_cosine_summary_match(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    encoded_texts: list[list[str]] = []
+
+    class FakeEncoder:
+        def encode(self, texts: list[str], trace_id: str):
+            assert trace_id == "trace-001"
+            encoded_texts.append(texts)
+            return [
+                [1.0, 0.0],
+                [0.98, 0.2],
+                [0.98, 0.2],
+                [0.0, 1.0],
+            ], [{}, {}, {}, {}]
+
+    monkeypatch.setattr(node_module, "query_encoder", lambda: FakeEncoder())
+    request = _request(
+        text="세탁기 아래 누수",
+        history=[
+            {
+                "message_id": "photos",
+                "role": "user",
+                "text": None,
+                "images": [
+                    {"attachmentId": 789, "summary": "세탁기 아래 바닥이 젖어 있음"},
+                    {"attachmentId": 123, "summary": "세탁기 아래 바닥이 젖어 있음"},
+                    {"attachmentId": 456, "summary": "보일러가 보임"},
+                    {"attachmentId": 999, "summary": "민원과 무관한 사진"},
+                ],
+            }
+        ],
+        draft=ComplaintDraft(
+            issue_type="leak",
+            location="세탁실",
+            symptom="세탁기 아래 누수",
+            attachmentIds=[789, 123, 456],
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft.representative_attachment_id == 789
+    assert encoded_texts == [
+        [
+            "leak 세탁실 세탁기 아래 누수",
+            "세탁기 아래 바닥이 젖어 있음",
+            "세탁기 아래 바닥이 젖어 있음",
+            "보일러가 보임",
+        ]
+    ]
+
+
+def test_missing_summary_falls_back_to_first_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "query_encoder",
+        lambda: pytest.fail("a missing summary should short-circuit before embedding"),
+    )
+    request = _request(
+        text="누수예요.",
+        history=[
+            {
+                "message_id": "photo-1",
+                "role": "user",
+                "text": None,
+                "images": [{"attachmentId": 123, "summary": "세탁기 아래 물"}],
+            },
+        ],
+        draft=ComplaintDraft(
+            issue_type="leak",
+            location="세탁실",
+            symptom="누수",
+            attachmentIds=[123, 456],
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.missing_fields == []
+    assert result.complaint_draft.representative_attachment_id == 123
+
+
+def test_embedding_failure_falls_back_to_first_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FailedEncoder:
+        def encode(self, _texts: list[str], _trace_id: str):
+            raise EmbeddingError("embedding unavailable")
+
+    monkeypatch.setattr(node_module, "query_encoder", lambda: FailedEncoder())
+    request = _request(
+        text="누수예요.",
+        history=[
+            {
+                "message_id": "photo-1",
+                "role": "user",
+                "text": None,
+                "images": [{"attachmentId": 123, "summary": "세탁기 아래 물"}],
+            },
+            {
+                "message_id": "photo-2",
+                "role": "user",
+                "text": None,
+                "images": [{"attachmentId": 456, "summary": "배수구 주변 물"}],
+            },
+        ],
+        draft=ComplaintDraft(
+            issue_type="leak",
+            location="세탁실",
+            symptom="누수",
+            attachmentIds=[123, 456],
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.missing_fields == []
+    assert result.complaint_draft.representative_attachment_id == 123
