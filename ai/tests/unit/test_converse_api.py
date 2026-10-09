@@ -9,7 +9,7 @@ import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
-from zipsai.contracts.converse import Route
+from zipsai.contracts.converse import ImageAnalysis, Route
 from zipsai.errors import (
     ComplaintExtractionError,
     EmbeddingError,
@@ -46,7 +46,7 @@ def _payload() -> dict[str, object]:
         "trace_id": "trace-001",
         "current_route": None,
         "current_complaint_state": None,
-        "message": {"message_id": "msg-001", "text": "네", "image_urls": []},
+        "message": {"message_id": "msg-001", "text": "네"},
         "conversation_history": [],
         "complaint_draft": None,
     }
@@ -293,7 +293,6 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     payload["message"] = {
         "message_id": "msg-001",
         "text": "민원 접수해주세요.",
-        "image_urls": [],
     }
 
     response = TestClient(app).post("/api/v3/ai/converse", json=payload)
@@ -310,7 +309,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
                 "location": None,
                 "symptom": None,
                 "occurred_at": None,
-                "image_urls": [],
+                "attachmentIds": [],
             },
             "qa_card_draft": None,
             "missing_fields": ["location", "symptom"],
@@ -373,8 +372,8 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
 ):
     monkeypatch.setattr(
         intent_module,
-        "generate_structured",
-        lambda **_kwargs: intent_module._RouteResponse(route=Route.COMPLAINT),
+        "classify_and_analyze",
+        lambda *_args, **_kwargs: (Route.COMPLAINT, ImageAnalysis(images=[])),
     )
     monkeypatch.setattr(
         converse_module,
@@ -445,7 +444,6 @@ def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
     payload["message"] = {
         "message_id": "msg-001",
         "text": None,
-        "image_urls": [],
     }
 
     response = TestClient(app).post("/api/v3/ai/converse", json=payload)
@@ -455,7 +453,7 @@ def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
         "message": "ai_response_error",
         "error": {
             "code": "MISSING_REQUIRED_FIELD",
-            "detail": "A message requires text or image_urls",
+            "detail": "A message requires text or images",
             "retryable": False,
         },
         "turn_id": "turn-001",

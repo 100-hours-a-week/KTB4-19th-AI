@@ -1,9 +1,9 @@
-from zipsai.contracts.converse import HistoryTurn
+from zipsai.contracts.converse import HistoryTurn, ImageObservation
 from zipsai.history import HISTORY_WINDOW, format_history
 
 
 def _turn(index: int, text: str | None, role: str = "user") -> HistoryTurn:
-    return HistoryTurn(message_id=f"msg-{index}", role=role, text=text, image_urls=[])
+    return HistoryTurn(message_id=f"msg-{index}", role=role, text=text)
 
 
 def test_format_history_returns_placeholder_when_empty():
@@ -22,9 +22,27 @@ def test_format_history_keeps_only_the_most_recent_turns():
 
 
 def test_format_history_marks_a_turn_that_carries_only_an_image():
-    formatted = format_history([_turn(0, None)])
+    turn = _turn(0, None).model_copy(
+        update={"images": [ImageObservation(attachmentId=123, summary=None)]}
+    )
+
+    formatted = format_history([turn])
 
     assert formatted == "user: [이미지 첨부]"
+
+
+def test_format_history_includes_image_analysis_for_user_turn():
+    turn = _turn(0, "이거 어디 버려요?").model_copy(
+        update={
+            "images": [
+                ImageObservation(
+                    attachmentId=123, summary="돼지껍데기", ocrText="음식물"
+                )
+            ]
+        }
+    )
+
+    assert format_history([turn]) == "user: 이거 어디 버려요? [사진: 돼지껍데기 / 음식물]"
 
 
 def test_format_history_labels_each_turn_with_its_role():

@@ -5,6 +5,8 @@ import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
     ComplaintState,
     ConverseRequest,
+    ImageAnalysis,
+    ImageObservation,
     Route,
     RouteResult,
 )
@@ -31,7 +33,7 @@ def _make_request(
             "message": {
                 "message_id": "msg-001",
                 "text": "도와주세요",
-                "image_urls": [],
+                "images": [],
             },
             "conversation_history": [],
             "complaint_draft": None,
@@ -80,8 +82,9 @@ def test_graph_invokes_feature_handler_for_selected_route(
     state = _make_state(route)
     handled_requests: list[ConverseRequest] = []
 
-    def handler(request: ConverseRequest) -> None:
+    def handler(request: ConverseRequest, **_kwargs: object) -> dict[str, object]:
         handled_requests.append(request)
+        return {"reply": "ok", "result": RouteResult()}
 
     monkeypatch.setattr(graph_module, handler_name, handler)
     monkeypatch.setattr(graph_module, "classify_intent", _stub_classify_intent)
@@ -109,7 +112,7 @@ def test_graph_classifies_intent_even_when_complaint_in_progress(
     classified: list[ConverseRequest] = []
     handled_requests: list[ConverseRequest] = []
 
-    def handler(req: ConverseRequest) -> dict[str, object]:
+    def handler(req: ConverseRequest, **_kwargs: object) -> dict[str, object]:
         handled_requests.append(req)
         return {
             "complaint_state": ComplaintState.COLLECTING,
@@ -136,7 +139,9 @@ def test_graph_leaves_complaint_when_intent_reclassifies_mid_collection(
 ):
     state = _collecting_state()
 
-    def unexpected_complaint(_req: ConverseRequest) -> dict[str, object]:
+    def unexpected_complaint(
+        _req: ConverseRequest, **_kwargs: object
+    ) -> dict[str, object]:
         raise AssertionError("complaint must not run once intent left the route")
 
     monkeypatch.setattr(graph_module, "handle_complaint", unexpected_complaint)
@@ -148,7 +153,7 @@ def test_graph_leaves_complaint_when_intent_reclassifies_mid_collection(
     monkeypatch.setattr(
         graph_module,
         "handle_knowledge",
-        lambda _req: {
+        lambda _req, **_kwargs: {
             "complaint_state": None,
             "reply": "22시까지 이용할 수 있습니다.",
             "result": RouteResult(),
@@ -203,3 +208,120 @@ def test_graph_propagates_intent_classification_failure(
 
     with pytest.raises(LlmUnavailableError):
         build_graph().invoke(_make_state(None))
+
+
+def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.MonkeyPatch):
+    state = _make_state(Route.KNOWLEDGE)
+    received: list[object] = []
+
+    def classify(_state: AgentState) -> dict[str, object]:
+        from zipsai.contracts.converse import ImageAnalysis, ImageObservation
+
+        return {
+            "route": Route.KNOWLEDGE,
+            "image_analysis": ImageAnalysis(
+                images=[ImageObservation(attachmentId=123, summary="세탁기")]
+            ),
+        }
+
+    def knowledge(_request: ConverseRequest, *, image_analysis=None):
+        received.append(image_analysis)
+        return {"reply": "안내", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "classify_intent", classify)
+    monkeypatch.setattr(graph_module, "handle_knowledge", knowledge)
+
+    result = build_graph().invoke(state)
+
+    assert received[0].images[0].attachment_id == 123
+    assert result["result"].image_analysis == received[0]
+
+
+def test_graph_passes_intent_image_analysis_to_complaint(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _make_state(Route.COMPLAINT)
+    analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
+    )
+    received: list[object] = []
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.COMPLAINT, "image_analysis": analysis},
+    )
+
+    def complaint(_request: ConverseRequest, *, image_analysis=None):
+        received.append(image_analysis)
+        return {"reply": "확인", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "handle_complaint", complaint)
+
+    build_graph().invoke(state)
+
+    assert received == [analysis]
+
+
+@pytest.mark.parametrize("route", [Route.COMPLAINT, Route.KNOWLEDGE])
+def test_graph_discloses_image_failure_while_answering_from_text(
+    monkeypatch: pytest.MonkeyPatch, route: Route
+):
+    state = _make_state(route)
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": route,
+            "image_analysis": None,
+            "image_analysis_failed": True,
+        },
+    )
+    handler_name = (
+        "handle_complaint" if route is Route.COMPLAINT else "handle_knowledge"
+    )
+    monkeypatch.setattr(
+        graph_module,
+        handler_name,
+        lambda *_args, **_kwargs: {
+            "reply": "계속 안내합니다.",
+            "result": RouteResult(),
+        },
+    )
+
+    result = build_graph().invoke(state)
+
+    assert result["reply"].startswith("사진을 확인하지 못했지만")
+    assert result["reply"].endswith("계속 안내합니다.")
+
+
+def test_graph_asks_to_retry_or_describe_when_image_only_analysis_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _make_state(Route.CLARIFY)
+    state["request"] = state["request"].model_copy(
+        update={
+            "message": state["request"].message.model_copy(
+                update={
+                    "text": None,
+                    "images": [
+                        {"attachmentId": 123, "url": "https://example.com/image.jpg"}
+                    ],
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": Route.CLARIFY,
+            "image_analysis": None,
+            "image_analysis_failed": True,
+        },
+    )
+
+    result = build_graph().invoke(state)
+
+    assert "사진을 확인하지 못했어요" in result["reply"]
+    assert "다시 첨부" in result["reply"]

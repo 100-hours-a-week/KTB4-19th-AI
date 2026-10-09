@@ -1,7 +1,6 @@
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
@@ -12,20 +11,22 @@ from pydantic import BaseModel
 from zipsai.complaint.prompts import (
     COMPLAINT_PROMPT,
     TURN_FINALIZATION_PROMPT,
-    VLM_ANALYSIS_PROMPT,
 )
 from zipsai.contracts.converse import (
     ComplaintDraft,
+    CompletedComplaintDraft,
     ComplaintState,
     ComplaintSwitch,
     ConverseRequest,
     ImageAnalysis,
+    ImageAttachment,
+    ImageObservation,
     IssueType,
     RouteResult,
 )
 from zipsai.errors import (
     ComplaintExtractionError,
-    ImageAnalysisError,
+    EmbeddingError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -33,7 +34,7 @@ from zipsai.errors import (
 )
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_structured
-from zipsai.integrations.vlm import analyze_images
+from zipsai.knowledge.retrieve import query_encoder
 from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,9 @@ def _log_interpretation_retry(attempt: int, error: Exception) -> None:
 
 
 def _interpret_turn(
-    request: ConverseRequest, usage_sink: dict[str, object] | None = None
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None = None,
+    usage_sink: dict[str, object] | None = None,
 ) -> _TurnInterpretation:
     """현재 발화에서 새로 말한 민원 사실과 전환 판정만 받는다."""
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
@@ -87,6 +90,7 @@ def _interpret_turn(
         # 사진만 온 턴은 text가 None이다. 그대로 넘기면 "현재 발화: None"이 렌더돼
         # 모델이 None을 입주민 발화로 읽는다.
         message_text=request.message.text or "",
+        image_evidence=_format_image_evidence(image_analysis),
     )
 
     last_error: Exception | None = None
@@ -130,11 +134,14 @@ def _merge_structured_fields(
     return (current or ComplaintDraft()).model_copy(update=updates)
 
 
-def _append_image_urls(draft: ComplaintDraft, image_urls: list[str]) -> ComplaintDraft:
-    """초안의 사진 목록에 이번 턴 사진을 중복 없이 잇는다."""
-    return draft.model_copy(
-        update={"image_urls": list(dict.fromkeys([*draft.image_urls, *image_urls]))}
+def _append_images(
+    draft: ComplaintDraft, images: list[ImageAttachment | ImageObservation]
+) -> ComplaintDraft:
+    """초안에는 이미지 분석을 복사하지 않고 연결된 ID만 중복 없이 누적한다."""
+    attachment_ids = dict.fromkeys(
+        [*draft.attachment_ids, *(image.attachment_id for image in images)]
     )
+    return draft.model_copy(update={"attachment_ids": list(attachment_ids)})
 
 
 def _image_symptom(image_analysis: ImageAnalysis | None) -> str | None:
@@ -146,6 +153,22 @@ def _image_symptom(image_analysis: ImageAnalysis | None) -> str | None:
         if observation.summary and observation.summary.strip()
     ]
     return " ".join(summaries) or None
+
+
+def _format_image_evidence(image_analysis: ImageAnalysis | None) -> str:
+    if not image_analysis:
+        return "없음"
+    return json.dumps(
+        [
+            {
+                "attachmentId": image.attachment_id,
+                "summary": image.summary,
+                "ocrText": image.ocr_text,
+            }
+            for image in image_analysis.images
+        ],
+        ensure_ascii=False,
+    )
 
 
 def _missing_fields(draft: ComplaintDraft) -> list[str]:
@@ -207,7 +230,7 @@ class _ComplaintTurn:
 class _TurnEvidence:
     interpretation: _TurnInterpretation
     image_analysis: ImageAnalysis | None
-    image_urls: list[str] = field(default_factory=list)
+    images: list[ImageAttachment] = field(default_factory=list)
     message_text: str = ""
 
 
@@ -219,6 +242,7 @@ class _ComplaintProgress:
     previous_symptom: str | None = None
     current_symptom: str | None = None
     image_symptom: str | None = None
+    image_context: str | None = None
 
 
 def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
@@ -235,32 +259,15 @@ def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
     return f"사진은 확인했습니다 — {summary.rstrip('. ')}. "
 
 
-def _run_image_analysis(image_urls: list[str]) -> ImageAnalysis | None:
-    if not image_urls:
-        skipped("image_analysis", logger, skip_reason="no_image")
-        return None
-    try:
-        with stage("image_analysis", logger):
-            return analyze_images(image_urls, VLM_ANALYSIS_PROMPT)
-    except (
-        ImageAnalysisError,
-        LlmRateLimitedError,
-        LlmTimeoutError,
-        LlmUnavailableError,
-        LlmUpstreamError,
-    ):
-        return None
-
-
 def _photo_label(
-    image_urls: list[str], image_analysis: ImageAnalysis | None, switch: ComplaintSwitch
+    images: list[ImageAttachment], image_analysis: ImageAnalysis | None, switch: ComplaintSwitch
 ) -> str:
     """이번 턴 사진이 어떻게 처리됐는지 나타내는 로그 값."""
-    if not image_urls:
+    if not images:
         return "none"
     if switch == ComplaintSwitch.ASK:
-        # 전환을 묻는 턴은 분석도 누적도 하지 않는다. 이 URL은 여기서 사라진다.
-        return "dropped"
+        # 새 민원 수락 전까지 연결만 보류하고, 분석은 history에 보존한다.
+        return "pending_switch"
     return "analyzed" if image_analysis else "failed"
 
 
@@ -276,13 +283,17 @@ def _follow_up(asked: str, llm_reply: str) -> tuple[str, str]:
 
 
 def _build_switch_confirmation_turn(
-    current: ComplaintDraft, extracted: ComplaintDraft
+    current: ComplaintDraft,
+    extracted: ComplaintDraft,
+    image_analysis: ImageAnalysis | None,
 ) -> _ComplaintTurn:
     """새 민원으로 바꿀지 입주민에게 묻는 턴."""
     # 돌려주는 초안이 옛 민원이므로 빈 칸도 옛 민원 기준으로 적는다.
     return _ComplaintTurn(
         result=RouteResult(
-            complaint_draft=current, missing_fields=_missing_fields(current)
+            complaint_draft=current,
+            missing_fields=_missing_fields(current),
+            image_analysis=image_analysis,
         ),
         reply=_switch_question(current.symptom, extracted.symptom),
         complaint_state=ComplaintState.COLLECTING,
@@ -295,7 +306,7 @@ def _ask_for_missing(
     draft: ComplaintDraft,
     missing_fields: list[str],
     image_analysis: ImageAnalysis | None,
-    image_urls: list[str],
+    images: list[ImageAttachment],
     llm_reply: str,
 ) -> _ComplaintTurn:
     """부족한 항목 유도하는 턴."""
@@ -307,7 +318,7 @@ def _ask_for_missing(
             missing_fields=missing_fields,
             image_analysis=image_analysis,
         ),
-        reply=_photo_prefix(image_analysis) + question if image_urls else question,
+        reply=_photo_prefix(image_analysis) + question if images else question,
         complaint_state=ComplaintState.COLLECTING,
         asked=asked,
         reply_source=reply_source,
@@ -315,15 +326,25 @@ def _ask_for_missing(
 
 
 def _ready_for_card(
-    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+    request: ConverseRequest,
+    draft: ComplaintDraft,
+    image_analysis: ImageAnalysis | None,
 ) -> _ComplaintTurn:
     """백엔드가 확인 카드를 만드는 유일한 경로. missing_fields가 비는 곳도 여기뿐이다."""
     # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
     if draft.issue_type is None:
         draft = draft.model_copy(update={"issue_type": "other"})
+    representative_id = _representative_attachment_id(
+        request, draft, image_analysis
+    )
+    response_draft = CompletedComplaintDraft(
+        **draft.model_dump(), representative_attachment_id=representative_id
+    )
     return _ComplaintTurn(
         result=RouteResult(
-            complaint_draft=draft, missing_fields=[], image_analysis=image_analysis
+            complaint_draft=response_draft,
+            missing_fields=[],
+            image_analysis=image_analysis,
         ),
         reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
         complaint_state=None,
@@ -332,41 +353,130 @@ def _ready_for_card(
     )
 
 
-def _interpret_with_stage(request: ConverseRequest) -> _TurnInterpretation:
+def _representative_attachment_id(
+    request: ConverseRequest,
+    draft: ComplaintDraft,
+    image_analysis: ImageAnalysis | None,
+) -> int | None:
+    attachment_ids = list(dict.fromkeys(draft.attachment_ids))
+    if not attachment_ids:
+        # 사진 없는 민원이 다수라 여기서부터 로그를 남기면 신호 없는 줄만 늘어난다.
+        return None
+    if len(attachment_ids) == 1:
+        skipped("representative_image", logger, skip_reason="single_attachment")
+        return attachment_ids[0]
+
+    summaries = {
+        image.attachment_id: image.summary.strip()
+        for turn in request.conversation_history
+        if turn.role == "user"
+        for image in turn.images or []
+        if image.summary and image.summary.strip()
+    }
+    if image_analysis:
+        summaries.update(
+            {
+                image.attachment_id: image.summary.strip()
+                for image in image_analysis.images
+                if image.summary and image.summary.strip()
+            }
+        )
+
+    candidate_summaries = [
+        summaries.get(attachment_id) for attachment_id in attachment_ids
+    ]
+    # 사진이 있으면 대표 사진도 항상 있어야 한다. 유사도를 못 구하는 경우엔
+    # 첫 번째 사진으로 떨어진다 — 전부 null보다는 기계적 선택이라도 낫다.
+    if any(summary is None for summary in candidate_summaries):
+        skipped("representative_image", logger, skip_reason="missing_summary")
+        return attachment_ids[0]
+
+    complaint_text = " ".join(
+        value.strip()
+        for value in (draft.issue_type, draft.location, draft.symptom)
+        if value and value.strip()
+    )
+    texts = [complaint_text, *(summary for summary in candidate_summaries if summary)]
+    try:
+        with stage("representative_image", logger) as step:
+            dense, _ = query_encoder().encode(texts, request.trace_id)
+            if len(dense) != len(texts):
+                raise EmbeddingError("embedding count did not match requested texts")
+            complaint_vector = dense[0]
+            scored: list[tuple[float, int]] = []
+            for attachment_id, vector in zip(attachment_ids, dense[1:], strict=True):
+                score = _cosine_similarity(complaint_vector, vector)
+                if score is None:
+                    raise EmbeddingError("cosine similarity undefined for embedding")
+                scored.append((score, attachment_id))
+            representative_id = max(scored, key=lambda item: item[0])[1]
+            step["representative_attachment_id"] = representative_id
+            return representative_id
+    except EmbeddingError as error:
+        logger.warning(
+            "representative_image_embedding_failed",
+            extra={"trace_id": request.trace_id, "error_type": type(error).__name__},
+        )
+        return attachment_ids[0]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
+    if not left or len(left) != len(right):
+        return None
+    if any(not math.isfinite(value) for value in left) or any(
+        not math.isfinite(value) for value in right
+    ):
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return None
+    return sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
+
+
+def _interpret_with_stage(
+    request: ConverseRequest, image_analysis: ImageAnalysis | None = None
+) -> _TurnInterpretation:
     with stage("text_interpretation", logger) as step:
-        return _interpret_turn(request, usage_sink=step)
-
-
-def _collect_evidence_concurrently(
-    request: ConverseRequest, image_urls: list[str]
-) -> tuple[_TurnInterpretation, ImageAnalysis | None]:
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        interpretation_future = executor.submit(
-            copy_context().run, _interpret_with_stage, request
+        return _interpret_turn(
+            request, image_analysis=image_analysis, usage_sink=step
         )
-        image_future = executor.submit(
-            copy_context().run, _run_image_analysis, image_urls
-        )
-        return interpretation_future.result(), image_future.result()
 
 
-def _gather_turn_evidence(request: ConverseRequest) -> _TurnEvidence:
+def _gather_turn_evidence(
+    request: ConverseRequest, image_analysis: ImageAnalysis | None
+) -> _TurnEvidence:
     text = (request.message.text or "").strip()
-    image_urls = request.message.image_urls
+    images = request.message.images
+    analysis = image_analysis if image_analysis and image_analysis.images else None
 
-    if not text:
-        skipped("text_interpretation", logger, skip_reason="no_text")
-        interpretation = _TurnInterpretation()
-        image_analysis = _run_image_analysis(image_urls)
-    elif image_urls:
-        interpretation, image_analysis = _collect_evidence_concurrently(
-            request, image_urls
+    if text or analysis:
+        interpretation = (
+            _interpret_with_stage(request, analysis)
+            if analysis
+            else _interpret_with_stage(request)
         )
     else:
-        interpretation = _interpret_with_stage(request)
-        image_analysis = _run_image_analysis(image_urls)
+        skipped("text_interpretation", logger, skip_reason="no_text_or_image_evidence")
+        interpretation = _TurnInterpretation()
 
-    return _TurnEvidence(interpretation, image_analysis, image_urls, text)
+    return _TurnEvidence(
+        interpretation,
+        analysis,
+        images,
+        text,
+    )
+
+
+def _pending_switch_images(request: ConverseRequest) -> list[ImageObservation]:
+    """직전 assistant의 전환 확인을 만든 user 턴 사진만 다음 민원에 넘긴다."""
+    history = request.conversation_history
+    if not history or history[-1].role != "assistant":
+        return []
+    previous_user = next(
+        (turn for turn in reversed(history[:-1]) if turn.role == "user"), None
+    )
+    return previous_user.images or [] if previous_user else []
 
 
 def _advance_complaint(
@@ -383,9 +493,15 @@ def _advance_complaint(
             if interpretation.switch == ComplaintSwitch.ACCEPT
             else request.complaint_draft
         )
-        draft = _append_image_urls(
+        current_images = evidence.images
+        pending_images = (
+            _pending_switch_images(request)
+            if interpretation.switch == ComplaintSwitch.ACCEPT
+            else []
+        )
+        draft = _append_images(
             _merge_structured_fields(previous, interpretation.fields),
-            evidence.image_urls,
+            [*pending_images, *current_images],
         )
         previous_symptom = previous.symptom if previous else None
 
@@ -402,6 +518,7 @@ def _advance_complaint(
         previous_symptom=previous_symptom,
         current_symptom=current_symptom,
         image_symptom=image_symptom,
+        image_context=_format_image_evidence(evidence.image_analysis),
     )
 
 
@@ -413,7 +530,7 @@ def _generate_turn_finalization(
     messages = TURN_FINALIZATION_PROMPT.format_messages(
         previous_symptom=json.dumps(progress.previous_symptom, ensure_ascii=False),
         current_symptom=json.dumps(progress.current_symptom, ensure_ascii=False),
-        image_summary=json.dumps(progress.image_symptom, ensure_ascii=False),
+        image_context=json.dumps(progress.image_context, ensure_ascii=False),
         current_message=json.dumps(evidence.message_text, ensure_ascii=False),
         next_action=next_action,
     )
@@ -435,12 +552,16 @@ def _generate_turn_finalization(
 
 
 def _finalize_turn(
-    progress: _ComplaintProgress, evidence: _TurnEvidence
+    request: ConverseRequest,
+    progress: _ComplaintProgress,
+    evidence: _TurnEvidence,
 ) -> _ComplaintTurn:
     interpretation = progress.interpretation
     if interpretation.switch == ComplaintSwitch.ASK:
         skipped("turn_finalization", logger, skip_reason="switch_confirmation")
-        return _build_switch_confirmation_turn(progress.draft, interpretation.fields)
+        return _build_switch_confirmation_turn(
+            progress.draft, interpretation.fields, evidence.image_analysis
+        )
 
     symptom_merge_needed = bool(
         (
@@ -466,10 +587,10 @@ def _finalize_turn(
                 progress.draft,
                 progress.missing_fields,
                 evidence.image_analysis,
-                evidence.image_urls,
+                evidence.images,
                 "",
             )
-        return _ready_for_card(progress.draft, evidence.image_analysis)
+        return _ready_for_card(request, progress.draft, evidence.image_analysis)
 
     next_action = f"ask_{asked}" if asked else "complete"
     finalization = _generate_turn_finalization(progress, evidence, next_action)
@@ -485,10 +606,10 @@ def _finalize_turn(
             draft,
             progress.missing_fields,
             evidence.image_analysis,
-            evidence.image_urls,
+            evidence.images,
             finalization.reply.strip() if finalization else "",
         )
-    return _ready_for_card(draft, evidence.image_analysis)
+    return _ready_for_card(request, draft, evidence.image_analysis)
 
 
 def _log_complaint_turn(
@@ -513,17 +634,19 @@ def _log_complaint_turn(
             "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
             "photo": _photo_label(
-                evidence.image_urls, turn.result.image_analysis, switch
+                evidence.images, turn.result.image_analysis, switch
             ),
         },
     )
 
 
-def handle_complaint(request: ConverseRequest) -> dict[str, object]:
+def handle_complaint(
+    request: ConverseRequest, *, image_analysis: ImageAnalysis | None = None
+) -> dict[str, object]:
     started_at = perf_counter()
-    evidence = _gather_turn_evidence(request)
+    evidence = _gather_turn_evidence(request, image_analysis)
     progress = _advance_complaint(request, evidence)
-    turn = _finalize_turn(progress, evidence)
+    turn = _finalize_turn(request, progress, evidence)
     _log_complaint_turn(request, evidence, progress, turn, started_at)
     return {
         "complaint_state": turn.complaint_state,

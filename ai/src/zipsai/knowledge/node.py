@@ -5,12 +5,19 @@ from qdrant_client import models
 from zipsai.contracts.converse import (
     Citation,
     ConverseRequest,
+    ImageAnalysis,
     QaCardDraft,
+    Route,
     RouteResult,
 )
 from zipsai.integrations.llm import generate_text
 from zipsai.integrations.qdrant import get_client
-from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT, NO_EVIDENCE, format_context
+from zipsai.knowledge.prompts import (
+    IMAGE_QUESTION_PROMPT,
+    KNOWLEDGE_PROMPT,
+    NO_EVIDENCE,
+    format_context,
+)
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
 from zipsai.observability import skipped, stage
 
@@ -29,18 +36,69 @@ EMPTY_QUESTION_REPLY = (
 SNIPPET_LENGTH = 200
 
 
-def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
+def handle_knowledge(
+    request: ConverseRequest, image_analysis: ImageAnalysis | None = None
+) -> dict[str, object]:
     question = (request.message.text or "").strip()
+    if not question and request.message.images:
+        question = next(
+            (
+                (turn.text or "").strip()
+                for turn in reversed(request.conversation_history)
+                if turn.role == "user" and (turn.text or "").strip()
+            ),
+            "",
+        )
     if not question:
-        # 이미지만 온 요청은 intent가 complaint로 보내지만, current_route=knowledge로
-        # 유지되는 경로가 있어 검색까지 가기 전에 막는다.
-        # 질문이 없으니 QA 카드도 만들지 않는다. 관리자에게 빈 질문이 전달된다.
         for name in ("encode", "gate", "hybrid", "context", "generate"):
             skipped(name, logger, skip_reason="empty_question")
         return _fallback(request, reason="empty_question", reply=EMPTY_QUESTION_REPLY)
 
+    previous_image_turn = None
+    image_observations = image_analysis.images if image_analysis else []
+    if (
+        not request.message.images
+        and request.message.text
+        and request.current_route is Route.CLARIFY
+    ):
+        previous_image_turn = next(
+            (
+                turn
+                for turn in reversed(request.conversation_history)
+                if turn.role == "user"
+            ),
+            None,
+        )
+        image_observations = previous_image_turn.images or [] if previous_image_turn else []
+
+    observations = [
+        value.strip()
+        for image in image_observations
+        for value in (image.summary, image.ocr_text)
+        if value and value.strip()
+    ]
+    image_context = "; ".join(observations)
+    search_question = question
+    if image_context:
+        with stage("query_rewrite", logger) as step:
+            prompt_parts = [f"질문: {question}"]
+            if previous_image_turn and previous_image_turn.text:
+                prompt_parts.append(
+                    f"사진 첨부 때 발화: {previous_image_turn.text.strip()}"
+                )
+            prompt_parts.append(f"사진 분석 맥락: {image_context}")
+            rewritten = generate_text(
+                system_prompt=IMAGE_QUESTION_PROMPT,
+                user_prompt="\n".join(prompt_parts),
+                usage_sink=step,
+            ).strip()
+            search_question = rewritten or question
+            step["question_chars"] = len(search_question)
+
     chunks = search_chunks(
-        encode_question(question, encoder=query_encoder(), trace_id=request.trace_id),
+        encode_question(
+            search_question, encoder=query_encoder(), trace_id=request.trace_id
+        ),
         request.building_id,
         client=get_client(),
     )
@@ -53,7 +111,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
             request,
             reason="no_hit",
             reply=NO_EVIDENCE_REPLY,
-            qa_question=question,
+            qa_question=search_question,
         )
 
     with stage("context", logger) as step:
@@ -71,7 +129,10 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
         ]
         step["context_chars"] = len(context)
 
-    messages = KNOWLEDGE_PROMPT.format_messages(question=question, context=context)
+    messages = KNOWLEDGE_PROMPT.format_messages(
+        question=search_question,
+        context=context,
+    )
     with stage("generate", logger) as step:
         answer = generate_text(
             system_prompt=str(messages[0].content),
@@ -89,7 +150,7 @@ def handle_knowledge(request: ConverseRequest) -> dict[str, object]:
             request,
             reason="model_declined",
             reply=NO_EVIDENCE_REPLY,
-            qa_question=question,
+            qa_question=search_question,
         )
 
     return {
