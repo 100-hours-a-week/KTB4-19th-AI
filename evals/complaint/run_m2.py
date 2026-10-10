@@ -56,7 +56,11 @@ def data_url(path: Path) -> str:
 
 
 def _request(item_id: str, url: str):
-    from zipsai.contracts.converse import ConverseRequest, IncomingMessage
+    from zipsai.contracts.converse import (
+        ConverseRequest,
+        ImageAttachment,
+        IncomingMessage,
+    )
 
     return ConverseRequest(
         building_id=1,
@@ -70,7 +74,7 @@ def _request(item_id: str, url: str):
         message=IncomingMessage(
             message_id=item_id,
             text="이 사진 봐 주세요",
-            image_urls=[url],
+            images=[ImageAttachment(attachment_id=1, url=url)],
         ),
         conversation_history=[],
         complaint_draft=None,

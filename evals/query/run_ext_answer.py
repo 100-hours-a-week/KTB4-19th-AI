@@ -91,7 +91,6 @@ def request_for(item: Item):
             message_id=f"{item.id}-h{index}",
             role=role,
             text=text,
-            image_urls=[],
         )
         for index, (role, text) in enumerate(item.history)
     ]
@@ -104,7 +103,7 @@ def request_for(item: Item):
         trace_id=item.id,
         current_route=None,
         current_complaint_state=None,
-        message=IncomingMessage(message_id=item.id, text=item.question, image_urls=[]),
+        message=IncomingMessage(message_id=item.id, text=item.question),
         conversation_history=history,
         complaint_draft=None,
     )

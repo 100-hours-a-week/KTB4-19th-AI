@@ -45,7 +45,7 @@ def request_for(item: GoldItem):
         trace_id=item.id,
         current_route=None,
         current_complaint_state=None,
-        message=IncomingMessage(message_id=item.id, text=item.question, image_urls=[]),
+        message=IncomingMessage(message_id=item.id, text=item.question),
         conversation_history=[],
         complaint_draft=None,
     )

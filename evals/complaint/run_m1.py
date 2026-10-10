@@ -56,7 +56,6 @@ def _request(item_id: str, index: int, text: str, history: list, draft, state):
             message_id=f"{item_id}-h{turn_index}",
             role=role,
             text=turn_text,
-            image_urls=[],
         )
         for turn_index, (role, turn_text) in enumerate(history)
     ]
@@ -69,9 +68,7 @@ def _request(item_id: str, index: int, text: str, history: list, draft, state):
         trace_id=item_id,
         current_route="complaint" if index else None,
         current_complaint_state=state if index else None,
-        message=IncomingMessage(
-            message_id=f"{item_id}-{index}", text=text, image_urls=[]
-        ),
+        message=IncomingMessage(message_id=f"{item_id}-{index}", text=text),
         conversation_history=turns,
         complaint_draft=draft,
     )

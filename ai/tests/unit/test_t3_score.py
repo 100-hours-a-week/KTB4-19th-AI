@@ -115,7 +115,7 @@ def test_request_sends_only_the_question() -> None:
     assert request.current_route is None
     assert request.complaint_draft is None
     assert request.message.text == item.question
-    assert request.message.image_urls == []
+    assert request.message.images == []
     assert request.conversation_history == []
 
 
