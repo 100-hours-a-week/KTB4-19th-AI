@@ -124,6 +124,7 @@ def score_sample(client, encoder, items, collection: str) -> list[AnswerRecord]:
                 retrieved_ids=retrieved,
                 unsupported=unsupported,
                 judge_failed=judge_failed,
+                evidence=evidence,
             )
         )
         print(f"채점 {index}/{len(items)}  {item.id}  {outcome}", flush=True)

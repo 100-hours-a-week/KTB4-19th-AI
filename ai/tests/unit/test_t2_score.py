@@ -147,3 +147,26 @@ def test_report_names_the_twenty_rows() -> None:
     assert "합격으로 판정하지 않습니다" in text
     assert "b001-q08" in text
     assert "b006-q02" in text
+
+
+def test_answer_record_keeps_evidence_default_empty() -> None:
+    assert _row().evidence == ""
+
+
+def test_completeness_counts_only_judged_rows() -> None:
+    rows = [
+        score_t2.CompletenessRecord("a", ()),
+        score_t2.CompletenessRecord("b", ("단수 안내",)),
+        score_t2.CompletenessRecord("c", ("온수", "시간")),
+        score_t2.CompletenessRecord("d", None, True, "judge_failed"),
+    ]
+    metrics = score_t2.aggregate_completeness(rows)
+    assert metrics["G7"] == pytest.approx(1 / 3)
+    assert metrics["G7_judged"] == 3
+    assert metrics["G7_missing"] == 3
+    assert metrics["G7_failed"] == 1
+
+
+def test_completeness_is_none_without_judged_rows() -> None:
+    rows = [score_t2.CompletenessRecord("a", None, True, "restore_mismatch")]
+    assert score_t2.aggregate_completeness(rows)["G7"] is None

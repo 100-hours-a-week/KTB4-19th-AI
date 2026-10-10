@@ -52,6 +52,29 @@ class AnswerRecord:
     retrieved_ids: tuple[str, ...]
     unsupported: tuple[str, ...] | None
     judge_failed: bool
+    # 답변이 받은 근거 본문. G7이 답변을 다시 만들지 않고 이 값으로 채점한다.
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class CompletenessRecord:
+    item_id: str
+    missing: tuple[str, ...] | None
+    failed: bool = False
+    reason: str | None = None
+
+
+def aggregate_completeness(rows: list[CompletenessRecord]) -> dict[str, object]:
+    judged = [row for row in rows if not row.failed and row.missing is not None]
+    complete = [row for row in judged if not row.missing]
+    return {
+        "G7_n": len(rows),
+        "G7": (len(complete) / len(judged)) if judged else None,
+        "G7_complete": len(complete),
+        "G7_judged": len(judged),
+        "G7_missing": sum(len(row.missing or ()) for row in judged),
+        "G7_failed": sum(1 for row in rows if row.failed),
+    }
 
 
 def _take(pool: list[GoldItem], answerable: bool, scope: str | None, count: int) -> list[GoldItem]:
