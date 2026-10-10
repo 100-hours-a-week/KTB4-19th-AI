@@ -1,0 +1,120 @@
+{"id": "AO-01", "file": "AO-01.jpg", "ocr_text": "E1", "must_include": ["인덕션", "E1"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-02", "file": "AO-02.jpg", "ocr_text": "E4", "must_include": ["식기세척기", "E4"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-03", "file": "AO-03.jpg", "ocr_text": "dE", "must_include": ["건조기", "dE"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-04", "file": "AO-04.jpg", "ocr_text": "UE", "must_include": ["세탁기", "UE"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-05", "file": "AO-05.jpg", "ocr_text": "E04\n73°C", "must_include": ["보일러", "E04", "73"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-06", "file": "AO-06.jpg", "ocr_text": "E01\n41°C", "must_include": ["보일러", "E01", "41"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-07", "file": "AO-07.jpg", "ocr_text": "E3", "must_include": ["인터폰", "E3"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-08", "file": "AO-08.jpg", "ocr_text": "Lo", "must_include": ["도어락", "Lo"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-09", "file": "AO-09.jpg", "ocr_text": "점검중", "must_include": ["엘리베이터", "점검중"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-10", "file": "AO-10.jpg", "ocr_text": "0.3 bar", "must_include": ["보일러", "0.3"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-11", "file": "AO-11.jpg", "ocr_text": "E2", "must_include": ["온도조절기", "E2"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-12", "file": "AO-12.jpg", "ocr_text": "CH05", "must_include": ["에어컨", "CH05"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-13", "file": "AO-13.jpg", "ocr_text": "거실등", "must_include": ["분전함", "차단기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-14", "file": "AO-14.jpg", "ocr_text": "0.0 V", "must_include": ["콘센트", "0.0"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-15", "file": "AO-15.jpg", "ocr_text": "18", "must_include": ["세탁기", "18"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-16", "file": "AO-16.jpg", "ocr_text": "92%", "must_include": ["싱크대", "92"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-17", "file": "AO-17.jpg", "ocr_text": "82%", "must_include": ["천장", "82"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-18", "file": "AO-18.jpg", "ocr_text": "500 mL", "must_include": ["탁한", "500"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-19", "file": "AO-19.jpg", "ocr_text": "0.4 bar", "must_include": ["샤워", "0.4"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-20", "file": "AO-20.jpg", "ocr_text": "12", "must_include": ["식기세척기", "12"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-21", "file": "AO-21.jpg", "ocr_text": "07", "must_include": ["세탁기", "07"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-22", "file": "AO-22.jpg", "ocr_text": "E10", "must_include": ["보일러", "E10"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-23", "file": "AO-23.jpg", "ocr_text": "3F", "must_include": ["엘리베이터", "3F"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-24", "file": "AO-24.jpg", "ocr_text": "Lo", "must_include": ["도어락", "Lo"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-25", "file": "AO-25.jpg", "ocr_text": "4", "must_include": ["전기레인지", "4"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-26", "file": "AO-26.jpg", "ocr_text": "26°C", "must_include": ["실외기", "26"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-27", "file": "AO-27.jpg", "ocr_text": "81%", "must_include": ["곰팡이", "81"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-28", "file": "AO-28.jpg", "ocr_text": "2", "must_include": ["바퀴벌레", "2"], "must_not_include": ["개미", "불꽃"]}
+{"id": "AO-29", "file": "AO-29.jpg", "ocr_text": "72 dB", "must_include": ["실외기", "72"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AO-30", "file": "AO-30.jpg", "ocr_text": "주방", "must_include": ["분전함", "전선"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-01", "file": "AN-01.jpg", "ocr_text": null, "must_include": ["천장", "얼룩"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-02", "file": "AN-02.jpg", "ocr_text": null, "must_include": ["천장", "물방울"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-03", "file": "AN-03.jpg", "ocr_text": null, "must_include": ["벽지", "얼룩"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-04", "file": "AN-04.jpg", "ocr_text": null, "must_include": ["싱크대", "배관"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-05", "file": "AN-05.jpg", "ocr_text": null, "must_include": ["변기", "물방울"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-06", "file": "AN-06.jpg", "ocr_text": null, "must_include": ["싱크대", "배수구"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-07", "file": "AN-07.jpg", "ocr_text": null, "must_include": ["욕실", "배수구"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-08", "file": "AN-08.jpg", "ocr_text": null, "must_include": ["변기", "바닥"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-09", "file": "AN-09.jpg", "ocr_text": null, "must_include": ["베란다", "거품"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-10", "file": "AN-10.jpg", "ocr_text": null, "must_include": ["싱크대", "탁한"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-11", "file": "AN-11.jpg", "ocr_text": null, "must_include": ["세면대", "거품"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-12", "file": "AN-12.jpg", "ocr_text": null, "must_include": ["샤워기", "물줄기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-13", "file": "AN-13.jpg", "ocr_text": null, "must_include": ["곰팡이", "샤워"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-14", "file": "AN-14.jpg", "ocr_text": null, "must_include": ["곰팡이", "창틀"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-15", "file": "AN-15.jpg", "ocr_text": null, "must_include": ["곰팡이", "벽"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-16", "file": "AN-16.jpg", "ocr_text": null, "must_include": ["곰팡이", "옷장"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-17", "file": "AN-17.jpg", "ocr_text": null, "must_include": ["분전반", "차단기"], "must_not_include": ["그을음", "불꽃"]}
+{"id": "AN-18", "file": "AN-18.jpg", "ocr_text": null, "must_include": ["콘센트", "그을음"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-19", "file": "AN-19.jpg", "ocr_text": null, "must_include": ["전선", "피복"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-20", "file": "AN-20.jpg", "ocr_text": null, "must_include": ["바퀴벌레"], "must_not_include": ["개미", "불꽃"]}
+{"id": "AN-21", "file": "AN-21.jpg", "ocr_text": null, "must_include": ["개미", "창틀"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-22", "file": "AN-22.jpg", "ocr_text": null, "must_include": ["배설물"], "must_not_include": ["쥐", "불꽃"]}
+{"id": "AN-23", "file": "AN-23.jpg", "ocr_text": null, "must_include": ["유리", "균열"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-24", "file": "AN-24.jpg", "ocr_text": null, "must_include": ["타일", "균열"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-25", "file": "AN-25.jpg", "ocr_text": null, "must_include": ["방충망"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-26", "file": "AN-26.jpg", "ocr_text": null, "must_include": ["옷장", "경첩"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-27", "file": "AN-27.jpg", "ocr_text": null, "must_include": ["보일러", "연통"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-28", "file": "AN-28.jpg", "ocr_text": null, "must_include": ["배관", "밸브"], "must_not_include": ["물웅덩이", "불꽃"]}
+{"id": "AN-29", "file": "AN-29.jpg", "ocr_text": null, "must_include": ["실외기", "기울"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "AN-30", "file": "AN-30.jpg", "ocr_text": null, "must_include": ["굴삭기"], "must_not_include": ["바퀴벌레", "보일러"]}
+{"id": "NO-01", "file": "NO-01.jpg", "ocr_text": "3", "must_include": ["인덕션", "3"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-02", "file": "NO-02.jpg", "ocr_text": "1:20", "must_include": ["식기세척기", "1:20"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-03", "file": "NO-03.jpg", "ocr_text": "00:35", "must_include": ["세탁기", "00:35"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-04", "file": "NO-04.jpg", "ocr_text": "00:18", "must_include": ["세탁기", "00:18"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-05", "file": "NO-05.jpg", "ocr_text": "55°C", "must_include": ["보일러", "55"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-06", "file": "NO-06.jpg", "ocr_text": "15320\nm³", "must_include": ["가스계량기", "15320"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-07", "file": "NO-07.jpg", "ocr_text": "24°C", "must_include": ["월패드", "24"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-08", "file": "NO-08.jpg", "ocr_text": "5F", "must_include": ["엘리베이터", "5F"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-09", "file": "NO-09.jpg", "ocr_text": "설정 23°C\n현재 23°C", "must_include": ["온도조절기", "23"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-10", "file": "NO-10.jpg", "ocr_text": "1 2 3\n4 5 6\n7 8 9\n0", "must_include": ["도어락"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-11", "file": "NO-11.jpg", "ocr_text": "26°C", "must_include": ["에어컨", "26"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-12", "file": "NO-12.jpg", "ocr_text": "거실등", "must_include": ["분전반", "거실등"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-13", "file": "NO-13.jpg", "ocr_text": "01284\nm³", "must_include": ["수도계량기", "01284"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-14", "file": "NO-14.jpg", "ocr_text": "1.2 bar", "must_include": ["보일러", "1.2"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-15", "file": "NO-15.jpg", "ocr_text": "45%", "must_include": ["습도계", "45"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-16", "file": "NO-16.jpg", "ocr_text": "22°C", "must_include": ["온도조절기", "22"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-17", "file": "NO-17.jpg", "ocr_text": "28", "must_include": ["세탁기", "28"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-18", "file": "NO-18.jpg", "ocr_text": "8F", "must_include": ["엘리베이터", "8F"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-19", "file": "NO-19.jpg", "ocr_text": "00:30", "must_include": ["전자레인지", "00:30"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-20", "file": "NO-20.jpg", "ocr_text": "대기", "must_include": ["인터폰", "대기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-21", "file": "NO-21.jpg", "ocr_text": "40°C", "must_include": ["세면대", "40"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-22", "file": "NO-22.jpg", "ocr_text": "좋음", "must_include": ["공기질", "좋음"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-23", "file": "NO-23.jpg", "ocr_text": "38 dB", "must_include": ["소음", "38"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-24", "file": "NO-24.jpg", "ocr_text": "내일 몇 시에 봐\n7시에 보자", "must_include": ["내일", "7시"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-25", "file": "NO-25.jpg", "ocr_text": "배송 완료", "must_include": ["택배", "배송"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-26", "file": "NO-26.jpg", "ocr_text": "18:30", "must_include": ["시계", "18:30"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-27", "file": "NO-27.jpg", "ocr_text": "입차", "must_include": ["차단기", "입차"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-28", "file": "NO-28.jpg", "ocr_text": "자동", "must_include": ["에어컨", "자동"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-29", "file": "NO-29.jpg", "ocr_text": "작업 안내\n08:00-18:00", "must_include": ["안내", "08:00"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NO-30", "file": "NO-30.jpg", "ocr_text": "ECO", "must_include": ["공기청정기", "ECO"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-01", "file": "NN-01.jpg", "ocr_text": null, "must_include": ["거실"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-02", "file": "NN-02.jpg", "ocr_text": null, "must_include": ["싱크대"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-03", "file": "NN-03.jpg", "ocr_text": null, "must_include": ["세면대"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-04", "file": "NN-04.jpg", "ocr_text": null, "must_include": ["욕실"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-05", "file": "NN-05.jpg", "ocr_text": null, "must_include": ["욕조"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-06", "file": "NN-06.jpg", "ocr_text": null, "must_include": ["거실"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-07", "file": "NN-07.jpg", "ocr_text": null, "must_include": ["침대"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-08", "file": "NN-08.jpg", "ocr_text": null, "must_include": ["붙박이장"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-09", "file": "NN-09.jpg", "ocr_text": null, "must_include": ["베란다"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-10", "file": "NN-10.jpg", "ocr_text": null, "must_include": ["방충망"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-11", "file": "NN-11.jpg", "ocr_text": null, "must_include": ["변기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-12", "file": "NN-12.jpg", "ocr_text": null, "must_include": ["콘센트"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-13", "file": "NN-13.jpg", "ocr_text": null, "must_include": ["콘센트"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-14", "file": "NN-14.jpg", "ocr_text": null, "must_include": ["분전함"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-15", "file": "NN-15.jpg", "ocr_text": null, "must_include": ["인터폰"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-16", "file": "NN-16.jpg", "ocr_text": null, "must_include": ["도어락"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-17", "file": "NN-17.jpg", "ocr_text": null, "must_include": ["세탁기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-18", "file": "NN-18.jpg", "ocr_text": null, "must_include": ["세탁기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-19", "file": "NN-19.jpg", "ocr_text": null, "must_include": ["엘리베이터"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-20", "file": "NN-20.jpg", "ocr_text": null, "must_include": ["우편함"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-21", "file": "NN-21.jpg", "ocr_text": null, "must_include": ["실외기"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-22", "file": "NN-22.jpg", "ocr_text": null, "must_include": ["덕트"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-23", "file": "NN-23.jpg", "ocr_text": null, "must_include": ["세면대"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-24", "file": "NN-24.jpg", "ocr_text": null, "must_include": ["텔레비전"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-25", "file": "NN-25.jpg", "ocr_text": null, "must_include": ["텔레비전"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-26", "file": "NN-26.jpg", "ocr_text": null, "must_include": ["소파"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-27", "file": "NN-27.jpg", "ocr_text": null, "must_include": ["김치"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-28", "file": "NN-28.jpg", "ocr_text": null, "must_include": ["강아지"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-29", "file": "NN-29.jpg", "ocr_text": null, "must_include": ["복도"], "must_not_include": ["바퀴벌레", "불꽃"]}
+{"id": "NN-30", "file": "NN-30.jpg", "ocr_text": null, "must_include": ["소파"], "must_not_include": ["바퀴벌레", "불꽃"]}

@@ -1,0 +1,1978 @@
+{
+  "metrics": {
+    "n": 100,
+    "answerable": 60,
+    "G2": 0.0,
+    "G2_declined": 0,
+    "G5": 1.0,
+    "G5_n": 54,
+    "G6": 132,
+    "G1": 1,
+    "G1_judged": 54,
+    "G1_failed": 0,
+    "G1_provisional": false
+  },
+  "rows": [
+    {
+      "item_id": "b001-q08",
+      "question": "주차 자리는 몇 개인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "주차 자리는 선착순 12면입니다.",
+      "answer_chars": 18,
+      "citation_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-001-물탱크청소"
+      ],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-001-물탱크청소"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q13",
+      "question": "강아지를 키워도 되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q14",
+      "question": "물탱크 청소는 언제 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "2026년 9월 20일 토요일 오전 9시부터 오후 3시까지 옥상 물탱크를 청소합니다.",
+      "answer_chars": 47,
+      "citation_ids": [
+        "b001-notice-001-물탱크청소",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-notice-003-분리수거경고"
+      ],
+      "retrieved_ids": [
+        "b001-notice-001-물탱크청소",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-notice-003-분리수거경고",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q09",
+      "question": "관리비에 무엇이 포함되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 정액 월 35,000원이며 공용전기와 수도가 포함됩니다. 인터넷과 도시가스는 따로 내셔야 합니다.",
+      "answer_chars": 59,
+      "citation_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q06",
+      "question": "주차 자리는 몇 면인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "주차 자리는 15면입니다.",
+      "answer_chars": 14,
+      "citation_ids": [
+        "b004-rule-001-생활수칙",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q09",
+      "question": "택배는 어디서 찾나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "1층 보관실 선반에서 찾아가 주세요.",
+      "answer_chars": 20,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b006-q08",
+      "question": "주차장은 몇 면인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b006-q18",
+      "question": "보일러 연결부 점검은 언제예요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "2026년 10월 13일 화요일 오전 10시부터 오후 4시까지 각 세대 보일러 연결부를 확인합니다.",
+      "answer_chars": 55,
+      "citation_ids": [
+        "b006-notice-004-난방점검",
+        "b006-notice-003-승강기점검",
+        "b006-notice-002-물탱크청소",
+        "b006-notice-001-분리배출안내",
+        "b006-facility-001-세탁주차안내"
+      ],
+      "retrieved_ids": [
+        "b006-notice-004-난방점검",
+        "b006-notice-003-승강기점검",
+        "b006-notice-002-물탱크청소",
+        "b006-notice-001-분리배출안내",
+        "b006-facility-001-세탁주차안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q04",
+      "question": "세탁실은 몇 시까지 쓸 수 있나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "지하 공용 세탁실은 오전 6시부터 밤 11시까지 이용할 수 있습니다. 밤 11시 이후에는 소음 때문에 잠급니다.",
+      "answer_chars": 62,
+      "citation_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙",
+        "b001-notice-001-물탱크청소"
+      ],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙",
+        "b001-notice-001-물탱크청소"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q05",
+      "question": "세탁기 한 번 돌리면 얼마예요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁기 한 번 이용 요금은 기기에 따라 다릅니다.\n- 세탁기 1호기 표준: 2,500원\n- 세탁기 1호기 이불: 3,000원\n- 세탁기 2호기 표준: 2,500원\n- 세탁기 2호기 이불: 3,500원\n- 세탁기 2호기 강력: 2,500원",
+      "answer_chars": 132,
+      "citation_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q06",
+      "question": "세탁실에서 카드로 결제되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁기와 건조기는 동전과 교통카드를 받습니다.",
+      "answer_chars": 25,
+      "citation_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q07",
+      "question": "세탁기가 중간에 멈췄는데 어떻게 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁기가 중간에 멈추면 억지로 열지 말고 관리인에게 알려 주세요. 결제된 금액은 다음 이용 때 차감해 드립니다.",
+      "answer_chars": 62,
+      "citation_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-notice-001-물탱크청소",
+        "b001-rule-001-생활수칙-v2"
+      ],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-facility-001-세탁실안내",
+        "b001-notice-001-물탱크청소",
+        "b001-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q09",
+      "question": "관리비가 얼마인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 월 50,000원이며 공용전기, 수도, 인터넷이 포함되고 도시가스는 별도로 납부하셔야 합니다.",
+      "answer_chars": 57,
+      "citation_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q10",
+      "question": "관리비에 뭐가 포함되어 있나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비에는 공용전기, 수도, 인터넷이 포함되어 있으며 도시가스는 별도로 납부해야 합니다. 관리비 월액은 50,000원입니다.",
+      "answer_chars": 69,
+      "citation_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙",
+        "b001-facility-001-세탁실안내"
+      ],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙",
+        "b001-facility-001-세탁실안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q11",
+      "question": "택배는 어디서 받나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q12",
+      "question": "공동현관 비밀번호는 언제 바뀌나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "공동현관 비밀 번호는 분기마다 바꿉니다. 바뀌는 일주일 전에 게시판과 문자로 알려드립니다.",
+      "answer_chars": 50,
+      "citation_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-notice-004-소방시설점검",
+        "b001-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙-v2",
+        "b001-notice-005-관리비인상",
+        "b001-notice-004-소방시설점검",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q15",
+      "question": "승강기 점검은 언제인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "9월 25일 목요일 오후 2시부터 4시까지 승강기 정기점검으로 승강기를 세웁니다. 그 시간에는 계단을 이용해 주세요.",
+      "answer_chars": 65,
+      "citation_ids": [
+        "b001-notice-002-승강기점검",
+        "b001-notice-001-물탱크청소",
+        "b001-notice-004-소방시설점검",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b001-notice-002-승강기점검",
+        "b001-notice-001-물탱크청소",
+        "b001-notice-004-소방시설점검",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q05",
+      "question": "세탁실은 몇 시까지 운영하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁실은 07:00~22:00 운영합니다.",
+      "answer_chars": 23,
+      "citation_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-002-정기점검"
+      ],
+      "retrieved_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-002-정기점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q06",
+      "question": "세탁기 표준 코스는 얼마예요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁기 표준 요금은 2,000원입니다.",
+      "answer_chars": 21,
+      "citation_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q07",
+      "question": "주차는 몇 자리이고 어떻게 등록하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "주차는 8면이며 차량등록제로 운영됩니다. 등록 차량은 우선하고 등록되지 않은 차량은 주차할 수 없습니다. 등록 방법은 문서에 명시되어 있지 않습니다.",
+      "answer_chars": 83,
+      "citation_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q08",
+      "question": "관리비는 얼마인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 정액 월 35,000원입니다. 공용전기와 수도가 포함되며 인터넷과 도시가스는 따로 내셔야 합니다. 매달 20일까지 납부해 주세요.",
+      "answer_chars": 77,
+      "citation_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q10",
+      "question": "현관은 어떻게 들어가나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q11",
+      "question": "택배는 어디에 놓이나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "택배는 1층 선반에 보관합니다.",
+      "answer_chars": 17,
+      "citation_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q12",
+      "question": "관리비는 매달 며칠까지 내야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "매달 20일까지 납부해 주세요.",
+      "answer_chars": 17,
+      "citation_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙",
+        "b002-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q13",
+      "question": "공용 전기설비 점검은 언제 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "정기점검은 2026년 10월 8일 목요일 오전 10시부터 낮 12시까지 공용 전기설비를 점검합니다.",
+      "answer_chars": 55,
+      "citation_ids": [
+        "b002-notice-002-정기점검",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b002-notice-002-정기점검",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q14",
+      "question": "세탁실에서는 어떻게 결제하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "세탁실은 동전으로 결제합니다. 세탁실 안의 교환기를 이용해 주세요.",
+      "answer_chars": 37,
+      "citation_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "retrieved_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q15",
+      "question": "퇴실은 언제 알려야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "퇴실 예정일 두 달 전까지 관리인에게 알려 주세요.",
+      "answer_chars": 28,
+      "citation_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q04",
+      "question": "주차는 몇 대까지 가능한가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "주차는 앞마당 선착순 6면이며 야간만 이용할 수 있습니다.",
+      "answer_chars": 32,
+      "citation_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q05",
+      "question": "관리비가 얼마인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 정액 월 28,000원입니다. 공용전기가 포함되고 수도와 도시가스는 따로 납부합니다. 매달 25일까지 내 주세요.",
+      "answer_chars": 68,
+      "citation_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q06",
+      "question": "현관 열쇠를 복사해도 되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q07",
+      "question": "택배는 어디서 찾나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q08",
+      "question": "반려동물을 키울 때 주의할 점이 있나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "반려동물은 소음과 배변 문제를 먼저 생각해 주시고, 복도에서는 안거나 목줄을 채워 주세요.",
+      "answer_chars": 50,
+      "citation_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내",
+        "b003-notice-002-물탱크안내"
+      ],
+      "retrieved_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검",
+        "b003-notice-001-분리배출안내",
+        "b003-notice-002-물탱크안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q09",
+      "question": "물탱크 청소는 언제 진행하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "2026년 10월 18일 일요일 오전 9시부터 낮 12시까지 옥상 물탱크를 청소합니다. 작업 중에는 물 사용을 줄여 주세요.",
+      "answer_chars": 69,
+      "citation_ids": [
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검"
+      ],
+      "retrieved_ids": [
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-001-분리배출안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q05",
+      "question": "세탁실은 어디에 있고 언제 쓰나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "지하 공용 세탁실에 세탁기 3대와 건조기 1대가 있으며 06:00~24:00 이용할 수 있습니다.",
+      "answer_chars": 54,
+      "citation_ids": [
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q07",
+      "question": "관리비는 얼마이고 무엇이 들어가나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 정액 월 60,000원이며 공용전기, 수도, 청소비가 포함됩니다. 도시가스와 인터넷은 별도입니다.",
+      "answer_chars": 59,
+      "citation_ids": [
+        "b004-rule-001-생활수칙",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q08",
+      "question": "공동현관 비밀번호는 얼마나 자주 바뀌나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "반기별로 변경됩니다.",
+      "answer_chars": 11,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검",
+        "b004-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검",
+        "b004-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q10",
+      "question": "퇴실은 몇 주 전에 알려야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "퇴실은 3주 전까지 알려 주세요. 열쇠와 현관 비밀번호 안내물을 반납하고 방을 정리해 주세요.",
+      "answer_chars": 52,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q11",
+      "question": "소방시설 점검은 언제인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "소방시설 점검은 2026년 11월 4일 수요일 오전 10시부터 오후 1시까지 진행됩니다. 점검 중 경보음이 잠시 울릴 수 있습니다.",
+      "answer_chars": 73,
+      "citation_ids": [
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q12",
+      "question": "점검 때 집에 있어야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "네, 점검 시간에는 집 안에 계시면 확인이 빠릅니다.",
+      "answer_chars": 29,
+      "citation_ids": [
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q13",
+      "question": "택배를 오래 보관해도 되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "도착한 물건은 확인 후 당일 가져가 주세요. 나머지 내용은 빌딩 문서에 명시되어 있지 않습니다.",
+      "answer_chars": 53,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q14",
+      "question": "계단에 자전거를 세워도 되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "계단과 복도에 자전거를 두지 말아 주세요.",
+      "answer_chars": 23,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-002-소방점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q15",
+      "question": "밤에는 몇 시부터 조용히 해야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "밤 11시부터 아침 7시까지는 큰 소리를 내지 말아 주세요.",
+      "answer_chars": 33,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검",
+        "b004-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-notice-001-분리배출안내",
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b005-q05",
+      "question": "주차는 예약을 해야 하나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "네, 주차는 예약제로 운영됩니다. 이용 전 관리인에게 시간을 알려 주세요.",
+      "answer_chars": 41,
+      "citation_ids": [
+        "b005-facility-001-공용시설안내",
+        "b005-rule-001-생활수칙",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b005-facility-001-공용시설안내",
+        "b005-rule-001-생활수칙",
+        "b005-rule-001-생활수칙",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b005-q06",
+      "question": "관리비는 얼마인가요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비는 정액 월 45,000원입니다. 공용전기, 수도, 공용청소가 포함되고 도시가스는 별도입니다. 매달 25일까지 납부해 주세요.",
+      "answer_chars": 73,
+      "citation_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-facility-001-공용시설안내",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-rule-001-생활수칙",
+        "b005-facility-001-공용시설안내",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b005-q07",
+      "question": "관리비에 청소비도 포함되나요?",
+      "answerable": true,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "네, 관리비에 공용청소가 포함됩니다. 관리비는 정액 월 45,000원이며 공용전기, 수도, 공용청소가 포함되고 도시가스는 별도입니다.",
+      "answer_chars": 74,
+      "citation_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-facility-001-공용시설안내",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-facility-001-공용시설안내",
+        "b005-rule-001-생활수칙",
+        "b005-notice-002-정기소독",
+        "b005-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q03",
+      "question": "페트병은 어떻게 버려야 하나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "페트병은 라벨을 떼고 찌그러뜨려 투명봉투에 따로 버리면 됩니다.",
+      "answer_chars": 35,
+      "citation_ids": [
+        "b001-notice-003-분리수거경고",
+        "b001-rule-001-생활수칙",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙-v2"
+      ],
+      "retrieved_ids": [
+        "b001-notice-003-분리수거경고",
+        "b001-rule-001-생활수칙",
+        "b001-notice-005-관리비인상",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q03",
+      "question": "종량제봉투를 파는 곳이 있나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "행복마트, 대학로편의점, 늘푸른슈퍼에서 종량제봉투를 살 수 있습니다.",
+      "answer_chars": 38,
+      "citation_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검"
+      ],
+      "retrieved_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b007-q04",
+      "question": "헌 옷은 어떻게 버리나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "헌 옷은 의류수거함에 버려 주세요.",
+      "answer_chars": 19,
+      "citation_ids": [
+        "b007-notice-001-분리배출안내",
+        "b007-facility-001-공용시설안내",
+        "b007-rule-001-생활수칙",
+        "b007-notice-002-정기안내"
+      ],
+      "retrieved_ids": [
+        "b007-notice-001-분리배출안내",
+        "b007-facility-001-공용시설안내",
+        "b007-rule-001-생활수칙",
+        "b007-rule-001-생활수칙",
+        "b007-notice-002-정기안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b010-q04",
+      "question": "소파를 버리려면 어떻게 하나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q01",
+      "question": "일반 쓰레기와 재활용은 언제 버리나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "일반 쓰레기는 월, 수, 금에 배출하고, 재활용은 화, 목에 배출합니다. 배출 시간은 저녁 7시부터 자정까지이며, 건물 앞 지정 배출대에 내놓아 주세요.",
+      "answer_chars": 85,
+      "citation_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내"
+      ],
+      "retrieved_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검",
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b006-q02",
+      "question": "쓰레기를 내놓는 시간과 장소가 궁금해요.",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "일반 쓰레기는 화, 목, 토에 배출합니다. 재활용은 월, 금에 배출합니다. 음식물은 매일 배출합니다. 배출 시간은 저녁 8시 ~ 새벽 2시이고, 장소는 골목 입구 공동 집하장에 내놓아 주세요.",
+      "answer_chars": 107,
+      "citation_ids": [
+        "b006-notice-001-분리배출안내",
+        "b006-notice-002-물탱크청소",
+        "b006-facility-001-세탁주차안내",
+        "b006-notice-003-승강기점검",
+        "b006-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b006-notice-001-분리배출안내",
+        "b006-notice-002-물탱크청소",
+        "b006-facility-001-세탁주차안내",
+        "b006-notice-003-승강기점검",
+        "b006-rule-001-생활수칙"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q01",
+      "question": "쓰레기는 무슨 요일에 내놓나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "일반 쓰레기는 월·수·금에 내놓습니다. 재활용은 화·목에 내놓습니다. 저녁 7시부터 자정 사이에 건물 앞 지정 배출대에 두시면 됩니다.",
+      "answer_chars": 75,
+      "citation_ids": [
+        "b001-notice-003-분리수거경고",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-notice-001-물탱크청소"
+      ],
+      "retrieved_ids": [
+        "b001-notice-003-분리수거경고",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙",
+        "b001-notice-001-물탱크청소"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q02",
+      "question": "종량제봉투는 어디서 살 수 있어요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q01",
+      "question": "쓰레기는 무슨 요일에 내놓나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "일반 쓰레기는 월, 수, 금에 배출합니다. 재활용은 화, 목에 배출합니다. 음식물은 매일 배출합니다.",
+      "answer_chars": 56,
+      "citation_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검"
+      ],
+      "retrieved_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q02",
+      "question": "쓰레기는 몇 시에 어디에 두나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "저녁 7시 ~ 자정에 건물 앞 지정 배출대에 내놓아 주세요. 일반 쓰레기는 월, 수, 금에 배출하고 재활용은 화, 목에 배출하며 음식물은 매일 배출합니다.",
+      "answer_chars": 86,
+      "citation_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검"
+      ],
+      "retrieved_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q03",
+      "question": "종량제봉투는 어디서 사나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "종량제봉투는 행복마트, 대학로편의점, 늘푸른슈퍼에서 판매합니다.",
+      "answer_chars": 35,
+      "citation_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "retrieved_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q04",
+      "question": "페트병은 어떻게 분리하나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "페트병은 라벨을 떼고 찌그러뜨려 투명봉투에 따로 배출합니다.",
+      "answer_chars": 33,
+      "citation_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "retrieved_ids": [
+        "b002-notice-001-분리배출안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-notice-002-정기점검",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q02",
+      "question": "쓰레기는 어디에 내놓으면 되나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "건물 앞 지정 배출대에 내놓아 주세요. 배출 시간은 저녁 7시 ~ 자정까지입니다.",
+      "answer_chars": 45,
+      "citation_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내"
+      ],
+      "retrieved_ids": [
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검",
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q01",
+      "question": "일반 쓰레기는 언제 버리나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "일반 쓰레기는 화, 목, 토에 배출합니다. 배출 시간은 저녁 8시부터 새벽 2시까지이며 골목 입구 공동 집하장에 내놓아 주세요.",
+      "answer_chars": 71,
+      "citation_ids": [
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-002-소방점검"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q02",
+      "question": "재활용품은 무슨 요일에 내놓나요?",
+      "answerable": true,
+      "scope": "zone",
+      "outcome": "answered",
+      "reply": "재활용은 월, 금에 배출합니다.",
+      "answer_chars": 17,
+      "citation_ids": [
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-002-소방점검"
+      ],
+      "retrieved_ids": [
+        "b004-notice-001-분리배출안내",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-002-소방점검",
+        "b004-rule-001-생활수칙-v2"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q20",
+      "question": "전입신고는 어떻게 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q18",
+      "question": "에어컨 수리는 누가 부담하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q21",
+      "question": "보증금은 언제 반환되나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b005-q14",
+      "question": "퇴실 청소비는 얼마인가요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-rule-001-생활수칙",
+        "b005-facility-001-공용시설안내",
+        "b005-notice-001-분리배출안내",
+        "b005-notice-002-정기소독"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b005-q18",
+      "question": "보증금 반환 날짜를 알 수 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b005-rule-001-생활수칙",
+        "b005-notice-002-정기소독",
+        "b005-facility-001-공용시설안내",
+        "b005-notice-001-분리배출안내",
+        "b005-rule-001-생활수칙"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b008-q22",
+      "question": "전입신고는 어디서 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q16",
+      "question": "계약 연장은 언제까지 말씀드려야 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q17",
+      "question": "퇴실할 때 청소비를 따로 내야 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b001-facility-001-세탁실안내",
+        "b001-notice-001-물탱크청소",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q18",
+      "question": "인터넷 사업자를 바꿀 수 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q19",
+      "question": "에어컨이 고장나면 누가 고쳐주나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q21",
+      "question": "보증금은 퇴실 후 언제 돌려받나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙",
+        "b001-facility-001-세탁실안내",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙-v2",
+        "b001-facility-001-세탁실안내"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q22",
+      "question": "건물 안에 흡연할 수 있는 곳이 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q23",
+      "question": "자전거 보관소가 따로 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b001-rule-001-생활수칙",
+        "b001-rule-001-생활수칙-v2",
+        "b001-rule-001-생활수칙",
+        "b001-facility-001-세탁실안내",
+        "b001-notice-005-관리비인상"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q24",
+      "question": "반송된 우편물은 어디서 찾나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b001-q25",
+      "question": "방충망이 찢어졌는데 교체 비용은 누가 내나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q16",
+      "question": "계약 연장은 언제 신청해야 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q17",
+      "question": "퇴실 청소비가 따로 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q19",
+      "question": "전입신고할 때 필요한 서류가 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q20",
+      "question": "보증금은 퇴실 뒤 언제 돌려받나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q21",
+      "question": "실내에서 담배를 피워도 되나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q22",
+      "question": "자전거를 둘 수 있는 보관소가 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2",
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q23",
+      "question": "반송 우편물은 어디서 받나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-notice-001-분리배출안내",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙-v2"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q24",
+      "question": "방충망 교체비는 누가 내나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b002-q25",
+      "question": "방문객이 밤새 주차해도 되나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "방문차량은 2시간 무료이며, 2시간 추가 시 1,000원이고 최대 4시간까지 이용할 수 있습니다. 사전 알림이 필요합니다. 나머지 내용은 건물 문서에 없습니다.",
+      "answer_chars": 89,
+      "citation_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙"
+      ],
+      "retrieved_ids": [
+        "b002-rule-001-생활수칙-v2",
+        "b002-facility-001-공용시설안내",
+        "b002-rule-001-생활수칙",
+        "b002-facility-001-공용시설안내",
+        "b002-facility-001-공용시설안내"
+      ],
+      "unsupported": [
+        "2시간 추가 시 1,000원"
+      ],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q10",
+      "question": "계약 갱신은 언제 말해야 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q11",
+      "question": "퇴실 청소비를 내야 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b003-rule-001-생활수칙",
+        "b003-rule-001-생활수칙",
+        "b003-notice-002-물탱크안내",
+        "b003-notice-001-분리배출안내",
+        "b003-notice-003-소방시설점검"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q12",
+      "question": "인터넷을 개인적으로 바꿀 수 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q13",
+      "question": "에어컨이 고장나면 어떻게 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q14",
+      "question": "전입신고는 어디서 하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q15",
+      "question": "보증금 반환 일정이 정해져 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b003-notice-002-물탱크안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-001-분리배출안내",
+        "b003-rule-001-생활수칙",
+        "b003-notice-003-소방시설점검"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q16",
+      "question": "실내 흡연이 가능한가요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q17",
+      "question": "자전거를 보관할 곳이 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q18",
+      "question": "반송 우편물은 누가 보관하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b003-q19",
+      "question": "방충망 교체비는 세입자가 내나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q16",
+      "question": "계약 연장은 언제 이야기하나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q17",
+      "question": "퇴실 청소비가 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "answered",
+      "reply": "관리비에 청소비가 포함됩니다. 퇴실 청소비에 대한 별도 비용 여부는 문서에 명시되어 있지 않습니다.",
+      "answer_chars": 55,
+      "citation_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙",
+        "b004-notice-001-분리배출안내"
+      ],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-facility-001-공용시설안내",
+        "b004-rule-001-생활수칙",
+        "b004-notice-001-분리배출안내"
+      ],
+      "unsupported": [],
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q18",
+      "question": "인터넷 회선을 바꿔도 되나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q19",
+      "question": "에어컨 수리 책임은 누구에게 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q20",
+      "question": "전입신고 절차를 알려 주세요.",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "declined",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": 11,
+      "citation_ids": [],
+      "retrieved_ids": [
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙-v2",
+        "b004-rule-001-생활수칙",
+        "b004-facility-001-공용시설안내",
+        "b004-notice-001-분리배출안내"
+      ],
+      "unsupported": null,
+      "judge_failed": false
+    },
+    {
+      "item_id": "b004-q22",
+      "question": "흡연 가능한 장소가 있나요?",
+      "answerable": false,
+      "scope": "building",
+      "outcome": "no_hit",
+      "reply": "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다. 질문을 관리자에게 전달해 두었습니다.",
+      "answer_chars": null,
+      "citation_ids": [],
+      "retrieved_ids": [],
+      "unsupported": null,
+      "judge_failed": false
+    }
+  ]
+}
