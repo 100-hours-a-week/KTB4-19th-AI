@@ -38,9 +38,7 @@ from score_m import (
 REPRODUCE = COMPLAINT.parent / "synthetic" / "2-reproduce"
 PHOTOS = REPRODUCE / "complaints" / "photos.jsonl"
 FAILURES = REPRODUCE / "complaints" / "failures"
-DEFAULT_DIR = Path(
-    "/Users/hwangsubin/.aside/u/0/sessions/2026-09-28_M14BVYOszkRECtbD/artifacts/vlm-photos-2"
-)
+DEFAULT_DIR = REPRODUCE / "complaints" / "photos"
 EXPECTED = 120
 FAIL_PREFIX = "사진을 받았지만 분석에 실패했어요."
 
