@@ -1,0 +1,415 @@
+{
+  "metrics": {
+    "G7_n": 54,
+    "G7": 0.4716981132075472,
+    "G7_complete": 25,
+    "G7_judged": 53,
+    "G7_missing": 51,
+    "G7_failed": 1
+  },
+  "rows": [
+    {
+      "item_id": "b001-q08",
+      "missing": [
+        "주차장 위치는 건물 뒤편",
+        "30개 호실에 12면이라 자리가 부족하며, 늦게 오면 자리가 없을 수 있음"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q14",
+      "missing": [
+        "청소하는 동안 전 호실 단수됨",
+        "오전 9시 전에 물을 받아두라는 안내",
+        "급수 재개 후 처음 몇 분간 흙탕물이 나올 수 있으니 맑아질 때까지 틀어둘 것"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q09",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q06",
+      "missing": [
+        "지상 주차선 15면은 등록 차량이 우선 사용함",
+        "등록되지 않은 차량은 관리인에게 먼저 알리고, 통로와 소방시설 앞에는 주차하지 말아야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q09",
+      "missing": [
+        "도착한 택배는 확인 후 당일 가져가야 함",
+        "선반이 가득 차면 관리인에게 알려야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b006-q18",
+      "missing": [
+        "점검 중 온수가 잠시 끊길 수 있음",
+        "외출 세대는 현관 앞에 점검 가능 여부 표시"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q04",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q05",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q06",
+      "missing": [
+        "지하 입구에 동전 교환기가 있음"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q07",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q09",
+      "missing": [
+        "2027년부터 관리비가 월 50,000원에서 55,000원으로 인상됨(공용전기요금·승강기 유지보수비 상승분 반영)",
+        "매달 25일까지 납부해야 하며, 늦으면 하루 500원씩 연체료가 붙음"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q10",
+      "missing": [
+        "2027년부터 관리비가 월 55,000원으로 인상 예정"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q12",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q15",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q05",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q06",
+      "missing": [
+        "표준 코스는 40분, 5kg 기준",
+        "동전으로 결제하며 세탁실 안 교환기 이용"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q07",
+      "missing": null,
+      "failed": true,
+      "reason": "restore_mismatch"
+    },
+    {
+      "item_id": "b002-q08",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q11",
+      "missing": [
+        "택배를 확인한 뒤 오래 두지 말고 가져가야 함",
+        "본인 물건만 가져가고 오배송은 관리인에게 맡겨야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q12",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q13",
+      "missing": [
+        "점검 중 복도 조명이 잠시 꺼질 수 있음",
+        "점검 동안 계단과 복도에 물건을 내놓지 말고 현관 앞을 비워 달라는 요청"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q14",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q15",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q04",
+      "missing": [
+        "통로와 대문 앞은 비워 두어야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q05",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q08",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q09",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q05",
+      "missing": [
+        "생활수칙상 밤 11시~아침 7시에는 큰 소리를 내지 말아야 하며 세탁기는 낮 시간에 사용하라는 안내",
+        "사용 뒤 주변을 닦아 달라는 안내"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q07",
+      "missing": [
+        "매달 25일까지 납부"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q08",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q10",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q11",
+      "missing": [
+        "점검 시간에 집 안에 있으면 확인이 빠름",
+        "현관 앞과 계단에 물건을 두지 말아야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q12",
+      "missing": [
+        "점검 일정: 2026년 11월 4일 수요일 오전 10시~오후 1시",
+        "현관 앞과 계단에 물건을 두지 말아야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q13",
+      "missing": [
+        "택배는 1층 보관실 선반에 보관되며 그곳에서 찾아가야 함",
+        "선반이 가득 차면 관리인에게 알려야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q14",
+      "missing": [
+        "비상 통로가 막히면 바로 치워야 함"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q15",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b005-q05",
+      "missing": [
+        "출입구 앞에는 주차하지 말 것",
+        "예약 시간보다 늦어지면 관리인에게 알릴 것",
+        "건물 앞 기계식 10면"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b005-q06",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b005-q07",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q03",
+      "missing": [
+        "재활용 배출 요일은 화요일·목요일",
+        "배출 시간은 저녁 7시부터 자정 사이",
+        "배출 장소는 건물 앞 지정 배출대",
+        "요일을 어기면 수거하지 않고 계고장이 붙음"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q03",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b007-q04",
+      "missing": [
+        "신발도 의류수거함에 함께 배출"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q01",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b006-q02",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b001-q01",
+      "missing": [
+        "음식물 쓰레기는 매일 내놓을 수 있음",
+        "배출 요일을 어기면 수거하지 않고 계고장이 붙음"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q01",
+      "missing": [
+        "배출 시간: 저녁 7시 ~ 자정",
+        "배출 장소: 건물 앞 지정 배출대"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q02",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q03",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q04",
+      "missing": [
+        "재활용은 화요일과 목요일에 배출",
+        "저녁 7시~자정에 건물 앞 지정 배출대에 배출"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b003-q02",
+      "missing": [
+        "배출 요일: 일반 쓰레기는 월·수·금, 재활용은 화·목, 음식물은 매일"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q01",
+      "missing": [],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q02",
+      "missing": [
+        "배출 시간: 저녁 8시~새벽 2시",
+        "배출 장소: 골목 입구 공동 집하장(정해진 집하장 외 배출 금지)"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b002-q25",
+      "missing": [
+        "추가 요금은 1시간당 1,000원임(답변은 2시간 추가 시 1,000원으로 잘못 기재)"
+      ],
+      "failed": false,
+      "reason": null
+    },
+    {
+      "item_id": "b004-q17",
+      "missing": [
+        "퇴실 시 입주자가 직접 방을 정리해야 한다는 퇴실 수칙"
+      ],
+      "failed": false,
+      "reason": null
+    }
+  ]
+}

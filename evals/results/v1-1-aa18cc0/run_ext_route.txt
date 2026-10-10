@@ -1,0 +1,44 @@
+길 고르기 추가 시작  문항 40
+채점 1/40  c-001  complaint
+채점 2/40  c-002  complaint
+채점 3/40  c-003  complaint
+채점 4/40  c-004  complaint
+채점 5/40  c-005  complaint
+채점 6/40  c-006  complaint
+채점 7/40  c-007  complaint
+채점 8/40  c-008  complaint
+채점 9/40  c-009  complaint
+채점 10/40  c-010  complaint
+채점 11/40  c-025  complaint
+채점 12/40  c-026  complaint
+채점 13/40  c-027  complaint
+채점 14/40  c-028  complaint
+채점 15/40  c-029  complaint
+채점 16/40  c-030  complaint
+채점 17/40  c-031  complaint
+채점 18/40  c-032  complaint
+채점 19/40  c-033  complaint
+채점 20/40  c-034  complaint
+채점 21/40  cl-01  clarify
+채점 22/40  cl-02  clarify
+채점 23/40  cl-03  clarify
+채점 24/40  cl-04  clarify
+채점 25/40  cl-05  clarify
+채점 26/40  cl-06  clarify
+채점 27/40  cl-07  clarify
+채점 28/40  cl-08  clarify
+채점 29/40  cl-09  clarify
+채점 30/40  cl-10  clarify
+채점 31/40  cl-11  clarify
+채점 32/40  cl-12  clarify
+채점 33/40  cl-13  clarify
+채점 34/40  cl-14  clarify
+채점 35/40  cl-15  clarify
+채점 36/40  cl-16  clarify
+채점 37/40  cl-17  clarify
+채점 38/40  cl-18  clarify
+채점 39/40  cl-19  clarify
+채점 40/40  cl-20  clarify
+길 고르기 추가
+C2 3분류 라우팅 정확도 1.000  (40/40)
+complaint 20/20 · clarify 20/20 · 실패 0
