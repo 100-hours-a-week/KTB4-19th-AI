@@ -160,7 +160,7 @@ def test_complaint_extraction_prompt_receives_summary_and_ocr(
     assert "Never infer location, date, or cause from an image" in captured["system"]
 
 
-def test_photo_summary_is_acknowledged_while_asking_for_location():
+def test_photo_summary_is_not_shown_while_asking_for_location():
     result = handle_complaint(
         _request(
             text=None,
@@ -174,9 +174,7 @@ def test_photo_summary_is_acknowledged_while_asking_for_location():
     )
 
     assert result["result"].missing_fields == ["location"]
-    assert result["reply"] == (
-        "사진은 확인했습니다 — 세탁기 아래 물이 고임. 어디에서 생긴 문제인가요?"
-    )
+    assert result["reply"] == "어디에서 생긴 문제인가요?"
 
 
 def test_photo_without_analysis_keeps_attachment_without_fabricating_symptom():
