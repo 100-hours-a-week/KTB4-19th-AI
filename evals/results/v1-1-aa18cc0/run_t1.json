@@ -1,0 +1,397 @@
+{
+  "metrics": {
+    "n": 235,
+    "answerable": 135,
+    "unanswerable": 100,
+    "building": 97,
+    "R1": 0,
+    "R2": 0.8222222222222222,
+    "R3": 0.68,
+    "R4": 0.8222222222222222,
+    "R5": 1.0,
+    "R6": 0.9346846846846847,
+    "R7": 4,
+    "passed_answerable": 111,
+    "slices": {
+      "body": {
+        "n": 117,
+        "passed": 95,
+        "recalled": 95
+      },
+      "table": {
+        "n": 18,
+        "passed": 16,
+        "recalled": 16
+      },
+      "scan": {
+        "n": 0,
+        "passed": 0,
+        "recalled": 0
+      },
+      "photo": {
+        "n": 0,
+        "passed": 0,
+        "recalled": 0
+      }
+    }
+  },
+  "index": [
+    {
+      "doc_id": "b001-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 4,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-rule-001-생활수칙-v2",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 5,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-notice-001-물탱크청소",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": true
+    },
+    {
+      "doc_id": "b001-notice-002-승강기점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-notice-003-분리수거경고",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-facility-001-세탁실안내",
+      "kind": "table",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-notice-004-소방시설점검",
+      "kind": "scan",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b001-notice-005-관리비인상",
+      "kind": "photo",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b002-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b002-rule-001-생활수칙-v2",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b002-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b002-facility-001-공용시설안내",
+      "kind": "table",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b002-notice-002-정기점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b003-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b003-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b003-notice-002-물탱크안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": true
+    },
+    {
+      "doc_id": "b003-notice-003-소방시설점검",
+      "kind": "scan",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b004-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b004-rule-001-생활수칙-v2",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b004-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b004-facility-001-공용시설안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b004-notice-002-소방점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b005-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b005-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b005-facility-001-공용시설안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b005-notice-002-정기소독",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b006-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b006-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b006-facility-001-세탁주차안내",
+      "kind": "table",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b006-notice-002-물탱크청소",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": true
+    },
+    {
+      "doc_id": "b006-notice-003-승강기점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b006-notice-004-난방점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b007-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b007-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b007-facility-001-공용시설안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b007-notice-002-정기안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b008-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b008-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b008-notice-002-동파주의",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": true
+    },
+    {
+      "doc_id": "b008-notice-003-소방점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b008-facility-001-공용시설안내",
+      "kind": "table",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b008-notice-004-승강기검사",
+      "kind": "scan",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b009-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 2,
+      "masked": false
+    },
+    {
+      "doc_id": "b009-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b009-notice-002-정화조청소",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": true
+    },
+    {
+      "doc_id": "b010-rule-001-생활수칙",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b010-rule-001-생활수칙-v2",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 4,
+      "masked": false
+    },
+    {
+      "doc_id": "b010-notice-001-분리배출안내",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b010-notice-002-도시가스점검",
+      "kind": "body",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    },
+    {
+      "doc_id": "b010-facility-001-편의시설안내",
+      "kind": "table",
+      "outcome": "ok",
+      "points": 3,
+      "masked": false
+    },
+    {
+      "doc_id": "b010-notice-003-소방시설점검",
+      "kind": "photo",
+      "outcome": "ok",
+      "points": 1,
+      "masked": false
+    }
+  ]
+}

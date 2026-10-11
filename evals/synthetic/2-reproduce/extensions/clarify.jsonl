@@ -1,0 +1,20 @@
+{"id": "cl-01", "question": "네", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-02", "question": "아니요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-03", "question": "그거요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-04", "question": "아까 그거요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-05", "question": "저기요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-06", "question": "음", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-07", "question": "맞아요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-08", "question": "몰라요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-09", "question": "그냥요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-10", "question": "둘 다요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-11", "question": "아무거나요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-12", "question": "그거 말고요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-13", "question": "안녕하세요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-14", "question": "질문 있어요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-15", "question": "부탁드려요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-16", "question": "그게 아닌데요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-17", "question": "잠깐만요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-18", "question": "나중에요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-19", "question": "음, 뭐라고 하지", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
+{"id": "cl-20", "question": "일단 그거요", "expected_route": "clarify", "image_urls": [], "history": [], "note": "건물 안내도 고장 신고도 아님"}
