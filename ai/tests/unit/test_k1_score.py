@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,45 @@ QUERY_DIR = Path(__file__).resolve().parents[3] / "evals" / "query"
 sys.path.insert(0, str(QUERY_DIR))
 
 import run_k1
+from score import ManifestDoc
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [(1, "첫 쪽"), (2, "둘째 쪽"), (3, "마지막 쪽"), (0, ""), (4, "")],
+)
+def test_md_page_text_uses_one_based_page_numbers(page: int, expected: str) -> None:
+    md_text = "첫 쪽\n - 1 - \n둘째 쪽\n-2-\n마지막 쪽\n- 3 -\n"
+
+    assert run_k1.md_page_text(md_text, page) == expected
+
+
+def test_build_samples_reads_md_page_without_parsing_or_changing_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = ManifestDoc("b001", 1, "doc-1", "문서", "documents/doc.md", "doc.pdf", "text")
+    md_path = tmp_path / "buildings" / doc.building_code / doc.md_file
+    md_path.parent.mkdir(parents=True)
+    md_path.write_text("첫 쪽\n- 1 -\n깨끗한 둘째 쪽\n- 2 -", encoding="utf-8")
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / doc.build_name).write_bytes(b"not a PDF")
+    monkeypatch.setattr(run_k1, "REPRODUCE", tmp_path)
+    monkeypatch.setattr(run_k1, "BUILD", build)
+    monkeypatch.setattr(run_k1, "load_manifest", lambda _: [doc])
+
+    def fail_if_parsed(*args: object, **kwargs: object) -> None:
+        raise AssertionError("PDF를 다시 파싱하면 안 됩니다")
+
+    monkeypatch.setattr("zipsai.indexing.parse.parse_document", fail_if_parsed)
+
+    class _StubClient:
+        def scroll(self, **kwargs: object):
+            return ([SimpleNamespace(payload={"page": 2, "text": "깨 진 청크"})], None)
+
+    assert run_k1.build_samples(_StubClient(), "documents_eval") == [
+        (doc.doc_id, 2, "깨끗한 둘째 쪽", "깨 진 청크", False, None)
+    ]
 
 
 def test_judge_skips_structured_call_without_judge_model(

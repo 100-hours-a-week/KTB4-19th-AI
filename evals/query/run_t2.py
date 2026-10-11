@@ -102,6 +102,8 @@ def _chunk_text(chunks) -> str:
 
 
 def score_sample(client, encoder, items, collection: str) -> list[AnswerRecord]:
+    from zipsai.tracing import record_judge_score, trace_eval_item
+
     rows: list[AnswerRecord] = []
     for index, item in enumerate(items, start=1):
         outcome, reply, chars, citations, retrieved, evidence = _answer(
@@ -110,7 +112,15 @@ def score_sample(client, encoder, items, collection: str) -> list[AnswerRecord]:
         unsupported: tuple[str, ...] | None = None
         judge_failed = False
         if outcome == "answered":
-            unsupported, judge_failed = _judge(item.question, reply, evidence)
+            with trace_eval_item("G1", item.id):
+                unsupported, judge_failed = _judge(item.question, reply, evidence)
+                if unsupported is not None and not judge_failed:
+                    record_judge_score(
+                        "G1",
+                        not unsupported,
+                        item_id=item.id,
+                        comment=None if not unsupported else f"{len(unsupported)}건",
+                    )
         rows.append(
             AnswerRecord(
                 item_id=item.id,
@@ -174,6 +184,11 @@ def main() -> None:
     rows = score_sample(client, encoder, sample, collection)
     metrics = aggregate(rows)
     print(format_report(metrics, rows), end="")
+    from zipsai.tracing import get_tracing_client
+
+    tracing = get_tracing_client()
+    if tracing is not None:
+        tracing.flush()
     if args.out:
         payload = {
             "metrics": metrics,

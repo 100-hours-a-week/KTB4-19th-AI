@@ -270,7 +270,11 @@ def main() -> None:
     text = format_report(metrics, index_lines=_index_lines(index_results) if index_results else None)
     print(text, end="")
     if args.out:
-        payload = {"metrics": metrics, "index": index_results}
+        payload = {
+            "metrics": metrics, 
+            "index": index_results,
+            "rows": [row.__dict__ for row in rows],
+        }
         args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"기록 {args.out}")
 

@@ -23,3 +23,8 @@
 - `run_m2.txt`: 민원 사진 평가, 120장
 
 원본 파일은 `KTB4-19th-AI-verify-v1-1/ai/results/`에서 복사했으며 그 출처 폴더는 그대로 보존한다. 요약 점수와 해석은 A-시리즈 점수 문서를 참고한다.
+
+## 평가 날짜
+
+- 2026-10-08: `run_t1.json`, `run_t2.json`, `run_t3.txt`, `run_ext_answer.txt`, `run_ext_route.txt`, `run_k1.txt`, `run_m1.txt`, `run_m2.txt`. 이 중 Opus를 부른 것은 `run_t2.json`의 G1과 `run_k1.txt`다. OpenRouter에서 읽은 그날 Opus 비용은 $0.81이다.
+- 2026-10-10: `run_g7.json`, `run_g7.txt`. Opus로 G7만 채점했다. OpenRouter에서 읽은 Opus 비용은 $1.01이다.

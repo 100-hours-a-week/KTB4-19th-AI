@@ -138,6 +138,8 @@ def main() -> None:
             lock_wait_seconds=3.5,
         )
 
+    from zipsai.tracing import record_judge_score, trace_eval_item
+
     records: list[CompletenessRecord] = []
     for index, row in enumerate(rows, start=1):
         evidence = row.get("evidence") or ""
@@ -155,8 +157,17 @@ def main() -> None:
                     flush=True,
                 )
                 continue
-        missing = _judge(row["question"], row["reply"], evidence, judge_model)
-        failed = missing is None
+        missing = None
+        with trace_eval_item("G7", row["item_id"]):
+            missing = _judge(row["question"], row["reply"], evidence, judge_model)
+            failed = missing is None
+            if not failed:
+                record_judge_score(
+                    "G7",
+                    not missing,
+                    item_id=row["item_id"],
+                    comment=None if not missing else f"{len(missing)}건",
+                )
         records.append(
             CompletenessRecord(
                 row["item_id"], missing, failed, "judge_failed" if failed else None
@@ -166,6 +177,11 @@ def main() -> None:
 
     metrics = aggregate_completeness(records)
     print(format_report(metrics, records), end="")
+    from zipsai.tracing import get_tracing_client
+
+    tracing = get_tracing_client()
+    if tracing is not None:
+        tracing.flush()
     if args.out:
         payload = {"metrics": metrics, "rows": [record.__dict__ for record in records]}
         args.out.write_text(

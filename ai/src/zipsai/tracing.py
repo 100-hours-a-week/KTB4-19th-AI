@@ -112,3 +112,39 @@ def trace_step(name: str):
         return
     with client.start_as_current_observation(name=name.replace("_", "-")) as span:
         yield span
+
+
+# langfuse에 평가 결과를 연동한다
+@contextmanager
+def trace_eval_item(name: str, item_id: str):
+    """키가 없으면 점수 없이 그대로 진행한다. 원문·청크·답변은 이 구간에 넣지 않는다."""
+    client = get_tracing_client()
+    if client is None:
+        yield None
+        return
+    with client.start_as_current_observation(
+        name=name,
+        metadata={"item_id": item_id},
+    ) as span:
+        yield span
+
+
+def record_judge_score(
+    name: str,
+    passed: bool,
+    *,
+    item_id: str,
+    comment: str | None = None,
+) -> None:
+    """trace_eval_item 안에서만 호출한다. 밖에서는 현재 trace가 없어 점수가 버려진다."""
+    client = get_tracing_client()
+    if client is None:
+        return
+    client.score_current_trace(
+        name=name,
+        value=1 if passed else 0,
+        data_type="BOOLEAN",
+        score_id=f"{name}:{item_id}",
+        comment=comment,
+        metadata={"item_id": item_id},
+    )
