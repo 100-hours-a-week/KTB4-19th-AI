@@ -213,8 +213,6 @@ _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
     "symptom": "어떤 불편 증상인지 알려주세요.",
 }
-_PHOTO_ANALYZED_PREFIX = "사진은 확인했습니다. "
-_PHOTO_FAILED_PREFIX = "사진을 받았지만 분석에 실패했어요. "
 
 
 @dataclass(frozen=True)
@@ -243,20 +241,6 @@ class _ComplaintProgress:
     current_symptom: str | None = None
     image_symptom: str | None = None
     image_context: str | None = None
-
-
-def _photo_prefix(image_analysis: ImageAnalysis | None) -> str:
-    """사진에서 읽은 내용을 노출한다. 입주민이 확인해주면 그 발화로 symptom이 채워지므로,
-    초안에 직접 넣을 때 필요한 신뢰도 임계값이 필요 없다."""
-    if image_analysis is None:
-        return _PHOTO_FAILED_PREFIX
-    summary = next(
-        (observed.summary for observed in image_analysis.images if observed.summary),
-        None,
-    )
-    if not summary:
-        return _PHOTO_ANALYZED_PREFIX
-    return f"사진은 확인했습니다 — {summary.rstrip('. ')}. "
 
 
 def _photo_label(
@@ -306,7 +290,6 @@ def _ask_for_missing(
     draft: ComplaintDraft,
     missing_fields: list[str],
     image_analysis: ImageAnalysis | None,
-    images: list[ImageAttachment],
     llm_reply: str,
 ) -> _ComplaintTurn:
     """부족한 항목 유도하는 턴."""
@@ -318,7 +301,7 @@ def _ask_for_missing(
             missing_fields=missing_fields,
             image_analysis=image_analysis,
         ),
-        reply=_photo_prefix(image_analysis) + question if images else question,
+        reply=question,
         complaint_state=ComplaintState.COLLECTING,
         asked=asked,
         reply_source=reply_source,
@@ -587,7 +570,6 @@ def _finalize_turn(
                 progress.draft,
                 progress.missing_fields,
                 evidence.image_analysis,
-                evidence.images,
                 "",
             )
         return _ready_for_card(request, progress.draft, evidence.image_analysis)
@@ -606,7 +588,6 @@ def _finalize_turn(
             draft,
             progress.missing_fields,
             evidence.image_analysis,
-            evidence.images,
             finalization.reply.strip() if finalization else "",
         )
     return _ready_for_card(request, draft, evidence.image_analysis)
