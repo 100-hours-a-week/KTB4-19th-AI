@@ -128,6 +128,30 @@ def test_classify_and_analyze_supports_text_only_intent(monkeypatch):
     ]
 
 
+def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """VLM이 이미지 0장인데도 images 필드를 채워 돌려줄 때가 있다(할루시네이션).
+
+    프로덕션에서 텍스트만 있는 평범한 턴이 이 때문에 500으로 떨어졌다
+    (zipsai-ai-stage-failed 알람). 요청한 이미지가 없으면 모델이 뭘 돌려주든
+    버리고 통과시킨다 — 실제 이미지 개수가 어긋난 경우는 별개로 계속 막는다.
+    """
+    parsed = _ModelIntentAndImages(
+        route=Route.KNOWLEDGE,
+        images=[_ModelObservation(summary="할루시네이션된 관측", ocr_text=None)],
+    )
+    monkeypatch.setattr(
+        vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed)
+    )
+    _use_settings(monkeypatch)
+
+    route, analysis = _classify([])
+
+    assert route is Route.KNOWLEDGE
+    assert analysis.images == []
+
+
 @pytest.mark.parametrize(
     "client",
     [

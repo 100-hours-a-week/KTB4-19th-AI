@@ -86,6 +86,8 @@ def classify_and_analyze(
     if response.choices[0].message.refusal:
         raise ImageAnalysisError("VLM refused intent or image analysis")
     parsed = response.choices[0].message.parsed
+    if not images:
+        return parsed.route, ImageAnalysis(images=[])
     if len(parsed.images) != len(images):
         raise ImageAnalysisError(
             "VLM returned observations that do not match input images"
