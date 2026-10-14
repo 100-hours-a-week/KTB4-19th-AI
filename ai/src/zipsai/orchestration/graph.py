@@ -5,7 +5,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from zipsai.complaint.node import handle_complaint
+from zipsai.complaint.node import handle_complaint, handle_complaint_stream
 from zipsai.contracts.converse import Route, RouteResult
 from zipsai.knowledge.node import handle_knowledge, handle_knowledge_stream
 from zipsai.orchestration.clarify import handle_clarify
@@ -26,6 +26,16 @@ def _run_complaint(state: AgentState) -> dict[str, object]:
     result = (
         handle_complaint(state["request"], image_analysis=state.get("image_analysis"))
         or {}
+    )
+    return _include_image_analysis({"route": Route.COMPLAINT, **result}, state)
+
+
+async def _run_complaint_stream(state: AgentState) -> dict[str, object]:
+    writer = get_stream_writer()
+    result = await handle_complaint_stream(
+        state["request"],
+        writer,
+        image_analysis=state.get("image_analysis"),
     )
     return _include_image_analysis({"route": Route.COMPLAINT, **result}, state)
 
@@ -85,7 +95,7 @@ def _include_image_analysis(
 def build_graph(streaming: bool = False) -> CompiledStateGraph:
     builder = StateGraph(AgentState)
     builder.add_node("classify_intent", _run_classify_intent)
-    builder.add_node("complaint", _run_complaint)
+    builder.add_node("complaint", _run_complaint_stream if streaming else _run_complaint)
     builder.add_node("knowledge", _run_knowledge_stream if streaming else _run_knowledge)
     builder.add_node("clarify", _run_clarify)
     builder.add_edge(START, "classify_intent")

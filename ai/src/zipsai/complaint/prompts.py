@@ -121,6 +121,43 @@ TURN_FINALIZATION_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+# 스트리밍 complaint 경로에서 구조화 분석과 사용자용 자연어 reply를 분리할 때 쓴다.
+TURN_SYMPTOM_SYSTEM_PROMPT = (
+    "You finalize the symptom of one Korean residential complaint turn. "
+    "Use only the supplied symptom evidence and preserve the resident's latest correction. "
+    "Return exactly one JSON object with the key symptom and no explanation."
+)
+TURN_SYMPTOM_USER_TEMPLATE = (
+    "기존 증상: {previous_symptom}\n"
+    "현재 턴 증상: {current_symptom}\n"
+    "사진 분석 근거: {image_context}\n"
+    "현재 발화: {current_message}"
+)
+TURN_SYMPTOM_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", TURN_SYMPTOM_SYSTEM_PROMPT),
+        ("user", TURN_SYMPTOM_USER_TEMPLATE),
+    ]
+)
+
+TURN_REPLY_SYSTEM_PROMPT = (
+    "Write one short, natural Korean reply for a residential complaint. "
+    "Ask only for the field named by next_action. Do not add a cause, diagnosis, "
+    "or any field other than that action. Return plain text only, not JSON."
+)
+TURN_REPLY_USER_TEMPLATE = (
+    "현재 민원 초안: {draft}\n"
+    "기존 증상: {previous_symptom}\n"
+    "현재 증상: {current_symptom}\n"
+    "다음 행동: {next_action}"
+)
+TURN_REPLY_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", TURN_REPLY_SYSTEM_PROMPT),
+        ("user", TURN_REPLY_USER_TEMPLATE),
+    ]
+)
+
 VLM_ANALYSIS_PROMPT = (
     "You are inspecting a resident-submitted photo of a residential facility issue "
     "(plumbing, electrical, appliance, structural).\n\n"
