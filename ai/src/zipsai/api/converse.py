@@ -1,8 +1,9 @@
+import json
 import logging
 from time import perf_counter
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from zipsai.api.error_responses import agent_error_response, error_response
 from zipsai.contracts.converse import (
@@ -79,6 +80,110 @@ def converse(
                 }
             )
         return response
+
+
+def _sse(data: dict[str, object]) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _stream_converse(request: ConverseRequest):
+    started_at = perf_counter()
+    with (
+        bind(
+            turn_id=request.turn_id,
+            trace_id=request.trace_id,
+            building_id=request.building_id,
+            route="/api/v3/ai/converse/stream",
+            intent_route=(
+                request.current_route.value if request.current_route else None
+            ),
+        ),
+        track_in_flight() as in_flight,
+        collect_timings() as timings,
+        trace_turn(request) as trace,
+    ):
+        logger.info("stream_request_started", extra={"in_flight": in_flight})
+        yield _sse(
+            {
+                "type": "status",
+                "status": "응답을 준비하고 있습니다.",
+            }
+        )
+        state = {
+            "request": request,
+            "route": None,
+            "complaint_state": request.current_complaint_state,
+            "reply": None,
+            "result": RouteResult(),
+        }
+        streamed_reply = False
+        try:
+            async for mode, event in build_graph(streaming=True).astream(
+                state,
+                stream_mode=["custom", "values"],
+            ):
+                if mode == "custom" and isinstance(event, str):
+                    streamed_reply = True
+                    yield _sse(
+                        {"type": "delta", "field": "reply", "text": event}
+                    )
+                elif mode == "values":
+                    state = event
+        except AGENT_ERRORS as error:
+            logger.exception("stream_request_failed")
+            if trace is not None:
+                trace.update(
+                    output={"outcome": "fail", "error_type": type(error).__name__}
+                )
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": "응답 생성에 실패했습니다.",
+                }
+            )
+            yield _sse({"type": "done"})
+            return
+
+        if not streamed_reply and state.get("reply"):
+            yield _sse(
+                {"type": "delta", "field": "reply", "text": state["reply"]}
+            )
+        logger.info(
+            "stream_request_done",
+            extra={
+                "in_flight": in_flight,
+                "total_ms": int((perf_counter() - started_at) * 1000),
+                "reply_chars": len(state.get("reply") or ""),
+                "timings": timings,
+            },
+        )
+        if trace is not None:
+            trace.update(
+                output={
+                    "outcome": "ok",
+                    "route": state.get("route").value
+                    if state.get("route")
+                    else None,
+                }
+            )
+        yield _sse({"type": "done"})
+
+
+@router.post("/converse/stream")
+def converse_stream(
+    request: ConverseRequest, http_request: Request
+) -> StreamingResponse:
+    http_request.state.turn_id = request.turn_id
+    http_request.state.trace_id = request.trace_id
+
+    return StreamingResponse(
+        _stream_converse(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _handle(
