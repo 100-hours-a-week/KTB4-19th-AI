@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>SSE streaming test</title>
+    <style>
+      body { max-width: 760px; margin: 32px auto; font-family: sans-serif; }
+      textarea { width: 100%; min-height: 220px; font-family: monospace; }
+      button { margin: 8px 4px 8px 0; padding: 8px 14px; }
+      #status { color: #666; }
+      #reply { white-space: pre-wrap; border: 1px solid #ddd; padding: 12px; min-height: 80px; }
+      #raw { white-space: pre-wrap; background: #f6f6f6; padding: 12px; }
+      #complete { white-space: pre-wrap; background: #f0f8ff; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>SSE streaming test</h1>
+
+    <label for="payload">Request JSON</label>
+    <textarea id="payload">{
+  "turn_id": "turn-js-test",
+  "trace_id": "trace-js-test",
+  "building_id": 2,
+  "message": {
+    "text": "공용시설 이용 방법을 알려줘",
+    "images": []
+  },
+  "conversation_history": [],
+  "current_route": null,
+  "current_complaint_state": null,
+  "complaint_draft": null
+}</textarea>
+
+    <div>
+      <button id="start">스트리밍 시작</button>
+      <button id="stop" disabled>중지</button>
+    </div>
+
+    <p id="status">대기 중</p>
+    <h2>Reply</h2>
+    <div id="reply"></div>
+    <h2>최종 응답(complete)</h2>
+    <pre id="complete">아직 수신하지 않음</pre>
+    <h2>수신 이벤트</h2>
+    <pre id="raw"></pre>
+
+    <script>
+      const endpoint = "http://127.0.0.1:8000/api/v3/ai/converse/stream";
+      const payloadInput = document.querySelector("#payload");
+      const startButton = document.querySelector("#start");
+      const stopButton = document.querySelector("#stop");
+      const statusElement = document.querySelector("#status");
+      const replyElement = document.querySelector("#reply");
+      const completeElement = document.querySelector("#complete");
+      const rawElement = document.querySelector("#raw");
+
+      let controller = null;
+      let completeResponse = null;
+
+      function showEvent(event) {
+        rawElement.textContent += JSON.stringify(event) + "\n";
+
+        if (event.type === "status") {
+          statusElement.textContent = event.status;
+        } else if (event.type === "delta") {
+          replyElement.textContent += event.text || "";
+        } else if (event.type === "error") {
+          statusElement.textContent = `오류: ${event.message}`;
+        } else if (event.type === "complete") {
+          // delta는 화면을 빠르게 채우는 용도이고, complete가 대화 저장용 최종 계약이다.
+          completeResponse = event.response;
+          completeElement.textContent = JSON.stringify(event.response, null, 2);
+          statusElement.textContent = "최종 응답 수신";
+        } else if (event.type === "done") {
+          statusElement.textContent = completeResponse ? "완료" : "complete 없이 종료됨";
+          stopButton.disabled = true;
+        }
+      }
+
+      async function readSse(response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() || "";
+
+          for (const frame of frames) {
+            const dataLine = frame
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+
+            if (!dataLine) continue;
+
+            try {
+              showEvent(JSON.parse(dataLine.slice("data:".length).trim()));
+            } catch (error) {
+              statusElement.textContent = `이벤트 파싱 실패: ${error.message}`;
+            }
+          }
+        }
+      }
+
+      startButton.addEventListener("click", async () => {
+        startButton.disabled = true;
+        stopButton.disabled = false;
+        replyElement.textContent = "";
+        completeElement.textContent = "아직 수신하지 않음";
+        rawElement.textContent = "";
+        completeResponse = null;
+        statusElement.textContent = "연결 중...";
+        controller = new AbortController();
+
+        try {
+          const payload = JSON.parse(payloadInput.value);
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          await readSse(response);
+        } catch (error) {
+          if (error.name === "AbortError") {
+            statusElement.textContent = "사용자가 중지했습니다.";
+          } else {
+            statusElement.textContent = `요청 실패: ${error.message}`;
+          }
+        } finally {
+          controller = null;
+          startButton.disabled = false;
+          stopButton.disabled = true;
+        }
+      });
+
+      stopButton.addEventListener("click", () => {
+        if (controller) controller.abort();
+      });
+    </script>
+  </body>
+</html>

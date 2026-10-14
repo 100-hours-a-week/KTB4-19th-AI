@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pytest
@@ -132,11 +133,25 @@ def test_converse_stream_returns_sse_status_reply_and_done(monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.text == (
-        'data: {"type": "status", "status": "응답을 준비하고 있습니다."}\n\n'
-        'data: {"type": "delta", "field": "reply", "text": "건물 이용 안내입니다."}\n\n'
-        'data: {"type": "done"}\n\n'
-    )
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert [event["type"] for event in events] == [
+        "status",
+        "delta",
+        "complete",
+        "done",
+    ]
+    complete = events[2]["response"]
+    assert complete["code"] == "ai_response_success"
+    assert complete["turn_id"] == "turn-001"
+    assert complete["trace_id"] == "trace-001"
+    assert complete["data"]["route"] == "knowledge"
+    assert complete["data"]["reply"] == "건물 이용 안내입니다."
+    assert complete["data"]["meta"]["model"] == "test-model"
+    assert isinstance(complete["data"]["meta"]["timing_ms"], int)
 
 
 def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
@@ -158,6 +173,7 @@ def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["x-accel-buffering"] == "no"
     assert response.text.count('"type": "delta"') == 2
+    assert '"type": "complete"' in response.text
     assert response.text.endswith('data: {"type": "done"}\n\n')
 
 

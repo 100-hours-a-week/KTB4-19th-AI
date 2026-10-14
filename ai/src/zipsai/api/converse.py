@@ -118,15 +118,21 @@ async def _stream_converse(request: ConverseRequest):
         }
         streamed_reply = False
         try:
+            settings = get_settings()
             async for mode, event in build_graph(streaming=True).astream(
                 state,
                 stream_mode=["custom", "values"],
             ):
-                if mode == "custom" and isinstance(event, str):
-                    streamed_reply = True
-                    yield _sse(
-                        {"type": "delta", "field": "reply", "text": event}
-                    )
+                if mode == "custom":
+                    if isinstance(event, str):
+                        streamed_reply = True
+                        yield _sse(
+                            {"type": "delta", "field": "reply", "text": event}
+                        )
+                    elif isinstance(event, dict):
+                        if event.get("type") == "delta":
+                            streamed_reply = True
+                        yield _sse(event)
                 elif mode == "values":
                     state = event
         except AGENT_ERRORS as error:
@@ -148,6 +154,21 @@ async def _stream_converse(request: ConverseRequest):
             yield _sse(
                 {"type": "delta", "field": "reply", "text": state["reply"]}
             )
+        if not state.get("reply") or not state.get("route"):
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": "응답 생성에 실패했습니다.",
+                }
+            )
+            yield _sse({"type": "done"})
+            return
+        complete = _build_success_response(
+            request,
+            state,
+            settings=settings,
+            started_at=started_at,
+        )
         logger.info(
             "stream_request_done",
             extra={
@@ -166,6 +187,12 @@ async def _stream_converse(request: ConverseRequest):
                     else None,
                 }
             )
+        yield _sse(
+            {
+                "type": "complete",
+                "response": complete.model_dump(mode="json"),
+            }
+        )
         yield _sse({"type": "done"})
 
 
@@ -279,6 +306,25 @@ def _handle(
         citations=len(route_result.citations or []),
         reply_chars=len(reply),
     )
+    return _build_success_response(
+        request,
+        result,
+        settings=settings,
+        started_at=started_at,
+    )
+
+
+def _build_success_response(
+    request: ConverseRequest,
+    result: dict[str, object],
+    *,
+    settings,
+    started_at: float,
+) -> ConverseResponse:
+    reply = result["reply"]
+    route_result = result.get("result") or RouteResult()
+    if isinstance(route_result, dict):
+        route_result = RouteResult.model_validate(route_result)
     return ConverseResponse(
         code="ai_response_success",
         turn_id=request.turn_id,

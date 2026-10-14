@@ -11,6 +11,16 @@ load_dotenv()
 
 API_PREFIX: Final = "/api/v3/ai/indexing"
 EMBEDDING_DIM: Final = 1024
+# 로컬 바닐라 JS 테스트 페이지가 API를 호출할 수 있도록 기본값을 둔다.
+# 운영에서는 CORS_ORIGINS 환경 변수에 실제 프론트 origin을 쉼표로 지정한다.
+CORS_ORIGINS: Final = tuple(
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://127.0.0.1:5500,http://localhost:5500,http://[::1]:5500",
+    ).split(",")
+    if origin.strip()
+)
 
 # 인덱싱 필수 설정: 없으면 main.py의 lifespan에서 기동을 거부한다.
 QDRANT_URL: Final = os.getenv("QDRANT_URL")
