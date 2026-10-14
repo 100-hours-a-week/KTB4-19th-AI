@@ -43,10 +43,10 @@ class _FakeGraph:
 
     async def astream(self, state: dict[str, object], *, stream_mode: list[str]):
         self.received_state = state
-        if isinstance(self.result, Exception):
-            raise self.result
         for event in self.custom_events:
             yield "custom", event
+        if isinstance(self.result, Exception):
+            raise self.result
         yield "values", {**state, **self.result}
 
 
@@ -186,6 +186,20 @@ def test_converse_stream_terminates_after_error(monkeypatch):
     response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
 
     assert response.status_code == 200
+    assert '"type": "error"' in response.text
+    assert response.text.endswith('data: {"type": "done"}\n\n')
+
+
+def test_converse_stream_terminates_after_unexpected_error(monkeypatch):
+    graph = _FakeGraph(RuntimeError("unexpected stream failure"), custom_events=["앞부분"])
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert '"type": "delta"' in response.text
     assert '"type": "error"' in response.text
     assert response.text.endswith('data: {"type": "done"}\n\n')
 

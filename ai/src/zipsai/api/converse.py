@@ -149,6 +149,22 @@ async def _stream_converse(request: ConverseRequest):
             )
             yield _sse({"type": "done"})
             return
+        except Exception as error:
+            # 스트림이 시작된 뒤에는 HTTP 상태 코드를 바꿀 수 없으므로,
+            # 예상하지 못한 예외도 SSE 오류 이벤트로 알리고 정상 종료한다.
+            logger.exception("stream_request_failed_unexpected")
+            if trace is not None:
+                trace.update(
+                    output={"outcome": "fail", "error_type": type(error).__name__}
+                )
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": "응답 생성에 실패했습니다.",
+                }
+            )
+            yield _sse({"type": "done"})
+            return
 
         if not streamed_reply and state.get("reply"):
             yield _sse(
