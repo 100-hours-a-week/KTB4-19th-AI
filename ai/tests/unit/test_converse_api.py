@@ -166,6 +166,11 @@ def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
     monkeypatch.setattr(
         converse_module, "build_graph", lambda streaming=False: graph
     )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
 
@@ -194,6 +199,11 @@ def test_converse_stream_terminates_after_unexpected_error(monkeypatch):
     graph = _FakeGraph(RuntimeError("unexpected stream failure"), custom_events=["앞부분"])
     monkeypatch.setattr(
         converse_module, "build_graph", lambda streaming=False: graph
+    )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
     )
 
     response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
