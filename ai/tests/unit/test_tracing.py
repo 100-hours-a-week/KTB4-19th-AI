@@ -66,6 +66,7 @@ def test_converse_trace_keeps_usage_and_excludes_private_content(monkeypatch):
             model="test-model",
             messages=[{"role": "user", "content": "PRIVATE_INPUT"}],
             name="generate-text",
+            langfuse_public_key="pk-test-tracing",
         )
     client.flush()
 
