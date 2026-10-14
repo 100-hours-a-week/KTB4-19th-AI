@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from qdrant_client import models
 
@@ -10,7 +12,7 @@ from zipsai.contracts.converse import (
     Route,
     RouteResult,
 )
-from zipsai.integrations.llm import generate_text
+from zipsai.integrations.llm import generate_text, generate_text_stream
 from zipsai.integrations.qdrant import get_client
 from zipsai.knowledge.prompts import (
     IMAGE_QUESTION_PROMPT,
@@ -36,9 +38,89 @@ EMPTY_QUESTION_REPLY = (
 SNIPPET_LENGTH = 200
 
 
+@dataclass(frozen=True)
+class _KnowledgePreparation:
+    question: str
+    chunks: list[models.ScoredPoint]
+    messages: list[object]
+
+
 def handle_knowledge(
     request: ConverseRequest, image_analysis: ImageAnalysis | None = None
 ) -> dict[str, object]:
+    prepared = _prepare_knowledge(request, image_analysis)
+    if isinstance(prepared, dict):
+        return prepared
+    with stage("generate", logger) as step:
+        answer = generate_text(
+            system_prompt=str(prepared.messages[0].content),
+            user_prompt=str(prepared.messages[1].content),
+            usage_sink=step,
+        )
+        declined = answer.strip() == NO_EVIDENCE
+        step["answer_chars"] = len(answer)
+        step["declined"] = declined
+
+    if declined:
+        return _fallback(
+            request,
+            reason="model_declined",
+            reply=NO_EVIDENCE_REPLY,
+            qa_question=prepared.question,
+        )
+
+    return _answer_result(request, answer, prepared.chunks)
+
+
+async def handle_knowledge_stream(
+    request: ConverseRequest,
+    emit: Callable[[str], None],
+    image_analysis: ImageAnalysis | None = None,
+) -> dict[str, object]:
+    """Knowledge 답변만 토큰 단위로 생성한다.
+
+    검색·근거 구성은 기존과 동일하게 수행하고, LLM 생성 구간만 비동기로
+    소비한다. ``emit``은 LangGraph custom stream writer를 전달받는다.
+    """
+    prepared = _prepare_knowledge(request, image_analysis)
+    if isinstance(prepared, dict):
+        return prepared
+
+    answer_parts: list[str] = []
+    pending = ""
+    with stage("generate", logger) as step:
+        async for text in generate_text_stream(
+            system_prompt=str(prepared.messages[0].content),
+            user_prompt=str(prepared.messages[1].content),
+            usage_sink=step,
+        ):
+            answer_parts.append(text)
+            pending += text
+            if NO_EVIDENCE.startswith(pending):
+                continue
+            emit(pending)
+            pending = ""
+
+    answer = "".join(answer_parts)
+    declined = answer.strip() == NO_EVIDENCE
+    if not declined and pending:
+        emit(pending)
+
+    if declined:
+        return _fallback(
+            request,
+            reason="model_declined",
+            reply=NO_EVIDENCE_REPLY,
+            qa_question=prepared.question,
+        )
+
+    return _answer_result(request, answer, prepared.chunks)
+
+
+def _prepare_knowledge(
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None = None,
+) -> _KnowledgePreparation | dict[str, object]:
     question = (request.message.text or "").strip()
     if not question and request.message.images:
         question = next(
@@ -62,11 +144,7 @@ def handle_knowledge(
         and request.current_route is Route.CLARIFY
     ):
         previous_image_turn = next(
-            (
-                turn
-                for turn in reversed(request.conversation_history)
-                if turn.role == "user"
-            ),
+            (turn for turn in reversed(request.conversation_history) if turn.role == "user"),
             None,
         )
         image_observations = previous_image_turn.images or [] if previous_image_turn else []
@@ -103,8 +181,6 @@ def handle_knowledge(
         client=get_client(),
     )
     if not chunks:
-        # 근거가 없어 두 단계가 아예 돌지 않는다. 줄이 없으면 느려서 아직 안 찍힌
-        # 것과 구분되지 않는다.
         skipped("context", logger, skip_reason="no_hit")
         skipped("generate", logger, skip_reason="no_hit")
         return _fallback(
@@ -116,8 +192,6 @@ def handle_knowledge(
 
     with stage("context", logger) as step:
         context = format_context(chunks)
-        # 답이 이상하다는 신고가 오면 어떤 근거로 만든 답인지가 유일한 단서다.
-        # 본문 대신 좌표만 남긴다. Qdrant 포인트 id는 재색인마다 바뀌어 쓸 수 없다.
         step["chunks"] = [
             {
                 "doc_id": (chunk.payload or {}).get("doc_id"),
@@ -129,30 +203,20 @@ def handle_knowledge(
         ]
         step["context_chars"] = len(context)
 
-    messages = KNOWLEDGE_PROMPT.format_messages(
-        question=search_question,
-        context=context,
+    return _KnowledgePreparation(
+        question=question,
+        chunks=chunks,
+        messages=KNOWLEDGE_PROMPT.format_messages(
+            question=search_question, context=context
+        ),
     )
-    with stage("generate", logger) as step:
-        answer = generate_text(
-            system_prompt=str(messages[0].content),
-            user_prompt=str(messages[1].content),
-            usage_sink=step,
-        )
-        # 전체 일치로만 판정한다. 부분 문자열로 보면 건물 문서 본문에 이 단어가 들어 있는
-        # 정상 답변이 회피로 뒤집힌다.
-        declined = answer.strip() == NO_EVIDENCE
-        step["answer_chars"] = len(answer)
-        step["declined"] = declined
 
-    if declined:
-        return _fallback(
-            request,
-            reason="model_declined",
-            reply=NO_EVIDENCE_REPLY,
-            qa_question=search_question,
-        )
 
+def _answer_result(
+    request: ConverseRequest,
+    answer: str,
+    chunks: list[models.ScoredPoint],
+) -> dict[str, object]:
     return {
         "complaint_state": None,
         "reply": answer,

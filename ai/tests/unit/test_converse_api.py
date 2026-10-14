@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pytest
@@ -25,8 +26,13 @@ from zipsai.settings import EMBEDDING_DIM, Settings
 
 
 class _FakeGraph:
-    def __init__(self, result: dict[str, object] | Exception):
+    def __init__(
+        self,
+        result: dict[str, object] | Exception,
+        custom_events: list[str] | None = None,
+    ):
         self.result = result
+        self.custom_events = custom_events or []
         self.received_state: dict[str, object] | None = None
 
     def invoke(self, state: dict[str, object]) -> dict[str, object]:
@@ -34,6 +40,14 @@ class _FakeGraph:
         if isinstance(self.result, Exception):
             raise self.result
         return {**state, **self.result}
+
+    async def astream(self, state: dict[str, object], *, stream_mode: list[str]):
+        self.received_state = state
+        for event in self.custom_events:
+            yield "custom", event
+        if isinstance(self.result, Exception):
+            raise self.result
+        yield "values", {**state, **self.result}
 
 
 def _payload() -> dict[str, object]:
@@ -96,6 +110,98 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
     }
     assert graph.received_state is not None
     assert graph.received_state["complaint_state"] is None
+
+
+def test_converse_stream_returns_sse_status_reply_and_done(monkeypatch):
+    graph = _FakeGraph(
+        {
+            "route": Route.KNOWLEDGE,
+            "complaint_state": None,
+            "reply": "건물 이용 안내입니다.",
+        }
+    )
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert [event["type"] for event in events] == [
+        "status",
+        "delta",
+        "complete",
+        "done",
+    ]
+    complete = events[2]["response"]
+    assert complete["code"] == "ai_response_success"
+    assert complete["turn_id"] == "turn-001"
+    assert complete["trace_id"] == "trace-001"
+    assert complete["data"]["route"] == "knowledge"
+    assert complete["data"]["reply"] == "건물 이용 안내입니다."
+    assert complete["data"]["meta"]["model"] == "test-model"
+    assert isinstance(complete["data"]["meta"]["timing_ms"], int)
+
+
+def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
+    graph = _FakeGraph(
+        {
+            "route": Route.KNOWLEDGE,
+            "complaint_state": None,
+            "reply": "건물 이용 안내입니다.",
+        },
+        custom_events=["건물 이용", " 안내입니다."],
+    )
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.text.count('"type": "delta"') == 2
+    assert '"type": "complete"' in response.text
+    assert response.text.endswith('data: {"type": "done"}\n\n')
+
+
+def test_converse_stream_terminates_after_error(monkeypatch):
+    graph = _FakeGraph(LlmUnavailableError("LLM request failed"))
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert '"type": "error"' in response.text
+    assert response.text.endswith('data: {"type": "done"}\n\n')
+
+
+def test_converse_stream_terminates_after_unexpected_error(monkeypatch):
+    graph = _FakeGraph(RuntimeError("unexpected stream failure"), custom_events=["앞부분"])
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert '"type": "delta"' in response.text
+    assert '"type": "error"' in response.text
+    assert response.text.endswith('data: {"type": "done"}\n\n')
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -7,6 +8,7 @@ from zipsai.complaint.node import (
     _interpret_turn,
     _TurnInterpretation,
     handle_complaint,
+    handle_complaint_stream,
 )
 from zipsai.contracts.converse import (
     ComplaintDraft,
@@ -258,6 +260,64 @@ def test_handle_complaint_uses_generic_reply_without_photo(
     reply = handle_complaint(_make_request("음.."))["reply"]
 
     assert reply == "어디에서 생긴 문제인가요?"
+
+
+def test_handle_complaint_stream_emits_status_and_final_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(ComplaintDraft()),
+    )
+    events: list[dict[str, str]] = []
+
+    result = asyncio.run(
+        handle_complaint_stream(_make_request("음.."), events.append)
+    )
+
+    assert events == [
+        {"type": "status", "status": "민원 내용을 분석하고 있습니다."},
+        {"type": "delta", "field": "reply", "text": "어디에서 생긴 문제인가요?"},
+    ]
+    assert result["reply"] == "어디에서 생긴 문제인가요?"
+
+
+def test_handle_complaint_stream_streams_generated_missing_field_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("같은 민원인데 이번에는 이상한 소리가 납니다.")
+    request.complaint_draft = ComplaintDraft(
+        issue_type="leak", symptom="물이 새고 있음"
+    )
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(symptom="이상한 소리가 납니다")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        lambda **_: node_module._TurnSymptomOutput(symptom="이상한 소리가 납니다"),
+    )
+
+    async def fake_stream(**_):
+        yield "발생한 "
+        yield "위치를 알려주세요."
+
+    monkeypatch.setattr(node_module, "generate_text_stream", fake_stream)
+    events: list[dict[str, str]] = []
+
+    result = asyncio.run(handle_complaint_stream(request, events.append))
+
+    assert events == [
+        {"type": "status", "status": "민원 내용을 분석하고 있습니다."},
+        {"type": "delta", "field": "reply", "text": "발생한 "},
+        {"type": "delta", "field": "reply", "text": "위치를 알려주세요."},
+    ]
+    assert result["reply"] == "발생한 위치를 알려주세요."
 
 
 def test_handle_complaint_uses_fixed_reply_for_a_simple_missing_field(

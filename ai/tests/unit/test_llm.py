@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import httpx
@@ -195,3 +196,56 @@ def test_usage_sink_left_untouched_without_sink(monkeypatch):
 
     # usage_sink를 안 넘기는 기존 호출부는 그대로 동작해야 한다.
     assert llm_module.generate_text("system", "user") == "ok"
+
+
+class _AsyncStream:
+    def __init__(self, chunks: list[object]) -> None:
+        self.chunks = chunks
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.chunks:
+            raise StopAsyncIteration
+        return self.chunks.pop(0)
+
+
+class _AsyncCompletions:
+    def __init__(self, chunks: list[object]) -> None:
+        self.chunks = chunks
+        self.kwargs: dict[str, object] | None = None
+
+    async def create(self, **kwargs: object):
+        self.kwargs = kwargs
+        return _AsyncStream(self.chunks)
+
+
+def test_generate_text_stream_yields_only_non_empty_text_chunks(monkeypatch):
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="안녕"))]),
+            SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=None))]),
+            SimpleNamespace(choices=[]),
+            SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="하세요"))]),
+        ]
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in llm_module.generate_text_stream("system", "user")
+        ]
+
+    chunks = asyncio.run(collect())
+
+    assert chunks == ["안녕", "하세요"]
+    assert completions.kwargs is not None
+    assert completions.kwargs["stream"] is True
