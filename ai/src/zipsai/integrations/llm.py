@@ -1,9 +1,11 @@
+from collections.abc import AsyncIterator
 from functools import lru_cache
 
 from openai import (
     APIError,
     APIStatusError,
     APITimeoutError,
+    AsyncOpenAI,
     ContentFilterFinishReasonError,
     LengthFinishReasonError,
     OpenAI,
@@ -73,6 +75,46 @@ def generate_text(
     if not content:
         raise LlmUnavailableError("LLM returned an empty response")
     return content
+
+
+async def generate_text_stream(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    usage_sink: dict[str, object] | None = None,
+) -> AsyncIterator[str]:
+    settings = get_settings()
+    try:
+        client = _get_async_client(
+            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
+        )
+        stream = await client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            stream=True,
+        )
+        async for chunk in stream:
+            _record_usage(usage_sink, getattr(chunk, "usage", None))
+            if not chunk.choices:
+                continue
+            text = chunk.choices[0].delta.content
+            if text:
+                yield text
+    except RateLimitError as error:
+        raise LlmRateLimitedError(
+            "LLM rate limit exceeded", retry_after_seconds=_retry_after(error)
+        ) from error
+    except APITimeoutError as error:
+        raise LlmTimeoutError("LLM request timed out") from error
+    except APIStatusError as error:
+        if error.status_code >= 500:
+            raise LlmUpstreamError("LLM provider returned an upstream error") from error
+        raise LlmUnavailableError("LLM request failed") from error
+    except APIError as error:
+        raise LlmUnavailableError("LLM request failed") from error
 
 
 def generate_structured[T: BaseModel](
@@ -155,6 +197,13 @@ def _get_client(api_key: str, base_url: str | None, timeout_seconds: float) -> O
 
         return TracedOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
     return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+
+
+@lru_cache
+def _get_async_client(
+    api_key: str, base_url: str | None, timeout_seconds: float
+) -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
 
 
 def _retry_after(error: RateLimitError) -> int | None:
