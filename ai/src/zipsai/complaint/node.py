@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from time import perf_counter
@@ -11,12 +13,14 @@ from pydantic import BaseModel
 from zipsai.complaint.prompts import (
     COMPLAINT_PROMPT,
     TURN_FINALIZATION_PROMPT,
+    TURN_REPLY_PROMPT,
+    TURN_SYMPTOM_PROMPT,
 )
 from zipsai.contracts.converse import (
     ComplaintDraft,
-    CompletedComplaintDraft,
     ComplaintState,
     ComplaintSwitch,
+    CompletedComplaintDraft,
     ConverseRequest,
     ImageAnalysis,
     ImageAttachment,
@@ -33,7 +37,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.history import format_history
-from zipsai.integrations.llm import generate_structured
+from zipsai.integrations.llm import generate_structured, generate_text_stream
 from zipsai.knowledge.retrieve import query_encoder
 from zipsai.observability import elapsed_ms, skipped, stage
 
@@ -57,6 +61,10 @@ class _InterpretationOutput(BaseModel):
 class _TurnFinalization(BaseModel):
     symptom: str | None
     reply: str
+
+
+class _TurnSymptomOutput(BaseModel):
+    symptom: str | None
 
 
 @dataclass(frozen=True)
@@ -241,6 +249,17 @@ class _ComplaintProgress:
     current_symptom: str | None = None
     image_symptom: str | None = None
     image_context: str | None = None
+
+
+@dataclass(frozen=True)
+class ComplaintAnalysis:
+    """민원 reply를 만들기 전에 완료되어야 하는 구조화 분석 결과."""
+
+    request: ConverseRequest
+    evidence: _TurnEvidence
+    progress: _ComplaintProgress
+    symptom_merge_needed: bool
+    asked: str | None
 
 
 def _photo_label(
@@ -505,6 +524,34 @@ def _advance_complaint(
     )
 
 
+def _analyze_complaint(
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None = None,
+) -> ComplaintAnalysis:
+    """동기·스트리밍 경로가 공유하는 민원 분석 단계."""
+    evidence = _gather_turn_evidence(request, image_analysis)
+    progress = _advance_complaint(request, evidence)
+    symptom_merge_needed = bool(
+        (
+            progress.previous_symptom
+            and progress.current_symptom
+            and progress.previous_symptom != progress.current_symptom
+        )
+        or (
+            progress.image_symptom
+            and progress.interpretation.fields.symptom
+            and progress.image_symptom != progress.interpretation.fields.symptom
+        )
+    )
+    return ComplaintAnalysis(
+        request=request,
+        evidence=evidence,
+        progress=progress,
+        symptom_merge_needed=symptom_merge_needed,
+        asked=progress.missing_fields[0] if progress.missing_fields else None,
+    )
+
+
 def _generate_turn_finalization(
     progress: _ComplaintProgress,
     evidence: _TurnEvidence,
@@ -534,11 +581,84 @@ def _generate_turn_finalization(
         return None
 
 
-def _finalize_turn(
-    request: ConverseRequest,
+def _generate_turn_symptom(
     progress: _ComplaintProgress,
     evidence: _TurnEvidence,
+) -> str | None:
+    messages = TURN_SYMPTOM_PROMPT.format_messages(
+        previous_symptom=json.dumps(progress.previous_symptom, ensure_ascii=False),
+        current_symptom=json.dumps(progress.current_symptom, ensure_ascii=False),
+        image_context=json.dumps(progress.image_context, ensure_ascii=False),
+        current_message=json.dumps(evidence.message_text, ensure_ascii=False),
+    )
+    with stage("turn_symptom_finalize", logger) as step:
+        result = generate_structured(
+            system_prompt=str(messages[0].content),
+            user_prompt=str(messages[1].content),
+            response_format=_TurnSymptomOutput,
+            usage_sink=step,
+        )
+        return result.symptom.strip() if result and result.symptom else None
+
+
+def _prepare_streamed_reply(
+    analysis: ComplaintAnalysis,
+) -> tuple[ComplaintDraft, str] | None:
+    """LLM reply streaming이 필요한 경우의 최종 증상과 다음 행동을 준비한다."""
+    if not analysis.symptom_merge_needed or not analysis.asked:
+        return None
+
+    progress = analysis.progress
+    symptom = _generate_turn_symptom(progress, analysis.evidence)
+    symptom = symptom or progress.current_symptom or progress.previous_symptom
+    draft = progress.draft.model_copy(update={"symptom": symptom})
+    return draft, f"ask_{analysis.asked}"
+
+
+async def _stream_generated_reply(
+    analysis: ComplaintAnalysis,
+    emit: Callable[[dict[str, str]], None],
+) -> _ComplaintTurn | None:
+    prepared = await asyncio.to_thread(_prepare_streamed_reply, analysis)
+    if prepared is None:
+        return None
+
+    draft, next_action = prepared
+    messages = TURN_REPLY_PROMPT.format_messages(
+        draft=json.dumps(draft.model_dump(mode="json"), ensure_ascii=False),
+        previous_symptom=json.dumps(
+            analysis.progress.previous_symptom, ensure_ascii=False
+        ),
+        current_symptom=json.dumps(draft.symptom, ensure_ascii=False),
+        next_action=next_action,
+    )
+    parts: list[str] = []
+    with stage("turn_reply_generate", logger) as step:
+        async for text in generate_text_stream(
+            system_prompt=str(messages[0].content),
+            user_prompt=str(messages[1].content),
+            usage_sink=step,
+        ):
+            parts.append(text)
+            emit({"type": "delta", "field": "reply", "text": text})
+
+    reply = "".join(parts).strip()
+    if not reply:
+        return None
+    return _ask_for_missing(
+        draft,
+        analysis.progress.missing_fields,
+        analysis.evidence.image_analysis,
+        reply,
+    )
+
+
+def _finalize_turn(
+    analysis: ComplaintAnalysis,
 ) -> _ComplaintTurn:
+    request = analysis.request
+    progress = analysis.progress
+    evidence = analysis.evidence
     interpretation = progress.interpretation
     if interpretation.switch == ComplaintSwitch.ASK:
         skipped("turn_finalization", logger, skip_reason="switch_confirmation")
@@ -546,19 +666,8 @@ def _finalize_turn(
             progress.draft, interpretation.fields, evidence.image_analysis
         )
 
-    symptom_merge_needed = bool(
-        (
-            progress.previous_symptom
-            and progress.current_symptom
-            and progress.previous_symptom != progress.current_symptom
-        )
-        or (
-            progress.image_symptom
-            and progress.interpretation.fields.symptom
-            and progress.image_symptom != progress.interpretation.fields.symptom
-        )
-    )
-    asked = progress.missing_fields[0] if progress.missing_fields else None
+    symptom_merge_needed = analysis.symptom_merge_needed
+    asked = analysis.asked
     if not symptom_merge_needed:
         skipped(
             "turn_finalization",
@@ -625,12 +734,38 @@ def handle_complaint(
     request: ConverseRequest, *, image_analysis: ImageAnalysis | None = None
 ) -> dict[str, object]:
     started_at = perf_counter()
-    evidence = _gather_turn_evidence(request, image_analysis)
-    progress = _advance_complaint(request, evidence)
-    turn = _finalize_turn(request, progress, evidence)
-    _log_complaint_turn(request, evidence, progress, turn, started_at)
+    analysis = _analyze_complaint(request, image_analysis)
+    turn = _finalize_turn(analysis)
+    _log_complaint_turn(
+        request, analysis.evidence, analysis.progress, turn, started_at
+    )
     return {
         "complaint_state": turn.complaint_state,
         "reply": turn.reply,
         "result": turn.result,
     }
+
+
+async def handle_complaint_stream(
+    request: ConverseRequest,
+    emit: Callable[[dict[str, str]], None],
+    *,
+    image_analysis: ImageAnalysis | None = None,
+) -> dict[str, object]:
+    emit({"type": "status", "status": "민원 내용을 분석하고 있습니다."})
+    started_at = perf_counter()
+    analysis = await asyncio.to_thread(_analyze_complaint, request, image_analysis)
+    streamed_turn = await _stream_generated_reply(analysis, emit)
+    turn = streamed_turn or await asyncio.to_thread(_finalize_turn, analysis)
+    _log_complaint_turn(
+        request, analysis.evidence, analysis.progress, turn, started_at
+    )
+    result = {
+        "complaint_state": turn.complaint_state,
+        "reply": turn.reply,
+        "result": turn.result,
+    }
+    reply = result.get("reply")
+    if streamed_turn is None and isinstance(reply, str) and reply:
+        emit({"type": "delta", "field": "reply", "text": reply})
+    return result

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 from zipsai.api.converse import router as converse_router
 from zipsai.api.error_responses import (
@@ -12,7 +13,7 @@ from zipsai.api.error_responses import (
 from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
 from zipsai.observability import configure_logging
-from zipsai.settings import API_PREFIX, missing_required_settings
+from zipsai.settings import API_PREFIX, CORS_ORIGINS, missing_required_settings
 from zipsai.tracing import get_tracing_client
 
 configure_logging()
@@ -32,6 +33,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="zipsai", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(CORS_ORIGINS),
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 app.include_router(converse_router)
 app.include_router(health_router)
 app.include_router(indexing_router, prefix=API_PREFIX)
