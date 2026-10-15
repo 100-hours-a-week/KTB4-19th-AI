@@ -63,7 +63,7 @@ def test_classify_intent_analyzes_new_images_and_returns_route(monkeypatch):
 
     def classify(images, *, system_prompt, user_prompt):
         calls.append((images, system_prompt, user_prompt))
-        return Route.COMPLAINT, ImageAnalysis(images=[observation])
+        return Route.COMPLAINT, ImageAnalysis(images=[observation]), "세탁기 밑으로 물이 새요"
 
     monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
     state = _build_state(
@@ -75,6 +75,7 @@ def test_classify_intent_analyzes_new_images_and_returns_route(monkeypatch):
 
     assert result["route"] is Route.COMPLAINT
     assert result["image_analysis"].images == [observation]
+    assert result["rewritten_question"] == "세탁기 밑으로 물이 새요"
     assert calls[0][0][0].attachment_id == 123
     assert "세탁기 밑으로 물이 새요" in calls[0][2]
     assert "현재 진행 중인 route" in calls[0][2]
@@ -85,7 +86,7 @@ def test_intent_prompt_requests_reusable_summary_and_separate_ocr(monkeypatch):
 
     def classify(_images, *, system_prompt, **_kwargs):
         prompts.append(system_prompt)
-        return Route.CLARIFY, ImageAnalysis(images=[])
+        return Route.CLARIFY, ImageAnalysis(images=[]), None
 
     monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
 
@@ -100,6 +101,8 @@ def test_intent_prompt_requests_reusable_summary_and_separate_ocr(monkeypatch):
     assert "Do not list unrelated labels" in prompt
     assert "Transcribe clearly readable, relevant text verbatim" in prompt
     assert "Omit unreadable fragments instead of guessing them" in prompt
+    assert "rewritten_question" in prompt
+    assert "never add facts not stated or visible" in prompt
 
 
 def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
@@ -107,14 +110,40 @@ def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
 
     def classify(images, **_kwargs):
         calls.append(images)
-        return Route.KNOWLEDGE, ImageAnalysis(images=[])
+        return Route.KNOWLEDGE, ImageAnalysis(images=[]), "쓰레기 배출일이 언제예요?"
 
     monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
 
     result = classify_intent(_build_state("쓰레기 배출일이 언제예요?"))
 
     assert calls == [[]]
-    assert result == {"route": Route.KNOWLEDGE, "image_analysis": None}
+    assert result == {
+        "route": Route.KNOWLEDGE,
+        "image_analysis": None,
+        "rewritten_question": "쓰레기 배출일이 언제예요?",
+    }
+
+
+def test_classify_intent_resolves_a_demonstrative_pronoun_via_history(monkeypatch):
+    # #108: "그거 어디다해"가 원문 그대로 knowledge 검색에 쓰이면 건물 문서와
+    # 매칭되지 않는다. intent가 이미 보는 대화 이력으로 미리 보강해 넘긴다.
+    def classify(_images, *, system_prompt, user_prompt):
+        assert "분리수거 언제해" in user_prompt
+        return Route.KNOWLEDGE, ImageAnalysis(images=[]), "분리수거는 어디에 배출하나요?"
+
+    monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
+    history = [
+        {"message_id": "m1", "role": "user", "text": "분리수거 언제해"},
+        {
+            "message_id": "m2",
+            "role": "assistant",
+            "text": "재활용은 화요일·목요일 저녁에 건물 앞 지정 배출대에 내놓으시면 됩니다.",
+        },
+    ]
+
+    result = classify_intent(_build_state("그거 어디다해", history=history))
+
+    assert result["rewritten_question"] == "분리수거는 어디에 배출하나요?"
 
 
 def test_classify_intent_wraps_invalid_vlm_response(monkeypatch):

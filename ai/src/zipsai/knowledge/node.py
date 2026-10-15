@@ -76,7 +76,7 @@ async def handle_knowledge_stream(
     request: ConverseRequest,
     emit: Callable[[str], None],
     image_analysis: ImageAnalysis | None = None,
-) -> dict[str, object]:
+    ) -> dict[str, object]:
     """Knowledge 답변만 토큰 단위로 생성한다.
 
     검색·근거 구성은 기존과 동일하게 수행하고, LLM 생성 구간만 비동기로

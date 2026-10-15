@@ -42,7 +42,9 @@ async def _run_complaint_stream(state: AgentState) -> dict[str, object]:
 
 def _run_knowledge(state: AgentState) -> dict[str, object]:
     result = handle_knowledge(
-        state["request"], image_analysis=state.get("image_analysis")
+        state["request"],
+        image_analysis=state.get("image_analysis"),
+        rewritten_question=state.get("rewritten_question"),
     )
     return _include_image_analysis(result, state)
 
@@ -50,7 +52,10 @@ def _run_knowledge(state: AgentState) -> dict[str, object]:
 async def _run_knowledge_stream(state: AgentState) -> dict[str, object]:
     writer = get_stream_writer()
     result = await handle_knowledge_stream(
-        state["request"], writer, image_analysis=state.get("image_analysis")
+        state["request"],
+        writer,
+        image_analysis=state.get("image_analysis"),
+        rewritten_question=state.get("rewritten_question"),
     )
     return _include_image_analysis({"route": Route.KNOWLEDGE, **result}, state)
 

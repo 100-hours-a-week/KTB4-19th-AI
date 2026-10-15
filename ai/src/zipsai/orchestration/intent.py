@@ -38,8 +38,9 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         logger,
         current_route=request.current_route.value if request.current_route else None,
     ) as step:
+        rewritten_question: str | None = None
         try:
-            route, image_analysis = classify_and_analyze(
+            route, image_analysis, rewritten_question = classify_and_analyze(
                 request.message.images,
                 system_prompt=str(messages[0].content),
                 user_prompt=str(messages[1].content),
@@ -87,6 +88,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     result: dict[str, object] = {
         "route": route,
         "image_analysis": image_analysis if request.message.images else None,
+        "rewritten_question": rewritten_question,
     }
     if request.message.images and image_analysis is None:
         result["image_analysis_failed"] = True

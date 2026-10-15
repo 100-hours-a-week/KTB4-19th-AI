@@ -212,7 +212,6 @@ def test_graph_propagates_intent_classification_failure(
 
 def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.MonkeyPatch):
     state = _make_state(Route.KNOWLEDGE)
-    received: list[object] = []
 
     def classify(_state: AgentState) -> dict[str, object]:
         from zipsai.contracts.converse import ImageAnalysis, ImageObservation
@@ -224,8 +223,7 @@ def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.Monkey
             ),
         }
 
-    def knowledge(_request: ConverseRequest, *, image_analysis=None):
-        received.append(image_analysis)
+    def knowledge(_request: ConverseRequest, **_kwargs: object) -> dict[str, object]:
         return {"reply": "안내", "result": RouteResult()}
 
     monkeypatch.setattr(graph_module, "classify_intent", classify)
@@ -233,8 +231,33 @@ def test_graph_passes_image_analysis_to_selected_node(monkeypatch: pytest.Monkey
 
     result = build_graph().invoke(state)
 
-    assert received[0].images[0].attachment_id == 123
-    assert result["result"].image_analysis == received[0]
+    # image_analysis는 knowledge 로직엔 더 이상 안 쓰이고(= rewritten_question으로
+    # 대체), 응답의 근거 메타데이터로만 그대로 실린다.
+    assert result["result"].image_analysis.images[0].attachment_id == 123
+
+
+def test_graph_passes_rewritten_question_to_knowledge(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _make_state(Route.KNOWLEDGE)
+    received: list[object] = []
+
+    def classify(_state: AgentState) -> dict[str, object]:
+        return {
+            "route": Route.KNOWLEDGE,
+            "rewritten_question": "분리수거는 어디에 배출하나요?",
+        }
+
+    def knowledge(_request: ConverseRequest, *, rewritten_question=None, **_kwargs):
+        received.append(rewritten_question)
+        return {"reply": "안내", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "classify_intent", classify)
+    monkeypatch.setattr(graph_module, "handle_knowledge", knowledge)
+
+    build_graph().invoke(state)
+
+    assert received == ["분리수거는 어디에 배출하나요?"]
 
 
 def test_graph_passes_intent_image_analysis_to_complaint(
