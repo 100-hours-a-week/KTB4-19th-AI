@@ -392,3 +392,42 @@ def test_does_not_use_history_images_without_a_clarification_followup(
     assert spy.encoded_questions == ["주차 등록은 어디서 해요?"]
     assert spy.generate_calls == 0
     assert result["result"].qa_card_draft.question == "주차 등록은 어디서 해요?"
+
+
+def test_uses_the_rewritten_question_when_no_image_is_involved(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    # #108: "그거 어디다해"에는 사진이 전혀 없어 image_context가 비고, intent가
+    # 대화 이력으로 이미 보강해 넘긴 rewritten_question이 검색어가 돼야 한다.
+    _stub_search(
+        monkeypatch,
+        spy,
+        [
+            _chunk(
+                "재활용은 화요일·목요일 저녁 7시부터 자정 사이에 건물 앞 지정 "
+                "배출대에 내놓으시면 됩니다.",
+                title="분리수거 안내",
+            )
+        ],
+    )
+    _stub_llm(monkeypatch, spy, "건물 앞 지정 배출대에 내놓으시면 됩니다.")
+
+    result = handle_knowledge(
+        _request("그거 어디다해"),
+        rewritten_question="분리수거는 어디에 배출하나요?",
+    )
+
+    assert spy.encoded_questions == ["분리수거는 어디에 배출하나요?"]
+    assert spy.generate_calls == 1  # 답변 생성 한 번뿐, 별도 rewrite 호출 없음
+    assert result["reply"] == "건물 앞 지정 배출대에 내놓으시면 됩니다."
+
+
+def test_falls_back_to_the_raw_question_without_a_rewritten_question(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [_chunk("세탁실은 22시까지입니다.")])
+    _stub_llm(monkeypatch, spy, "22시까지 이용할 수 있습니다.")
+
+    handle_knowledge(_request())
+
+    assert spy.encoded_questions == ["세탁실은 몇 시까지 쓸 수 있나요?"]
