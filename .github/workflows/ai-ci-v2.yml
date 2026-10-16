@@ -1,4 +1,5 @@
 name: AI CI V2
+# Trigger initial staging image builds when validating the V2 deployment setup.
 on:
   pull_request:
     branches: [staging, main]
