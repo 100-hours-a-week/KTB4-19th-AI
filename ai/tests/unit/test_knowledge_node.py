@@ -87,6 +87,20 @@ def _stub_search(
     monkeypatch.setattr(node_module, "search_chunks", search)
 
 
+def _stub_search_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+    spy: Spy,
+    results: list[list[models.ScoredPoint]],
+) -> None:
+    remaining = iter(results)
+
+    def search(_vector: object, _building_id: int, **_kwargs: object):
+        spy.search_calls += 1
+        return next(remaining)
+
+    monkeypatch.setattr(node_module, "search_chunks", search)
+
+
 def _stub_llm(monkeypatch: pytest.MonkeyPatch, spy: Spy, answer: str) -> None:
     def generate(**kwargs: object) -> str:
         spy.generate_calls += 1
@@ -270,6 +284,7 @@ def test_uses_new_image_analysis_as_search_context(
             images=[{"attachmentId": 123, "url": "https://example.com/photo.jpg"}],
         ),
         image_analysis=analysis,
+        contextualized_message="음식물 쓰레기인 돼지껍데기를 어디에 버리면 되나요?",
     )
 
     assert spy.encoded_questions == [
@@ -277,6 +292,7 @@ def test_uses_new_image_analysis_as_search_context(
     ]
     rewrite_prompt = str(spy.prompt_inputs[0]["user_prompt"])
     assert "질문: 이거 어디다 버려요?" in rewrite_prompt
+    assert "맥락 보강 참고문: 음식물 쓰레기인 돼지껍데기를 어디에 버리면 되나요?" in rewrite_prompt
     assert "사진 분석 맥락: 돼지껍데기 조각; 음식물" in rewrite_prompt
     assert "건조기 화면 E3" not in rewrite_prompt
     answer_prompt = str(spy.prompt_inputs[1]["user_prompt"])
@@ -338,11 +354,13 @@ def test_uses_images_from_the_latest_user_turn_for_a_later_question(
     ]
 
     result = handle_knowledge(
-        _request("이 오류가 무슨 뜻이에요?", history=history, current_route="clarify")
+        _request("이 오류가 무슨 뜻이에요?", history=history, current_route="clarify"),
+        contextualized_message="건조기 화면의 E3 오류가 무엇을 뜻하나요?",
     )
 
     assert spy.encoded_questions == ["건조기 E3 오류는 무엇을 뜻하나요?"]
     rewrite_prompt = str(spy.prompt_inputs[0]["user_prompt"])
+    assert "맥락 보강 참고문: 건조기 화면의 E3 오류가 무엇을 뜻하나요?" in rewrite_prompt
     assert "사진 첨부 때 발화: 건조기가 멈췄어요." in rewrite_prompt
     assert "건조기 화면 E3; E3" in rewrite_prompt
     assert "돼지껍데기" not in rewrite_prompt
@@ -392,3 +410,78 @@ def test_does_not_use_history_images_without_a_clarification_followup(
     assert spy.encoded_questions == ["주차 등록은 어디서 해요?"]
     assert spy.generate_calls == 0
     assert result["result"].qa_card_draft.question == "주차 등록은 어디서 해요?"
+
+
+def test_keeps_original_search_when_it_returns_evidence(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    # #108: keep the original wording when it already retrieves evidence.
+    _stub_search(
+        monkeypatch,
+        spy,
+        [
+            _chunk(
+                "재활용은 화요일·목요일 저녁 7시부터 자정 사이에 건물 앞 지정 "
+                "배출대에 내놓으시면 됩니다.",
+                title="분리수거 안내",
+            )
+        ],
+    )
+    _stub_llm(monkeypatch, spy, "건물 앞 지정 배출대에 내놓으시면 됩니다.")
+
+    result = handle_knowledge(
+        _request("그거 어디다해"),
+        contextualized_message="분리수거는 어디에 배출하나요?",
+    )
+
+    assert spy.encoded_questions == ["그거 어디다해"]
+    assert spy.search_calls == 1
+    assert spy.generate_calls == 1  # 답변 생성 한 번뿐, 별도 rewrite 호출 없음
+    assert result["reply"] == "건물 앞 지정 배출대에 내놓으시면 됩니다."
+
+
+def test_retries_with_contextualized_message_after_original_search_misses(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    chunks = [_chunk("재활용은 건물 앞 지정 배출대에 내놓으시면 됩니다.")]
+    _stub_search_sequence(monkeypatch, spy, [[], chunks])
+    _stub_llm(monkeypatch, spy, "건물 앞 지정 배출대에 내놓으시면 됩니다.")
+
+    result = handle_knowledge(
+        _request("그거 어디다해"),
+        contextualized_message="분리수거는 어디에 배출하나요?",
+    )
+
+    assert spy.encoded_questions == ["그거 어디다해", "분리수거는 어디에 배출하나요?"]
+    assert spy.search_calls == 2
+    assert spy.generate_calls == 1
+    assert "질문: 분리수거는 어디에 배출하나요?" in spy.prompt_inputs[0]["user_prompt"]
+    assert result["reply"] == "건물 앞 지정 배출대에 내놓으시면 됩니다."
+
+
+def test_returns_no_evidence_after_contextualized_retry_misses(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search_sequence(monkeypatch, spy, [[], []])
+
+    result = handle_knowledge(
+        _request("그거 어디다해"),
+        contextualized_message="분리수거는 어디에 배출하나요?",
+    )
+
+    assert spy.encoded_questions == ["그거 어디다해", "분리수거는 어디에 배출하나요?"]
+    assert spy.search_calls == 2
+    assert spy.generate_calls == 0
+    assert result["reply"] == NO_EVIDENCE_REPLY
+    assert result["result"].qa_card_draft.question == "분리수거는 어디에 배출하나요?"
+
+
+def test_falls_back_to_the_raw_question_without_a_contextualized_message(
+    monkeypatch: pytest.MonkeyPatch, spy: Spy
+) -> None:
+    _stub_search(monkeypatch, spy, [_chunk("세탁실은 22시까지입니다.")])
+    _stub_llm(monkeypatch, spy, "22시까지 이용할 수 있습니다.")
+
+    handle_knowledge(_request())
+
+    assert spy.encoded_questions == ["세탁실은 몇 시까지 쓸 수 있나요?"]

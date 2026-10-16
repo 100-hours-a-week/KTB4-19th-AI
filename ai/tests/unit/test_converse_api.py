@@ -489,7 +489,7 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch.setattr(
         intent_module,
         "classify_and_analyze",
-        lambda *_args, **_kwargs: (Route.COMPLAINT, ImageAnalysis(images=[])),
+        lambda *_args, **_kwargs: (Route.COMPLAINT, ImageAnalysis(images=[]), None),
     )
     monkeypatch.setattr(
         converse_module,

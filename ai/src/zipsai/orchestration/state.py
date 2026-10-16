@@ -17,3 +17,4 @@ class AgentState(TypedDict):
     result: RouteResult
     image_analysis: ImageAnalysis | None
     image_analysis_failed: NotRequired[bool]
+    contextualized_message: NotRequired[str | None]

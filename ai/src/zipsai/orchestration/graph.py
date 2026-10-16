@@ -24,7 +24,11 @@ def select_next_node(state: AgentState) -> str:
 
 def _run_complaint(state: AgentState) -> dict[str, object]:
     result = (
-        handle_complaint(state["request"], image_analysis=state.get("image_analysis"))
+        handle_complaint(
+            state["request"],
+            image_analysis=state.get("image_analysis"),
+            contextualized_message=state.get("contextualized_message"),
+        )
         or {}
     )
     return _include_image_analysis({"route": Route.COMPLAINT, **result}, state)
@@ -36,13 +40,16 @@ async def _run_complaint_stream(state: AgentState) -> dict[str, object]:
         state["request"],
         writer,
         image_analysis=state.get("image_analysis"),
+        contextualized_message=state.get("contextualized_message"),
     )
     return _include_image_analysis({"route": Route.COMPLAINT, **result}, state)
 
 
 def _run_knowledge(state: AgentState) -> dict[str, object]:
     result = handle_knowledge(
-        state["request"], image_analysis=state.get("image_analysis")
+        state["request"],
+        image_analysis=state.get("image_analysis"),
+        contextualized_message=state.get("contextualized_message"),
     )
     return _include_image_analysis(result, state)
 
@@ -50,7 +57,10 @@ def _run_knowledge(state: AgentState) -> dict[str, object]:
 async def _run_knowledge_stream(state: AgentState) -> dict[str, object]:
     writer = get_stream_writer()
     result = await handle_knowledge_stream(
-        state["request"], writer, image_analysis=state.get("image_analysis")
+        state["request"],
+        writer,
+        image_analysis=state.get("image_analysis"),
+        contextualized_message=state.get("contextualized_message"),
     )
     return _include_image_analysis({"route": Route.KNOWLEDGE, **result}, state)
 

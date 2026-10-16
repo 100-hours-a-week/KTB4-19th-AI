@@ -6,6 +6,7 @@ RUN apt-get update \
 FROM base AS build
 WORKDIR /app
 ENV HF_HOME=/app/.cache/huggingface
+ENV TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
 RUN pip install --no-cache-dir uv
 COPY ai/pyproject.toml ai/uv.lock ai/README.md ./
 RUN uv sync --frozen --no-install-project --no-dev
@@ -13,10 +14,11 @@ COPY ai/src ./src
 COPY ai/scripts ./scripts
 RUN uv sync --frozen --no-dev
 RUN /app/.venv/bin/python scripts/prefetch_models.py
+RUN /app/.venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 
 FROM base
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1
+ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
 RUN groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /app /app
 USER app
