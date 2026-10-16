@@ -394,11 +394,11 @@ def test_does_not_use_history_images_without_a_clarification_followup(
     assert result["result"].qa_card_draft.question == "주차 등록은 어디서 해요?"
 
 
-def test_uses_the_rewritten_question_when_no_image_is_involved(
+def test_uses_the_contextualized_message_when_no_image_is_involved(
     monkeypatch: pytest.MonkeyPatch, spy: Spy
 ) -> None:
     # #108: "그거 어디다해"에는 사진이 전혀 없어 image_context가 비고, intent가
-    # 대화 이력으로 이미 보강해 넘긴 rewritten_question이 검색어가 돼야 한다.
+    # 대화 이력으로 이미 보강해 넘긴 contextualized_message이 검색어가 돼야 한다.
     _stub_search(
         monkeypatch,
         spy,
@@ -414,7 +414,7 @@ def test_uses_the_rewritten_question_when_no_image_is_involved(
 
     result = handle_knowledge(
         _request("그거 어디다해"),
-        rewritten_question="분리수거는 어디에 배출하나요?",
+        contextualized_message="분리수거는 어디에 배출하나요?",
     )
 
     assert spy.encoded_questions == ["분리수거는 어디에 배출하나요?"]
@@ -422,7 +422,7 @@ def test_uses_the_rewritten_question_when_no_image_is_involved(
     assert result["reply"] == "건물 앞 지정 배출대에 내놓으시면 됩니다."
 
 
-def test_falls_back_to_the_raw_question_without_a_rewritten_question(
+def test_falls_back_to_the_raw_question_without_a_contextualized_message(
     monkeypatch: pytest.MonkeyPatch, spy: Spy
 ) -> None:
     _stub_search(monkeypatch, spy, [_chunk("세탁실은 22시까지입니다.")])

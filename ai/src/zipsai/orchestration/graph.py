@@ -44,7 +44,7 @@ def _run_knowledge(state: AgentState) -> dict[str, object]:
     result = handle_knowledge(
         state["request"],
         image_analysis=state.get("image_analysis"),
-        rewritten_question=state.get("rewritten_question"),
+        contextualized_message=state.get("contextualized_message"),
     )
     return _include_image_analysis(result, state)
 
@@ -55,7 +55,7 @@ async def _run_knowledge_stream(state: AgentState) -> dict[str, object]:
         state["request"],
         writer,
         image_analysis=state.get("image_analysis"),
-        rewritten_question=state.get("rewritten_question"),
+        contextualized_message=state.get("contextualized_message"),
     )
     return _include_image_analysis({"route": Route.KNOWLEDGE, **result}, state)
 

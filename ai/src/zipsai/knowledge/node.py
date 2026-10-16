@@ -48,9 +48,9 @@ class _KnowledgePreparation:
 def handle_knowledge(
     request: ConverseRequest,
     image_analysis: ImageAnalysis | None = None,
-    rewritten_question: str | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
-    prepared = _prepare_knowledge(request, image_analysis, rewritten_question)
+    prepared = _prepare_knowledge(request, image_analysis, contextualized_message)
     if isinstance(prepared, dict):
         return prepared
     with stage("generate", logger) as step:
@@ -78,14 +78,14 @@ async def handle_knowledge_stream(
     request: ConverseRequest,
     emit: Callable[[str], None],
     image_analysis: ImageAnalysis | None = None,
-    rewritten_question: str | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
     """Knowledge 답변만 토큰 단위로 생성한다.
 
     검색·근거 구성은 기존과 동일하게 수행하고, LLM 생성 구간만 비동기로
     소비한다. ``emit``은 LangGraph custom stream writer를 전달받는다.
     """
-    prepared = _prepare_knowledge(request, image_analysis, rewritten_question)
+    prepared = _prepare_knowledge(request, image_analysis, contextualized_message)
     if isinstance(prepared, dict):
         return prepared
 
@@ -123,7 +123,7 @@ async def handle_knowledge_stream(
 def _prepare_knowledge(
     request: ConverseRequest,
     image_analysis: ImageAnalysis | None = None,
-    rewritten_question: str | None = None,
+    contextualized_message: str | None = None,
 ) -> _KnowledgePreparation | dict[str, object]:
     question = (request.message.text or "").strip()
     if not question and request.message.images:
@@ -180,8 +180,8 @@ def _prepare_knowledge(
             ).strip()
             search_question = rewritten or question
             step["question_chars"] = len(search_question)
-    elif rewritten_question:
-        search_question = rewritten_question.strip() or question
+    elif contextualized_message:
+        search_question = contextualized_message.strip() or question
 
     chunks = search_chunks(
         encode_question(

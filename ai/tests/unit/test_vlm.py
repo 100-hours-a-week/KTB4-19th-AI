@@ -85,14 +85,14 @@ def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypa
     parsed = _ModelIntentAndImages(
         route=Route.COMPLAINT,
         images=[_ModelObservation(summary="세탁기 아래 물이 고여 있음", ocr_text="E1")],
-        rewritten_question="세탁기 아래 물이 새는데 어떻게 하나요?",
+        contextualized_message="세탁기 아래 물이 새는데 어떻게 하나요?",
     )
     monkeypatch.setattr(
         vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, rewritten_question = _classify()
+    route, analysis, contextualized_message = _classify()
 
     assert route is Route.COMPLAINT
     assert analysis.model_dump() == {
@@ -104,7 +104,7 @@ def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypa
             }
         ]
     }
-    assert rewritten_question == "세탁기 아래 물이 새는데 어떻게 하나요?"
+    assert contextualized_message == "세탁기 아래 물이 새는데 어떻게 하나요?"
     assert calls[0]["messages"][0] == {"role": "system", "content": _SYSTEM_PROMPT}
     assert calls[0]["messages"][1]["content"] == [
         {"type": "text", "text": _USER_PROMPT},
@@ -116,18 +116,18 @@ def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypa
 def test_classify_and_analyze_supports_text_only_intent(monkeypatch):
     calls: list[dict[str, object]] = []
     parsed = _ModelIntentAndImages(
-        route=Route.KNOWLEDGE, images=[], rewritten_question=None
+        route=Route.KNOWLEDGE, images=[], contextualized_message=None
     )
     monkeypatch.setattr(
         vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, rewritten_question = _classify([])
+    route, analysis, contextualized_message = _classify([])
 
     assert route is Route.KNOWLEDGE
     assert analysis.images == []
-    assert rewritten_question is None
+    assert contextualized_message is None
     assert calls[0]["messages"][1]["content"] == [
         {"type": "text", "text": _USER_PROMPT}
     ]
@@ -145,18 +145,18 @@ def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
     parsed = _ModelIntentAndImages(
         route=Route.KNOWLEDGE,
         images=[_ModelObservation(summary="할루시네이션된 관측", ocr_text=None)],
-        rewritten_question="쓰레기 배출일이 언제예요?",
+        contextualized_message="쓰레기 배출일이 언제예요?",
     )
     monkeypatch.setattr(
         vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, rewritten_question = _classify([])
+    route, analysis, contextualized_message = _classify([])
 
     assert route is Route.KNOWLEDGE
     assert analysis.images == []
-    assert rewritten_question == "쓰레기 배출일이 언제예요?"
+    assert contextualized_message == "쓰레기 배출일이 언제예요?"
 
 
 @pytest.mark.parametrize(
@@ -167,7 +167,7 @@ def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
         _fake_empty_client,
         lambda: _fake_parse_client(
             _ModelIntentAndImages(
-                route=Route.CLARIFY, images=[], rewritten_question=None
+                route=Route.CLARIFY, images=[], contextualized_message=None
             )
         ),
     ],

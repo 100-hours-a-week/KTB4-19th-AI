@@ -38,9 +38,9 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         logger,
         current_route=request.current_route.value if request.current_route else None,
     ) as step:
-        rewritten_question: str | None = None
+        contextualized_message: str | None = None
         try:
-            route, image_analysis, rewritten_question = classify_and_analyze(
+            route, image_analysis, contextualized_message = classify_and_analyze(
                 request.message.images,
                 system_prompt=str(messages[0].content),
                 user_prompt=str(messages[1].content),
@@ -83,12 +83,17 @@ def classify_intent(state: AgentState) -> dict[str, object]:
                 route = Route.CLARIFY
             step["image_analysis_status"] = "failed"
         step["intent_route"] = route.value
+        original_text = (request.message.text or "").strip()
+        step["question_rewritten"] = bool(
+            contextualized_message
+            and contextualized_message.strip() != original_text
+        )
     # 이 줄 자신은 step이 담고, 뒤따르는 단계들은 컨텍스트로 물려받는다.
     add_context(intent_route=route.value)
     result: dict[str, object] = {
         "route": route,
         "image_analysis": image_analysis if request.message.images else None,
-        "rewritten_question": rewritten_question,
+        "contextualized_message": contextualized_message,
     }
     if request.message.images and image_analysis is None:
         result["image_analysis_failed"] = True

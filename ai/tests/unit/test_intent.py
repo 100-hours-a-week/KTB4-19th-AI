@@ -75,7 +75,7 @@ def test_classify_intent_analyzes_new_images_and_returns_route(monkeypatch):
 
     assert result["route"] is Route.COMPLAINT
     assert result["image_analysis"].images == [observation]
-    assert result["rewritten_question"] == "세탁기 밑으로 물이 새요"
+    assert result["contextualized_message"] == "세탁기 밑으로 물이 새요"
     assert calls[0][0][0].attachment_id == 123
     assert "세탁기 밑으로 물이 새요" in calls[0][2]
     assert "현재 진행 중인 route" in calls[0][2]
@@ -101,8 +101,10 @@ def test_intent_prompt_requests_reusable_summary_and_separate_ocr(monkeypatch):
     assert "Do not list unrelated labels" in prompt
     assert "Transcribe clearly readable, relevant text verbatim" in prompt
     assert "Omit unreadable fragments instead of guessing them" in prompt
-    assert "rewritten_question" in prompt
-    assert "never add facts not stated or visible" in prompt
+    assert "contextualized_message" in prompt
+    assert "Do not answer, diagnose, or add facts" in prompt
+    assert "Missing complaint details such as location or date" in prompt
+    assert "without an explicit photo request" in prompt
 
 
 def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
@@ -120,7 +122,7 @@ def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
     assert result == {
         "route": Route.KNOWLEDGE,
         "image_analysis": None,
-        "rewritten_question": "쓰레기 배출일이 언제예요?",
+        "contextualized_message": "쓰레기 배출일이 언제예요?",
     }
 
 
@@ -143,7 +145,7 @@ def test_classify_intent_resolves_a_demonstrative_pronoun_via_history(monkeypatc
 
     result = classify_intent(_build_state("그거 어디다해", history=history))
 
-    assert result["rewritten_question"] == "분리수거는 어디에 배출하나요?"
+    assert result["contextualized_message"] == "분리수거는 어디에 배출하나요?"
 
 
 def test_classify_intent_wraps_invalid_vlm_response(monkeypatch):
