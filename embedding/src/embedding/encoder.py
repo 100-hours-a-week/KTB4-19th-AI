@@ -47,23 +47,32 @@ class BgeM3Encoder:
             raise ModelNotLoadedError(f"Model '{self.model_id}' is not loaded")
 
         # FastAPI가 동기 핸들러를 스레드풀에서 돌리므로 요청이 겹치면 추론도 겹친다.
-        # CPU에서는 서로 코어를 뺏어 느려지기만 하니 한 번에 한 배치만 돌린다.
-        # 처리량이 모자라면 요청을 모아 한 번에 추론하는 배치 큐로 바꾼다.
-        # max_wait=None이면 색인 배치처럼 끝날 때까지 기다린다. 질의는 화면 앞에서
-        # 기다리는 사람이 있어 짧은 한도를 주고, 못 잡으면 바로 포기시킨다.
-        acquired = self._lock.acquire(timeout=max_wait if max_wait is not None else -1)
-        if not acquired:
-            raise ModelBusyError("Embedding model is busy with another batch")
-        try:
-            output = self._model.encode(
-                texts,
-                return_dense=True,
-                return_sparse=True,
-                return_colbert_vecs=False,
+        # CPU에서는 서로 코어를 뺏어 느려지기만 하니, 텍스트 1개 처리하는 동안만
+        # lock을 쥔다 — 배치 전체를 한 번에 쥐면 긴 배치가 끝날 때까지 다른 요청이
+        # 전혀 못 들어온다. 처리량이 모자라면 요청을 모아 한 번에 추론하는 배치
+        # 큐로 바꾼다. max_wait=None이면 색인 배치처럼 끝날 때까지 기다린다. 질의는
+        # 화면 앞에서 기다리는 사람이 있어 짧은 한도를 주고, 못 잡으면 바로 포기시킨다.
+        dense: list[list[float]] = []
+        sparse: list[dict[str, float]] = []
+        for text in texts:
+            acquired = self._lock.acquire(
+                timeout=max_wait if max_wait is not None else -1
             )
-        finally:
-            self._lock.release()
-        return _normalize(output)
+            if not acquired:
+                raise ModelBusyError("Embedding model is busy with another batch")
+            try:
+                output = self._model.encode(
+                    [text],
+                    return_dense=True,
+                    return_sparse=True,
+                    return_colbert_vecs=False,
+                )
+            finally:
+                self._lock.release()
+            item_dense, item_sparse = _normalize(output)
+            dense.extend(item_dense)
+            sparse.extend(item_sparse)
+        return dense, sparse
 
 
 # 라우터와 기동 코드가 같은 인스턴스를 본다.

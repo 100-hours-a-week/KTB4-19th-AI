@@ -3,8 +3,6 @@ name: AI CI
 # PR에서는 변경된 서비스만 Test·Docker Build로 검증한다.
 # main 병합 후에는 변경된 서비스 Image만 ECR에 Commit SHA 앞 7자리 Tag로 Push한다.
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
 

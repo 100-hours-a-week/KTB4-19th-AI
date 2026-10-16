@@ -46,9 +46,11 @@ class _KnowledgePreparation:
 
 
 def handle_knowledge(
-    request: ConverseRequest, image_analysis: ImageAnalysis | None = None
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
-    prepared = _prepare_knowledge(request, image_analysis)
+    prepared = _prepare_knowledge(request, image_analysis, contextualized_message)
     if isinstance(prepared, dict):
         return prepared
     with stage("generate", logger) as step:
@@ -76,13 +78,14 @@ async def handle_knowledge_stream(
     request: ConverseRequest,
     emit: Callable[[str], None],
     image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
     """Knowledge 답변만 토큰 단위로 생성한다.
 
     검색·근거 구성은 기존과 동일하게 수행하고, LLM 생성 구간만 비동기로
     소비한다. ``emit``은 LangGraph custom stream writer를 전달받는다.
     """
-    prepared = _prepare_knowledge(request, image_analysis)
+    prepared = _prepare_knowledge(request, image_analysis, contextualized_message)
     if isinstance(prepared, dict):
         return prepared
 
@@ -120,6 +123,7 @@ async def handle_knowledge_stream(
 def _prepare_knowledge(
     request: ConverseRequest,
     image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> _KnowledgePreparation | dict[str, object]:
     question = (request.message.text or "").strip()
     if not question and request.message.images:
@@ -144,10 +148,16 @@ def _prepare_knowledge(
         and request.current_route is Route.CLARIFY
     ):
         previous_image_turn = next(
-            (turn for turn in reversed(request.conversation_history) if turn.role == "user"),
+            (
+                turn
+                for turn in reversed(request.conversation_history)
+                if turn.role == "user"
+            ),
             None,
         )
-        image_observations = previous_image_turn.images or [] if previous_image_turn else []
+        image_observations = (
+            previous_image_turn.images or [] if previous_image_turn else []
+        )
 
     observations = [
         value.strip()
@@ -160,6 +170,9 @@ def _prepare_knowledge(
     if image_context:
         with stage("query_rewrite", logger) as step:
             prompt_parts = [f"질문: {question}"]
+            contextualized_question = (contextualized_message or "").strip()
+            if contextualized_question and contextualized_question != question:
+                prompt_parts.append(f"맥락 보강 참고문: {contextualized_question}")
             if previous_image_turn and previous_image_turn.text:
                 prompt_parts.append(
                     f"사진 첨부 때 발화: {previous_image_turn.text.strip()}"
@@ -173,13 +186,26 @@ def _prepare_knowledge(
             search_question = rewritten or question
             step["question_chars"] = len(search_question)
 
-    chunks = search_chunks(
-        encode_question(
-            search_question, encoder=query_encoder(), trace_id=request.trace_id
-        ),
-        request.building_id,
-        client=get_client(),
-    )
+    def search(candidate: str) -> list[models.ScoredPoint]:
+        return search_chunks(
+            encode_question(
+                candidate, encoder=query_encoder(), trace_id=request.trace_id
+            ),
+            request.building_id,
+            client=get_client(),
+        )
+
+    chunks = search(search_question)
+    contextualized_question = (contextualized_message or "").strip()
+    if (
+        not chunks
+        and not image_context
+        and contextualized_question
+        and contextualized_question != search_question
+    ):
+        search_question = contextualized_question
+        chunks = search(search_question)
+
     if not chunks:
         skipped("context", logger, skip_reason="no_hit")
         skipped("generate", logger, skip_reason="no_hit")

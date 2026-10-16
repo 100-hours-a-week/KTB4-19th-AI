@@ -41,11 +41,12 @@ class _ModelImages(BaseModel):
 
 class _ModelIntentAndImages(_ModelImages):
     route: Route
+    contextualized_message: str | None
 
 
 def classify_and_analyze(
     images: list[ImageAttachment], *, system_prompt: str, user_prompt: str
-) -> tuple[Route, ImageAnalysis]:
+) -> tuple[Route, ImageAnalysis, str | None]:
     settings = get_settings()
     content: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
     content.extend(
@@ -87,18 +88,22 @@ def classify_and_analyze(
         raise ImageAnalysisError("VLM refused intent or image analysis")
     parsed = response.choices[0].message.parsed
     if not images:
-        return parsed.route, ImageAnalysis(images=[])
+        return parsed.route, ImageAnalysis(images=[]), parsed.contextualized_message
     if len(parsed.images) != len(images):
         raise ImageAnalysisError(
             "VLM returned observations that do not match input images"
         )
-    return parsed.route, ImageAnalysis(
-        images=[
-            ImageObservation(
-                attachmentId=image.attachment_id,
-                summary=observation.summary,
-                ocrText=observation.ocr_text,
-            )
-            for image, observation in zip(images, parsed.images)
-        ]
+    return (
+        parsed.route,
+        ImageAnalysis(
+            images=[
+                ImageObservation(
+                    attachmentId=image.attachment_id,
+                    summary=observation.summary,
+                    ocrText=observation.ocr_text,
+                )
+                for image, observation in zip(images, parsed.images)
+            ]
+        ),
+        parsed.contextualized_message,
     )
