@@ -88,6 +88,7 @@ def _log_interpretation_retry(attempt: int, error: Exception) -> None:
 def _interpret_turn(
     request: ConverseRequest,
     image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
     usage_sink: dict[str, object] | None = None,
 ) -> _TurnInterpretation:
     """현재 발화에서 새로 말한 민원 사실과 전환 판정만 받는다."""
@@ -98,6 +99,7 @@ def _interpret_turn(
         # 사진만 온 턴은 text가 None이다. 그대로 넘기면 "현재 발화: None"이 렌더돼
         # 모델이 None을 입주민 발화로 읽는다.
         message_text=request.message.text or "",
+        contextualized_message=contextualized_message or "없음",
         image_evidence=_format_image_evidence(image_analysis),
     )
 
@@ -437,16 +439,23 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
 
 
 def _interpret_with_stage(
-    request: ConverseRequest, image_analysis: ImageAnalysis | None = None
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> _TurnInterpretation:
     with stage("text_interpretation", logger) as step:
         return _interpret_turn(
-            request, image_analysis=image_analysis, usage_sink=step
+            request,
+            image_analysis=image_analysis,
+            contextualized_message=contextualized_message,
+            usage_sink=step,
         )
 
 
 def _gather_turn_evidence(
-    request: ConverseRequest, image_analysis: ImageAnalysis | None
+    request: ConverseRequest,
+    image_analysis: ImageAnalysis | None,
+    contextualized_message: str | None = None,
 ) -> _TurnEvidence:
     text = (request.message.text or "").strip()
     images = request.message.images
@@ -454,9 +463,11 @@ def _gather_turn_evidence(
 
     if text or analysis:
         interpretation = (
-            _interpret_with_stage(request, analysis)
+            _interpret_with_stage(request, analysis, contextualized_message)
             if analysis
-            else _interpret_with_stage(request)
+            else _interpret_with_stage(
+                request, contextualized_message=contextualized_message
+            )
         )
     else:
         skipped("text_interpretation", logger, skip_reason="no_text_or_image_evidence")
@@ -527,9 +538,12 @@ def _advance_complaint(
 def _analyze_complaint(
     request: ConverseRequest,
     image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> ComplaintAnalysis:
     """동기·스트리밍 경로가 공유하는 민원 분석 단계."""
-    evidence = _gather_turn_evidence(request, image_analysis)
+    evidence = _gather_turn_evidence(
+        request, image_analysis, contextualized_message
+    )
     progress = _advance_complaint(request, evidence)
     symptom_merge_needed = bool(
         (
@@ -731,10 +745,13 @@ def _log_complaint_turn(
 
 
 def handle_complaint(
-    request: ConverseRequest, *, image_analysis: ImageAnalysis | None = None
+    request: ConverseRequest,
+    *,
+    image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
     started_at = perf_counter()
-    analysis = _analyze_complaint(request, image_analysis)
+    analysis = _analyze_complaint(request, image_analysis, contextualized_message)
     turn = _finalize_turn(analysis)
     _log_complaint_turn(
         request, analysis.evidence, analysis.progress, turn, started_at
@@ -751,10 +768,13 @@ async def handle_complaint_stream(
     emit: Callable[[dict[str, str]], None],
     *,
     image_analysis: ImageAnalysis | None = None,
+    contextualized_message: str | None = None,
 ) -> dict[str, object]:
     emit({"type": "status", "status": "민원 내용을 분석하고 있습니다."})
     started_at = perf_counter()
-    analysis = await asyncio.to_thread(_analyze_complaint, request, image_analysis)
+    analysis = await asyncio.to_thread(
+        _analyze_complaint, request, image_analysis, contextualized_message
+    )
     streamed_turn = await _stream_generated_reply(analysis, emit)
     turn = streamed_turn or await asyncio.to_thread(_finalize_turn, analysis)
     _log_complaint_turn(
