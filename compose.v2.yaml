@@ -1,0 +1,73 @@
+services:
+  ai-api:
+    image: ${IMAGE_URI:?}
+    platform: linux/amd64
+    restart: unless-stopped
+    env_file: [runtime.env]
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:?}
+        awslogs-group: ${LOG_GROUP:?}
+        awslogs-stream: ai-api
+        mode: non-blocking
+        max-buffer-size: 4m
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 90
+      start_period: 30s
+    environment:
+      QDRANT_API_KEY: ${QDRANT_ADMIN_API_KEY:-}
+  embedding:
+    image: ${IMAGE_URI:?}
+    platform: linux/amd64
+    restart: unless-stopped
+    env_file: [runtime.env]
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:?}
+        awslogs-group: ${LOG_GROUP:?}
+        awslogs-stream: embedding
+        mode: non-blocking
+        max-buffer-size: 4m
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 90
+      start_period: 30s
+  qdrant:
+    # AI team owns this pin; no AI image build for Qdrant.
+    image: qdrant/qdrant:v1.19.1
+    platform: linux/amd64
+    restart: unless-stopped
+    env_file: [runtime.env]
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:?}
+        awslogs-group: ${LOG_GROUP:?}
+        awslogs-stream: qdrant
+        mode: non-blocking
+        max-buffer-size: 4m
+    ports: ["6333:6333"]
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_ADMIN_API_KEY:-}
+      QDRANT__SERVICE__READ_ONLY_API_KEY: ${QDRANT_READ_ONLY_API_KEY:-}
+    volumes:
+      - type: bind
+        source: /data/qdrant
+        target: /qdrant/storage
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 5s
+      timeout: 5s
+      retries: 90
+      start_period: 10s

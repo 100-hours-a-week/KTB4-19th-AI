@@ -1,3 +1,6 @@
+import threading
+import time
+
 import numpy as np
 import pytest
 
@@ -50,3 +53,61 @@ def test_normalize_converts_numpy_outputs_to_python_types() -> None:
     assert all(
         isinstance(value, float) for weights in sparse for value in weights.values()
     )
+
+
+def test_other_request_does_not_wait_for_whole_batch() -> None:
+    class YieldAfterFirstBatchItem:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.query_finished = threading.Event()
+            self.yielded = False
+
+        def acquire(self, timeout: float = -1) -> bool:
+            return self.lock.acquire(timeout=timeout)
+
+        def release(self) -> None:
+            self.lock.release()
+            if threading.current_thread().name == "batch" and not self.yielded:
+                self.yielded = True
+                self.query_finished.wait(timeout=2.0)
+
+    class SlowFakeModel:
+        def __init__(self, delay: float) -> None:
+            self.delay = delay
+            self.started = threading.Event()
+            self.calls: list[str] = []
+
+        def encode(self, texts: list[str], **_: object) -> dict:
+            self.calls.append(texts[0])
+            self.started.set()
+            time.sleep(self.delay)
+            return {
+                "dense_vecs": np.array([[0.1] for _ in texts]),
+                "lexical_weights": [{} for _ in texts],
+            }
+
+    encoder = BgeM3Encoder()
+    model = SlowFakeModel(delay=0.05)
+    encoder._model = model
+    lock = YieldAfterFirstBatchItem()
+    encoder._lock = lock
+
+    def run_batch() -> None:
+        encoder.encode(["t"] * 10)  # 전체로 치면 약 0.5초
+
+    batch_thread = threading.Thread(target=run_batch, name="batch")
+    batch_thread.start()
+    assert model.started.wait(timeout=1.0)
+
+    def run_query() -> None:
+        try:
+            encoder.encode(["query"], max_wait=1.0)
+        finally:
+            lock.query_finished.set()
+
+    query_thread = threading.Thread(target=run_query, name="query")
+    query_thread.start()
+
+    batch_thread.join()
+    query_thread.join()
+    assert model.calls[:3] == ["t", "query", "t"]

@@ -18,6 +18,7 @@ dependencies = [
     "openai>=3.14.0",
     "pydantic>=2.13.5,<3",
     "qdrant-client==1.19.0",
+    "tiktoken>=0.14.0",
     "torch",
     "torchvision",
     "uvicorn>=0.53.0",

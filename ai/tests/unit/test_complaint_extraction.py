@@ -71,12 +71,13 @@ def _interpretation_output(**updates: object) -> node_module._InterpretationOutp
     )
 
 
-def test_complaint_prompt_carries_formatted_history_without_model_repr(
+def test_complaint_prompt_keeps_raw_message_history_and_contextualized_message(
     monkeypatch: pytest.MonkeyPatch,
 ):
     captured: dict[str, str] = {}
 
     def fake_generate_structured(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
         captured["user_prompt"] = str(kwargs["user_prompt"])
         return _interpretation_output(location="화장실")
 
@@ -93,11 +94,22 @@ def test_complaint_prompt_carries_formatted_history_without_model_repr(
                     "images": [],
                 }
             ],
-        )
+        ),
+        contextualized_message="화장실에서 물이 새는 위치를 말합니다.",
     )
 
     assert "user: 물이 새요" in captured["user_prompt"]
     assert "msg-h1" not in captured["user_prompt"]
+    assert "현재 발화: 화장실이요" in captured["user_prompt"]
+    assert "맥락 보강 참고문" in captured["user_prompt"]
+    assert "화장실에서 물이 새는 위치를 말합니다." in captured["user_prompt"]
+    assert "contextualized message is a reading aid, not independent evidence" in captured[
+        "system_prompt"
+    ]
+    assert "Preserve the original turn's negation, comparison, correction" in captured[
+        "system_prompt"
+    ]
+    assert "Add no facts unsupported by the current turn" in captured["system_prompt"]
 
 
 def test_interpret_turn_maps_structured_output_to_current_turn_draft(

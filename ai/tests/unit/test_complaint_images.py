@@ -17,7 +17,7 @@ def _stub_interpreter(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None: _TurnInterpretation(),
+        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(),
     )
 
 
@@ -90,7 +90,7 @@ def test_photo_ocr_is_passed_to_complaint_extraction_for_symptom(
     )
     received: list[ImageAnalysis | None] = []
 
-    def interpret(_request, image_analysis=None):
+    def interpret(_request, image_analysis=None, contextualized_message=None):
         received.append(image_analysis)
         return _TurnInterpretation(
             fields=ComplaintDraft(symptom="세탁기에 LE 오류가 표시됨")
@@ -248,7 +248,7 @@ def test_resident_text_correction_is_used_when_it_disagrees_with_image(
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None: _TurnInterpretation(
+        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(
             fields=ComplaintDraft(location="욕실", symptom="배수구가 막힘")
         ),
     )
@@ -288,7 +288,7 @@ def test_switch_question_returns_image_analysis_without_attaching_to_old_draft(
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None: _TurnInterpretation(
+        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(
             fields=ComplaintDraft(
                 issue_type="leak", symptom="세탁기 아래 물이 고임"
             ),
@@ -348,7 +348,7 @@ def test_accepting_switch_attaches_only_the_pending_user_turn_image(
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request: _TurnInterpretation(
+        lambda _request, contextualized_message=None: _TurnInterpretation(
             fields=ComplaintDraft(symptom="세탁기 아래 물이 고임"), switch="accept"
         ),
     )
