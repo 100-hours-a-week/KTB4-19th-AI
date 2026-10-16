@@ -1,3 +1,6 @@
+import threading
+import time
+
 import numpy as np
 import pytest
 
@@ -50,3 +53,36 @@ def test_normalize_converts_numpy_outputs_to_python_types() -> None:
     assert all(
         isinstance(value, float) for weights in sparse for value in weights.values()
     )
+
+
+def test_other_request_does_not_wait_for_whole_batch() -> None:
+    class SlowFakeModel:
+        def __init__(self, delay: float) -> None:
+            self.delay = delay
+            self.started = threading.Event()
+
+        def encode(self, texts: list[str], **_: object) -> dict:
+            self.started.set()      # "지금 이 항목 처리 시작했다" 신호
+            time.sleep(self.delay)
+            return {
+                "dense_vecs": np.array([[0.1] for _ in texts]),
+                "lexical_weights": [{} for _ in texts],
+            }
+
+    encoder = BgeM3Encoder()
+    model = SlowFakeModel(delay=0.05)
+    encoder._model = model
+
+    def run_batch() -> None:
+        encoder.encode(["t"] * 10)   # 전체로 치면 약 0.5초
+
+    batch_thread = threading.Thread(target=run_batch)
+    batch_thread.start()
+    model.started.wait(timeout=1.0)   # 배치 첫 항목이 lock을 잡을 때까지만 대기
+
+    t0 = time.perf_counter()
+    encoder.encode(["query"], max_wait=1.0)
+    query_elapsed = time.perf_counter() - t0
+
+    batch_thread.join()
+    assert query_elapsed < 0.3   # 0.5초(전체 배치)보다 뚜렷이 짧아야 통과
