@@ -155,7 +155,9 @@ def _prepare_knowledge(
             ),
             None,
         )
-        image_observations = previous_image_turn.images or [] if previous_image_turn else []
+        image_observations = (
+            previous_image_turn.images or [] if previous_image_turn else []
+        )
 
     observations = [
         value.strip()
@@ -168,6 +170,9 @@ def _prepare_knowledge(
     if image_context:
         with stage("query_rewrite", logger) as step:
             prompt_parts = [f"질문: {question}"]
+            contextualized_question = (contextualized_message or "").strip()
+            if contextualized_question and contextualized_question != question:
+                prompt_parts.append(f"맥락 보강 참고문: {contextualized_question}")
             if previous_image_turn and previous_image_turn.text:
                 prompt_parts.append(
                     f"사진 첨부 때 발화: {previous_image_turn.text.strip()}"
@@ -180,16 +185,27 @@ def _prepare_knowledge(
             ).strip()
             search_question = rewritten or question
             step["question_chars"] = len(search_question)
-    elif contextualized_message:
-        search_question = contextualized_message.strip() or question
 
-    chunks = search_chunks(
-        encode_question(
-            search_question, encoder=query_encoder(), trace_id=request.trace_id
-        ),
-        request.building_id,
-        client=get_client(),
-    )
+    def search(candidate: str) -> list[models.ScoredPoint]:
+        return search_chunks(
+            encode_question(
+                candidate, encoder=query_encoder(), trace_id=request.trace_id
+            ),
+            request.building_id,
+            client=get_client(),
+        )
+
+    chunks = search(search_question)
+    contextualized_question = (contextualized_message or "").strip()
+    if (
+        not chunks
+        and not image_context
+        and contextualized_question
+        and contextualized_question != search_question
+    ):
+        search_question = contextualized_question
+        chunks = search(search_question)
+
     if not chunks:
         skipped("context", logger, skip_reason="no_hit")
         skipped("generate", logger, skip_reason="no_hit")
