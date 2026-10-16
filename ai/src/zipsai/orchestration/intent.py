@@ -11,7 +11,7 @@ from zipsai.errors import (
     LlmUnavailableError,
     LlmUpstreamError,
 )
-from zipsai.history import format_history
+from zipsai.history import format_intent_history
 from zipsai.integrations.llm import generate_structured
 from zipsai.integrations.vlm import classify_and_analyze
 from zipsai.observability import add_context, stage
@@ -30,7 +30,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     messages = INTENT_PROMPT.format_messages(
         message_text=(request.message.text or "").strip() or "없음",
         image_present="있음" if request.message.images else "없음",
-        conversation_history=format_history(request.conversation_history),
+        conversation_history=format_intent_history(request.conversation_history),
         current_route=request.current_route.value if request.current_route else "없음",
     )
     with stage(
@@ -73,7 +73,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
                     "If intent is unclear, choose clarify.",
                     "Current text: "
                     f"{request.message.text}\n"
-                    f"Conversation history:\n{format_history(request.conversation_history)}\n"
+                    f"Conversation history:\n{format_intent_history(request.conversation_history)}\n"
                     "Current route: "
                     f"{request.current_route.value if request.current_route else 'none'}",
                     _RouteOnly,
@@ -85,8 +85,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         step["intent_route"] = route.value
         original_text = (request.message.text or "").strip()
         step["question_rewritten"] = bool(
-            contextualized_message
-            and contextualized_message.strip() != original_text
+            contextualized_message and contextualized_message.strip() != original_text
         )
     # 이 줄 자신은 step이 담고, 뒤따르는 단계들은 컨텍스트로 물려받는다.
     add_context(intent_route=route.value)
