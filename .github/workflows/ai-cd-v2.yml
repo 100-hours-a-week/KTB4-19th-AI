@@ -243,6 +243,7 @@ jobs:
                   subprocess.run(["mountpoint", "-q", "/data"], check=True)
               release = BASE / ("release-" + uuid.uuid4().hex)
               release.mkdir(mode=0o700)
+              # The deployment bundle contains compose.v2.yaml, not the repository's local Compose.
               (release / "compose.yaml").write_bytes((config_path.parent / "compose.v2.yaml").read_bytes())
               (release / "runtime.env").write_text(dotenv(runtime(config)))
               compose(release, role, "config", "-q")
@@ -345,7 +346,7 @@ jobs:
                   raise ValueError("Staging image/Compose/helper verification does not match")
           
           def bundle_command(config, compose_text):
-              files = {"manifest.json": json.dumps(config), "compose.yaml": compose_text,
+              files = {"manifest.json": json.dumps(config), "compose.v2.yaml": compose_text,
                        "remote.py": REMOTE_SOURCE}
               payload = base64.b64encode(json.dumps(files).encode()).decode()
               if len(payload) > 45000:
@@ -356,7 +357,7 @@ jobs:
                   "base=pathlib.Path('/opt/zipsai/ai-v2');base.mkdir(parents=True,exist_ok=True,mode=0o700);"
                   "root=pathlib.Path(tempfile.mkdtemp(prefix='bundle-',dir=base));"
                   f"files=json.loads(base64.b64decode('{payload}'));"
-                  "[(root/name).write_text(files[name]) for name in ['manifest.json','compose.yaml','remote.py']];"
+                  "[(root/name).write_text(files[name]) for name in ['manifest.json','compose.v2.yaml','remote.py']];"
                   "subprocess.run(['python3',str(root/'remote.py'),str(root/'manifest.json')],check=True)"
               )
               return "set +x\ncloud-init status --wait >/dev/null\npython3 -c " + shlex.quote(installer)
