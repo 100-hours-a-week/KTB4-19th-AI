@@ -260,30 +260,40 @@ def test_graph_passes_contextualized_message_to_knowledge(
     assert received == ["분리수거는 어디에 배출하나요?"]
 
 
-def test_graph_passes_intent_image_analysis_to_complaint(
+def test_graph_passes_intent_context_and_image_analysis_to_complaint(
     monkeypatch: pytest.MonkeyPatch,
 ):
     state = _make_state(Route.COMPLAINT)
     analysis = ImageAnalysis(
         images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
     )
+    contextualized_message = "세탁기 아래로 물이 새요"
     received: list[object] = []
 
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.COMPLAINT, "image_analysis": analysis},
+        lambda _state: {
+            "route": Route.COMPLAINT,
+            "image_analysis": analysis,
+            "contextualized_message": contextualized_message,
+        },
     )
 
-    def complaint(_request: ConverseRequest, *, image_analysis=None):
-        received.append(image_analysis)
+    def complaint(
+        _request: ConverseRequest,
+        *,
+        image_analysis=None,
+        contextualized_message=None,
+    ):
+        received.append((image_analysis, contextualized_message))
         return {"reply": "확인", "result": RouteResult()}
 
     monkeypatch.setattr(graph_module, "handle_complaint", complaint)
 
     build_graph().invoke(state)
 
-    assert received == [analysis]
+    assert received == [(analysis, contextualized_message)]
 
 
 @pytest.mark.parametrize("route", [Route.COMPLAINT, Route.KNOWLEDGE])

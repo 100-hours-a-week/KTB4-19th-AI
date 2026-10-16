@@ -105,6 +105,9 @@ def test_intent_prompt_requests_reusable_summary_and_separate_ocr(monkeypatch):
     assert "Do not answer, diagnose, or add facts" in prompt
     assert "Missing complaint details such as location or date" in prompt
     assert "without an explicit photo request" in prompt
+    assert "history shows one active request" in prompt
+    assert "If multiple topics are active or the connection is" in prompt
+    assert "The image alone cannot establish intent or location" in prompt
 
 
 def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
