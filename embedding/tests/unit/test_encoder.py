@@ -56,13 +56,30 @@ def test_normalize_converts_numpy_outputs_to_python_types() -> None:
 
 
 def test_other_request_does_not_wait_for_whole_batch() -> None:
+    class YieldAfterFirstBatchItem:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.query_finished = threading.Event()
+            self.yielded = False
+
+        def acquire(self, timeout: float = -1) -> bool:
+            return self.lock.acquire(timeout=timeout)
+
+        def release(self) -> None:
+            self.lock.release()
+            if threading.current_thread().name == "batch" and not self.yielded:
+                self.yielded = True
+                self.query_finished.wait(timeout=2.0)
+
     class SlowFakeModel:
         def __init__(self, delay: float) -> None:
             self.delay = delay
             self.started = threading.Event()
+            self.calls: list[str] = []
 
         def encode(self, texts: list[str], **_: object) -> dict:
-            self.started.set()      # "지금 이 항목 처리 시작했다" 신호
+            self.calls.append(texts[0])
+            self.started.set()
             time.sleep(self.delay)
             return {
                 "dense_vecs": np.array([[0.1] for _ in texts]),
@@ -72,17 +89,25 @@ def test_other_request_does_not_wait_for_whole_batch() -> None:
     encoder = BgeM3Encoder()
     model = SlowFakeModel(delay=0.05)
     encoder._model = model
+    lock = YieldAfterFirstBatchItem()
+    encoder._lock = lock
 
     def run_batch() -> None:
-        encoder.encode(["t"] * 10)   # 전체로 치면 약 0.5초
+        encoder.encode(["t"] * 10)  # 전체로 치면 약 0.5초
 
-    batch_thread = threading.Thread(target=run_batch)
+    batch_thread = threading.Thread(target=run_batch, name="batch")
     batch_thread.start()
-    model.started.wait(timeout=1.0)   # 배치 첫 항목이 lock을 잡을 때까지만 대기
+    assert model.started.wait(timeout=1.0)
 
-    t0 = time.perf_counter()
-    encoder.encode(["query"], max_wait=1.0)
-    query_elapsed = time.perf_counter() - t0
+    def run_query() -> None:
+        try:
+            encoder.encode(["query"], max_wait=1.0)
+        finally:
+            lock.query_finished.set()
+
+    query_thread = threading.Thread(target=run_query, name="query")
+    query_thread.start()
 
     batch_thread.join()
-    assert query_elapsed < 0.3   # 0.5초(전체 배치)보다 뚜렷이 짧아야 통과
+    query_thread.join()
+    assert model.calls[:3] == ["t", "query", "t"]
