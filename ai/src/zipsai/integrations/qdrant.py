@@ -11,6 +11,7 @@ from zipsai.settings import (
 
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
+COMMENT_SOURCE_TYPE = "qa_history"
 
 
 def create_client(url: str | None = None) -> QdrantClient:
@@ -84,6 +85,15 @@ def _ensure_payload_indexes(client: QdrantClient, collection: str) -> None:
     client.create_payload_index(
         collection_name=collection,
         field_name="doc_id",
+        field_schema=models.KeywordIndexParams(
+            type=models.KeywordIndexType.KEYWORD,
+        ),
+        wait=True,
+    )
+    # 문서 정리가 댓글을 지우지 않도록 구분하는 필드. 필터에 쓰이므로 인덱스가 필요하다.
+    client.create_payload_index(
+        collection_name=collection,
+        field_name="source_type",
         field_schema=models.KeywordIndexParams(
             type=models.KeywordIndexType.KEYWORD,
         ),

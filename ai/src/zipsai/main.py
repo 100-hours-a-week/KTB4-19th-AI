@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+from zipsai.api.comment import router as comment_router
 from zipsai.api.converse import router as converse_router
 from zipsai.api.error_responses import (
     request_validation_error_handler,
@@ -13,7 +14,12 @@ from zipsai.api.error_responses import (
 from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
 from zipsai.observability import configure_logging
-from zipsai.settings import API_PREFIX, CORS_ORIGINS, missing_required_settings
+from zipsai.settings import (
+    API_PREFIX,
+    COMMENT_API_PREFIX,
+    CORS_ORIGINS,
+    missing_required_settings,
+)
 from zipsai.tracing import get_tracing_client
 
 configure_logging()
@@ -42,5 +48,6 @@ app.add_middleware(
 app.include_router(converse_router)
 app.include_router(health_router)
 app.include_router(indexing_router, prefix=API_PREFIX)
+app.include_router(comment_router, prefix=COMMENT_API_PREFIX)
 app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
