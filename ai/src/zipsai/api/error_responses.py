@@ -16,6 +16,7 @@ from zipsai.errors import (
     VectorStoreError,
     error_code,
 )
+from zipsai.settings import COMMENT_API_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class ErrorDetail(BaseModel):
     detail: str
     retryable: bool
     retry_after_seconds: int | None = None
+    invalid_items: list[dict[str, object]] | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -82,6 +84,7 @@ def error_response(
     trace_id: str | None,
     retryable: bool,
     retry_after_seconds: int | None = None,
+    invalid_items: list[dict[str, object]] | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
         message="ai_response_error",
@@ -90,6 +93,7 @@ def error_response(
             detail=detail,
             retryable=retryable,
             retry_after_seconds=retry_after_seconds,
+            invalid_items=invalid_items,
         ),
         turn_id=turn_id,
         trace_id=trace_id,
@@ -100,12 +104,13 @@ def error_response(
 
 
 async def request_validation_error_handler(
-    _request: Request,
+    request: Request,
     error: RequestValidationError,
 ) -> JSONResponse:
-    bad_request = any(
-        item["type"] in {"missing", "json_invalid"} for item in error.errors()
-    )
+    is_comment = request.url.path.startswith(COMMENT_API_PREFIX)
+    # 댓글 API는 필드 누락도 422가 된게 한다. 400은 JSON을 읽을 수 없을 때만 쓴다.
+    bad_codes = {"json_invalid"} if is_comment else {"missing", "json_invalid"}
+    bad_request = any(item["type"] in bad_codes for item in error.errors())
     body = error.body
     turn_id = body.get("turn_id") if isinstance(body, dict) else None
     trace_id = body.get("trace_id") if isinstance(body, dict) else None
@@ -132,7 +137,39 @@ async def request_validation_error_handler(
         turn_id=turn_id if isinstance(turn_id, str) else None,
         trace_id=trace_id if isinstance(trace_id, str) else None,
         retryable=False,
+        invalid_items=_invalid_items(error) if is_comment else None,
     )
+
+
+def _invalid_items(error: RequestValidationError) -> list[dict[str, object]] | None:
+    """items[i] 아래에서 난 오류를 항목별로 모은다. BE가 문제 건만 빼고 다시 보내게 한다."""
+    body = error.body
+    raw_items = body.get("items") if isinstance(body, dict) else None
+    found: list[dict[str, object]] = []
+    for item in error.errors():
+        loc = item["loc"]
+        if len(loc) < 3 or loc[1] != "items" or not isinstance(loc[2], int):
+            continue
+        index = loc[2]
+        detail_id = None
+        if isinstance(raw_items, list) and index < len(raw_items):
+            candidate = (
+                raw_items[index].get("complaint_detail_id")
+                if isinstance(raw_items[index], dict)
+                else None
+            )
+            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                detail_id = candidate
+        found.append(
+            {
+                "index": index,
+                "complaint_detail_id": detail_id,
+                "field": ".".join(str(part) for part in loc[3:]),
+                "reason": item["msg"],
+            }
+        )
+    # 특정 항목에 속하지 않는 오류만이면 필드를 생략한다.
+    return found or None
 
 
 async def unhandled_exception_handler(

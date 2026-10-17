@@ -8,11 +8,18 @@ from fastapi.responses import JSONResponse
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
+from zipsai.contracts.notification import (
+    ItemResult,
+    Notification,
+    NotificationKind,
+    ResultStatus,
+)
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.upsert import delete_missing_documents
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
 from zipsai.integrations.s3 import download
+from zipsai.integrations.sqs import send_notification
 from zipsai.observability import bind, elapsed_ms, stage
 from zipsai.tracing import trace_job
 
@@ -28,6 +35,31 @@ def _dependencies() -> tuple[QdrantClient, HttpEncoder]:
     client = create_client()
     ensure_collection(client)
     return client, HttpEncoder()
+
+
+def _notify(
+    kind: NotificationKind,
+    payload: IndexingJobRequest,
+    status: ResultStatus,
+    reason_code: str | None = None,
+) -> None:
+    # 문서 통지는 대상 키가 doc_id다. 정리는 건물 전체가 대상이라 키가 없다.
+    send_notification(
+        Notification(
+            kind=kind,
+            trace_id=payload.trace_id,
+            building_id=payload.building_id,
+            results=[
+                ItemResult(
+                    status=status,
+                    reason_code=reason_code,
+                    doc_id=payload.doc_id
+                    if kind is NotificationKind.DOCUMENT_INDEX
+                    else None,
+                )
+            ],
+        )
+    )
 
 
 def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
@@ -52,13 +84,50 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
                 "job_done",
                 extra=_job_fields(started, "fail", failed_stage="setup", error=error),
             )
+            if payload.has_document:
+                _notify(
+                    NotificationKind.DOCUMENT_INDEX,
+                    payload,
+                    ResultStatus.FAILED,
+                    "SETUP_FAILED",
+                )
+            if payload.valid_doc_ids is not None:
+                _notify(
+                    NotificationKind.DOCUMENT_CLEANUP,
+                    payload,
+                    ResultStatus.FAILED,
+                    "SETUP_FAILED",
+                )
             return
 
         # 색인이 먼저다. 정리가 앞서면 이번에 넣을 문서가 잠깐 검색에서 빠진다.
         if payload.has_document:
+            reasons: list[str] = []
             result = run_indexing_job(
-                payload, download=download, encoder=encoder, client=client
+                payload,
+                download=download,
+                encoder=encoder,
+                client=client,
+                on_fail=reasons.append,
             )
+            if result is JobStatus.SUCCEEDED:
+                _notify(
+                    NotificationKind.DOCUMENT_INDEX, payload, ResultStatus.SUCCEEDED
+                )
+            else:
+                _notify(
+                    NotificationKind.DOCUMENT_INDEX,
+                    payload,
+                    ResultStatus.FAILED,
+                    reasons[0] if reasons else "INDEX_FAILED",
+                )
+                if payload.valid_doc_ids is not None:
+                    _notify(
+                        NotificationKind.DOCUMENT_CLEANUP,
+                        payload,
+                        ResultStatus.SKIPPED,
+                        "INDEX_FAILED",
+                    )
             if result is JobStatus.FAILED:
                 if trace is not None:
                     trace.update(output={"outcome": "fail", "failed_stage": "index"})
@@ -90,11 +159,18 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> None:
                     started, "fail", failed_stage="reconcile", error=error
                 ),
             )
+            _notify(
+                NotificationKind.DOCUMENT_CLEANUP,
+                payload,
+                ResultStatus.FAILED,
+                "CLEANUP_FAILED",
+            )
             return
 
         if trace is not None:
             trace.update(output={"outcome": "ok"})
         logger.info("job_done", extra=_job_fields(started, "ok"))
+        _notify(NotificationKind.DOCUMENT_CLEANUP, payload, ResultStatus.SUCCEEDED)
 
 
 def _job_fields(
