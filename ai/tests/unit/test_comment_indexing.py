@@ -67,6 +67,33 @@ def stored(client, detail_id=9001):
     return found[0].payload if found else None
 
 
+def delete(client, detail_id=9001, updated_at=T0, building_id=101):
+    body = {
+        "trace_id": "t",
+        "items": [
+            {
+                "building_id": building_id,
+                "complaint_detail_id": detail_id,
+                "updated_at": updated_at.isoformat(),
+            }
+        ],
+    }
+    return delete_comments(CommentDeleteRequest.model_validate(body), client=client)
+
+
+def is_tombstone(payload):
+    return (
+        payload is not None and payload.get("deleted") is True and "text" not in payload
+    )
+
+
+def search(client, question="엘리베이터 정기 점검은 언제 하나요", building_id=101):
+    from zipsai.knowledge.retrieve import encode_question, search_chunks
+
+    vector = encode_question(question, encoder=FakeEncoder(), trace_id="t")
+    return search_chunks(vector, building_id, client=client)
+
+
 def run(client, *items, encoder=None):
     return upsert_comments(
         request(*items), encoder=encoder or FakeEncoder(), client=client
@@ -134,7 +161,7 @@ def test_newer_but_too_short_removes_old_comment(client):
         ResultStatus.SKIPPED,
         "COMMENT_TOO_SHORT",
     )
-    assert stored(client) is None
+    assert is_tombstone(stored(client))
 
 
 def test_failure_is_isolated_per_item(client):
@@ -155,15 +182,80 @@ def test_comment_is_masked_before_embedding(client):
 
 def test_delete_is_idempotent(client):
     run(client, item())
-    delete = CommentDeleteRequest.model_validate(
-        {"trace_id": "t", "items": [{"building_id": 101, "complaint_detail_id": 9001}]}
-    )
+    later = T0 + timedelta(minutes=5)
 
-    first = delete_comments(delete, client=client)
-    second = delete_comments(delete, client=client)
+    first = delete(client, updated_at=later)
+    second = delete(client, updated_at=later)
 
-    assert stored(client) is None
+    assert is_tombstone(stored(client))
     assert [r.status for r in first + second] == [ResultStatus.SUCCEEDED] * 2
+    assert first[0].updated_at == later.isoformat()
+
+
+def test_late_retry_after_short_comment_does_not_resurrect(client):
+    # 10:00 v1이 실패해 재시도 목록에 들어가고, 10:05 v2("확인중")가 먼저 반영된 뒤
+    # 10:06에 v1 재시도가 도착하는 경우. 툼스톤의 10:05가 v1을 걸러야 한다.
+    v1 = item(comment="보일러 점검 완료했습니다. 다시 확인해주세요")
+    run(client, item(updated_at=T0 + timedelta(minutes=5), comment="확인중"))
+
+    [result] = run(client, v1)
+
+    assert (result.status, result.reason_code) == (ResultStatus.SKIPPED, "STALE_UPDATE")
+    assert is_tombstone(stored(client))
+    assert search(client) == []
+
+
+def test_late_retry_after_delete_does_not_resurrect(client):
+    v1 = item(comment="보일러 점검 완료했습니다. 다시 확인해주세요")
+    run(client, v1)
+    delete(client, updated_at=T0 + timedelta(minutes=5))
+
+    [result] = run(client, v1)
+
+    assert (result.status, result.reason_code) == (ResultStatus.SKIPPED, "STALE_UPDATE")
+    assert is_tombstone(stored(client))
+
+
+def test_delete_arriving_after_a_newer_answer_is_ignored(client):
+    run(client, item(updated_at=T0 + timedelta(minutes=10)))
+
+    [result] = delete(client, updated_at=T0 + timedelta(minutes=5))
+
+    assert (result.status, result.reason_code) == (ResultStatus.SKIPPED, "STALE_UPDATE")
+    assert not is_tombstone(stored(client))
+
+
+def test_newer_answer_replaces_a_tombstone(client):
+    delete(client, updated_at=T0)
+
+    [result] = run(client, item(updated_at=T0 + timedelta(minutes=5)))
+
+    assert result.status is ResultStatus.SUCCEEDED
+    assert "deleted" not in stored(client)
+    assert "둘째 주 화요일" in stored(client)["text"]
+    assert [p.payload["complaint_detail_id"] for p in search(client)] == [9001]
+
+
+def test_tombstone_is_never_searched(client):
+    run(client, item())
+    run(client, item(9002, updated_at=T0 + timedelta(minutes=1)))
+    delete(client, 9002, updated_at=T0 + timedelta(minutes=5))
+
+    assert [p.payload["complaint_detail_id"] for p in search(client)] == [9001]
+
+
+def test_complaint_answer_is_stored_but_hidden_from_residents(client):
+    run(client, item(9100, complaint_type="COMPLAINT", location="302호 화장실"))
+    run(client, item(9101))
+
+    assert stored(client, 9100)["complaint_type"] == "COMPLAINT"
+    assert [p.payload["complaint_detail_id"] for p in search(client)] == [9101]
+
+
+def test_only_complaint_answers_means_no_evidence(client):
+    run(client, item(9100, complaint_type="COMPLAINT"))
+
+    assert search(client) == []
 
 
 def test_document_cleanup_removes_documents_but_keeps_comments(client):
@@ -213,7 +305,8 @@ def test_comment_becomes_qa_history_citation():
         "source_type": "qa_history",
         "complaint_detail_id": 9002,
         "title": "관리자 답변",
-        "text": "매월 둘째 주 화요일에 점검합니다.",
+        "text": "302호인데 엘리베이터 점검 언제예요\n매월 둘째 주 화요일에 점검합니다.",
+        "answer": "매월 둘째 주 화요일에 점검합니다.",
     }
 
     citations = _citations(
@@ -224,6 +317,16 @@ def test_comment_becomes_qa_history_citation():
         ("qa_history", "9002"),
         ("qa_history", "9003"),
     ]
+    # 입주민이 쓴 질문은 다른 입주민 화면에 나가지 않는다.
+    assert citations[0].snippet == "매월 둘째 주 화요일에 점검합니다."
+
+
+def test_stored_payload_keeps_the_masked_answer_separately(client):
+    run(client, item(comment="010-1234-5678로 연락주세요. 점검은 화요일입니다."))
+
+    payload = stored(client)
+    assert payload["answer"].startswith("[")
+    assert "엘리베이터" not in payload["answer"]
 
 
 def test_stored_comment_is_found_by_the_same_question(client):

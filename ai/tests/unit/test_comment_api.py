@@ -81,16 +81,43 @@ def test_item_count_must_be_between_1_and_100():
             CommentRequest.model_validate(body)
 
 
-def test_delete_request_needs_building_and_id():
-    body = {
-        "trace_id": "trace-1",
-        "items": [{"building_id": 101, "complaint_detail_id": 9001}],
+def _delete_item(**kw):
+    return {
+        "building_id": 101,
+        "complaint_detail_id": 9001,
+        "updated_at": "2026-10-15T10:05:00+09:00",
+        **kw,
     }
+
+
+def test_delete_request_needs_building_and_id():
+    body = {"trace_id": "trace-1", "items": [_delete_item()]}
     assert CommentDeleteRequest.model_validate(body).items[0].building_id == 101
 
     body["items"][0].pop("building_id")
     with pytest.raises(ValidationError):
         CommentDeleteRequest.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "updated_at", [None, "2026-10-15T10:05:00"], ids=["missing", "no-offset"]
+)
+def test_delete_request_needs_an_aware_updated_at(updated_at):
+    entry = _delete_item()
+    if updated_at is None:
+        del entry["updated_at"]
+    else:
+        entry["updated_at"] = updated_at
+
+    with pytest.raises(ValidationError):
+        CommentDeleteRequest.model_validate({"trace_id": "t", "items": [entry]})
+
+
+def test_delete_keeps_the_raw_updated_at():
+    raw = "2026-10-15T10:05:00.120+09:00"
+    body = {"trace_id": "t", "items": [_delete_item(updated_at=raw)]}
+
+    assert CommentDeleteRequest.model_validate(body).items[0].updated_at_raw == raw
 
 
 def test_accepts_with_empty_body(scheduled):
@@ -99,10 +126,7 @@ def test_accepts_with_empty_body(scheduled):
 
 
 def test_delete_accepts_with_empty_body(scheduled):
-    payload = {
-        "trace_id": "t",
-        "items": [{"building_id": 101, "complaint_detail_id": 9001}],
-    }
+    payload = {"trace_id": "t", "items": [_delete_item()]}
     assert post(f"{COMMENT_API_PREFIX}/comment/delete", payload) == (202, b"")
 
 

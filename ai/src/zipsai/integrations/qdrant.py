@@ -12,6 +12,8 @@ from zipsai.settings import (
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
 COMMENT_SOURCE_TYPE = "qa_history"
+# 개인 민원에 단 답변. 저장은 하지만 다른 입주민에게 보이는 검색에서는 뺀다.
+PRIVATE_COMPLAINT_TYPE = "COMPLAINT"
 
 
 def create_client(url: str | None = None) -> QdrantClient:
@@ -44,6 +46,23 @@ def building_condition(building_id: int) -> models.FieldCondition:
     return models.FieldCondition(
         key="building_id",
         match=models.MatchValue(value=str(building_id)),
+    )
+
+
+def resident_visible_filter(building_id: int) -> models.Filter:
+    """입주민에게 보여줄 검색은 이 필터를 쓴다.
+
+    개인 민원 답변은 특정 세대 이야기라 같은 건물 다른 입주민에게 나가면 안 된다.
+    문서에는 complaint_type이 없고, must_not은 필드가 없는 포인트를 거르지 않는다.
+    """
+    return models.Filter(
+        must=[building_condition(building_id)],
+        must_not=[
+            models.FieldCondition(
+                key="complaint_type",
+                match=models.MatchValue(value=PRIVATE_COMPLAINT_TYPE),
+            )
+        ],
     )
 
 
@@ -94,6 +113,15 @@ def _ensure_payload_indexes(client: QdrantClient, collection: str) -> None:
     client.create_payload_index(
         collection_name=collection,
         field_name="source_type",
+        field_schema=models.KeywordIndexParams(
+            type=models.KeywordIndexType.KEYWORD,
+        ),
+        wait=True,
+    )
+    # 입주민 검색에서 개인 민원 답변을 거르는 필드.
+    client.create_payload_index(
+        collection_name=collection,
+        field_name="complaint_type",
         field_schema=models.KeywordIndexParams(
             type=models.KeywordIndexType.KEYWORD,
         ),

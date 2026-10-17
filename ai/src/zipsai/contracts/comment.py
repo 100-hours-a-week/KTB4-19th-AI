@@ -20,22 +20,13 @@ NonBlank = Annotated[
 ]
 
 
-class CommentItem(BaseModel):
-    complaint_detail_id: StrictInt
-    building_id: StrictInt
-    complaint_type: Literal["COMPLAINT", "QA"]
-    symptom: NonBlank
-    comment: NonBlank
+class _Versioned(BaseModel):
     # 오프셋이 없으면 어느 쪽이 더 최신인지 비교가 틀어진다. 오프셋 없는 값은 거절한다.
+    # 요청을 보낸 시각이 아니라 BE에 기록된 수정·삭제 시각이다. 재전송도 같은 값이어야 한다.
     updated_at: AwareDatetime
     # 통지에 요청 원문을 그대로 돌려주려고 둔다. 파싱한 값을 다시 직렬화하면
     # 밀리초 자릿수가 달라져 BE가 문자열로 건을 찾지 못한다.
     updated_at_raw: str = Field(default="", exclude=True)
-    # 키는 반드시 와야 하고 값만 null일 수 있다. 위치를 모르는 QA는 null로 온다.
-    location: StrictStr | None
-    issue_type: IssueType | None
-    # 검색에 쓰지 않는다. BE가 보내도 받기만 한다.
-    occurred_time: StrictStr | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -45,12 +36,26 @@ class CommentItem(BaseModel):
         return data
 
 
+class CommentItem(_Versioned):
+    complaint_detail_id: StrictInt
+    building_id: StrictInt
+    complaint_type: Literal["COMPLAINT", "QA"]
+    symptom: NonBlank
+    comment: NonBlank
+    # 키는 반드시 와야 하고 값만 null일 수 있다. 위치를 모르는 QA는 null로 온다.
+    location: StrictStr | None
+    issue_type: IssueType | None
+    # 검색에 쓰지 않는다. BE가 보내도 받기만 한다.
+    occurred_time: StrictStr | None = None
+
+
 class CommentRequest(BaseModel):
     trace_id: NonBlank
     items: Annotated[list[CommentItem], Field(min_length=1, max_length=MAX_ITEMS)]
 
 
-class CommentDeleteItem(BaseModel):
+class CommentDeleteItem(_Versioned):
+    # updated_at은 삭제 시각이다. 툼스톤에 남겨 삭제 뒤 늦게 온 옛 요청을 거른다.
     building_id: StrictInt
     complaint_detail_id: StrictInt
 

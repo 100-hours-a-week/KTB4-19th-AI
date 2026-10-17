@@ -299,8 +299,9 @@ def _citations(chunks: list[models.ScoredPoint]) -> list[Citation]:
         if key in seen:
             continue
         seen.add(key)
-        snippet = (payload.get("text") or "")[:SNIPPET_LENGTH]
         if is_comment:
+            # text 앞부분은 입주민이 쓴 질문이라 다른 입주민 화면에 내보내지 않는다.
+            snippet = (payload.get("answer") or "")[:SNIPPET_LENGTH]
             citations.append(
                 Citation(
                     source_type="qa_history",
@@ -311,6 +312,7 @@ def _citations(chunks: list[models.ScoredPoint]) -> list[Citation]:
                 )
             )
             continue
+        snippet = (payload.get("text") or "")[:SNIPPET_LENGTH]
         citations.append(
             Citation(
                 source_type="building_document",
