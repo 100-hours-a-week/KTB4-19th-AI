@@ -8,6 +8,7 @@ from time import perf_counter
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
+from zipsai.errors import EmptyDocumentError
 from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, embed_chunks
@@ -24,6 +25,17 @@ Download = Callable[[str, Path], Path]
 # embedding 서비스가 거부하는 길이. 이 값을 넘는 청크가 있으면 embed가 422로 확정 실패한다.
 MAX_TEXT_CHARS = 8000
 
+# 실패한 단계 → BE 통지의 reason_code. 단계 이름은 로그의 failed_stage와 같다.
+_STAGE_REASON = {
+    "download": "FILE_DOWNLOAD_FAILED",
+    "parse": "PARSE_FAILED",
+    "mask": "MASK_FAILED",
+    "clean": "CLEAN_FAILED",
+    "chunk": "CHUNK_FAILED",
+    "embed": "EMBEDDING_FAILED",
+    "upsert": "VECTOR_STORE_FAILED",
+}
+
 
 def run_indexing_job(
     request: IndexingJobRequest,
@@ -31,6 +43,7 @@ def run_indexing_job(
     download: Download,
     encoder: Encoder,
     client: QdrantClient,
+    on_fail: Callable[[str], None] | None = None,
 ) -> JobStatus:
     doc_id = request.doc_id
     # 첫 작업은 docling이 OCR·레이아웃 모델을 올리느라 수십 초가 더 걸린다.
@@ -94,6 +107,12 @@ def run_indexing_job(
                 "error_type": type(error).__name__,
             },
         )
+        if on_fail is not None:
+            on_fail(
+                "EMPTY_DOCUMENT"
+                if isinstance(error, EmptyDocumentError)
+                else _STAGE_REASON.get(getattr(error, "stage", None), "INDEX_FAILED")
+            )
         return JobStatus.FAILED
 
     logger.info(

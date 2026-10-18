@@ -10,7 +10,7 @@ from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
     SPARSE_VECTOR,
-    building_condition,
+    resident_visible_filter,
     to_sparse_vector,
 )
 from zipsai.observability import skipped, stage
@@ -66,7 +66,7 @@ def search_chunks(
 ) -> list[models.ScoredPoint]:
     """건물 문서에서 질문과 가까운 청크를 회수한다. 근거가 없으면 빈 목록이다."""
     dense, sparse = question_vector
-    building_filter = models.Filter(must=[building_condition(building_id)])
+    building_filter = resident_visible_filter(building_id)
 
     # 게이트를 먼저 통과시킨다. 실패가 성공보다 빠르고 싸야 하므로,
     # dense 한 건도 임계값을 못 넘으면 하이브리드도 LLM도 돌리지 않는다.
