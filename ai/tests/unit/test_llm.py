@@ -458,6 +458,34 @@ def test_blank_price_env_stays_unset(monkeypatch: pytest.MonkeyPatch) -> None:
         get_settings.cache_clear()
 
 
+def test_invalid_price_env_is_unset_and_settings_still_load(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    bad = "not-a-number"
+    monkeypatch.setenv("LLM_API_KEY", "key")
+    monkeypatch.setenv("LLM_MODEL", "model")
+    monkeypatch.setenv("LLM_PRICE_INPUT_PER_1M", bad)
+    monkeypatch.setenv("LLM_PRICE_OUTPUT_PER_1M", "2.5")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING, logger="zipsai.settings"):
+            settings = get_settings()
+        assert settings.llm_price_input_per_1m is None
+        assert settings.llm_price_output_per_1m == 2.5
+        warnings = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "invalid_price_setting"
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].setting == "LLM_PRICE_INPUT_PER_1M"
+        line = JsonFormatter().format(warnings[0])
+        assert bad not in line
+        assert "LLM_PRICE_INPUT_PER_1M" in line
+    finally:
+        get_settings.cache_clear()
+
+
 def test_priced_call_logs_cost_and_adds_it_to_the_request(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

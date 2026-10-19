@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -6,6 +7,8 @@ from typing import Final
 from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -60,7 +63,12 @@ def _optional_price(name: str) -> float | None:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return None
-    return float(raw)
+    try:
+        return float(raw)
+    except ValueError:
+        # LogRecord.name은 로거 이름이라 설정 이름은 setting에 둔다. 값은 남기지 않는다.
+        logger.warning("invalid_price_setting", extra={"setting": name})
+        return None
 
 
 def missing_required_settings() -> list[str]:
