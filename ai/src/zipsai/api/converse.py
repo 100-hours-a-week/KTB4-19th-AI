@@ -62,6 +62,7 @@ def converse(
         bind(
             turn_id=request.turn_id,
             trace_id=request.trace_id,
+            conversation_id=request.conversation_id,
             building_id=request.building_id,
             # 경로를 리터럴로 적으면 라우터 prefix와 두 곳이 된다.
             route=http_request.url.path,
@@ -148,6 +149,7 @@ async def _stream_converse(request: ConverseRequest):
         bind(
             turn_id=request.turn_id,
             trace_id=request.trace_id,
+            conversation_id=request.conversation_id,
             building_id=request.building_id,
             route="/api/v3/ai/converse/stream",
             intent_route=(

@@ -26,7 +26,17 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 | `embed_request` / `embed_done` / `embed_failed` | `trace_id`, `texts`, `total_chars`, `max_chars`, `priority`, `queue_wait_ms`, `infer_ms`, `encode_ms`, `queue_len`, `duration_ms`, `model`, `device`, `load_avg`, `outcome`, `status_code`, `error_code` |
 | `model_loaded` / `warmup_done` | `duration_ms`, `model` |
 
-`ask_repeat_count`는 서버에 저장하지 않는다. 요청의 `conversation_history`에서, 바로 앞 어시스턴트 줄이 그 항목의 고정 질문이면 센다. 이번이 세 번째 위치 질문이면 2다.
+`ask_repeat_count`는 서버에 저장하지 않는다. 요청의 `conversation_history`에서 바로 앞 어시스턴트 줄을 거꾸로 본다. 그 항목의 고정 질문이 들어 있거나, 위치는 `어디|위치|장소|어느 (곳|방|공간)`, 증상은 `증상|어떤 (문제|불편)|어떻게 (되|안)`에 맞으면 센다. 둘 다 아니면 멈춘다. 이번이 세 번째 위치 질문이면 2다. `reply_source`는 이미 `complaint_turn`에 있다.
+
+위치를 3번 이상 물은 대화 수. `conversation_id`마다 시계열이 생기므로 하루 점검에만 쓴다. 알람은 `zipsai_complaint_ask_repeats_total`을 쓴다.
+
+```logql
+count(
+  sum by (conversation_id) (
+    count_over_time({service="ai-api"} | json | event=`complaint_turn` | asked_field=`location` [24h])
+  ) >= 3
+)
+```
 
 표 실패 이유는 이 docling이 구분하지 않는다. `tables_found`·`tables_parsed`는 문서에 남은 표 수이고, `tables_failed`와 `table_fail_reasons`는 null이다. `ocr_used`도 null이다. `do_ocr=True`는 설정이지 페이지에서 OCR이 돌았다는 증거가 아니다.
 

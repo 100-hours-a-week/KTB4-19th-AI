@@ -262,6 +262,50 @@ def test_stream_success_records_ok(monkeypatch, caplog):
     assert _converse_count("knowledge", "ok") == before + 1
 
 
+def test_both_converse_paths_bind_conversation_id(monkeypatch, caplog):
+    graph = _FakeGraph(
+        {
+            "route": Route.CLARIFY,
+            "complaint_state": None,
+            "reply": "안내",
+        }
+    )
+    monkeypatch.setattr(converse_module, "build_graph", lambda streaming=False: graph)
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+    logger = logging.getLogger("zipsai.api.converse")
+    context_filter = _ContextFilter()
+    logger.addFilter(context_filter)
+    try:
+        with caplog.at_level(logging.INFO, logger="zipsai.api.converse"):
+            assert (
+                TestClient(app).post("/api/v3/ai/converse", json=_payload()).status_code
+                == 200
+            )
+            assert (
+                TestClient(app)
+                .post("/api/v3/ai/converse/stream", json=_payload())
+                .status_code
+                == 200
+            )
+    finally:
+        logger.removeFilter(context_filter)
+
+    started = [
+        record
+        for record in caplog.records
+        if record.getMessage() in {"request_started", "stream_request_started"}
+    ]
+    assert {record.getMessage() for record in started} == {
+        "request_started",
+        "stream_request_started",
+    }
+    assert all(record.conversation_id == "conv-001" for record in started)
+
+
 @pytest.mark.parametrize(
     ("result", "error_type"),
     [

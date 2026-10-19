@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -242,6 +243,11 @@ def _switch_question(current_symptom: str, new_symptom: str) -> str:
 _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
     "symptom": "어떤 불편 증상인지 알려주세요.",
+}
+# 고정 문구는 LLM이 비었을 때만 나간다. 모델이 다듬은 질문도 같은 항목으로 센다.
+_ASK_FIELD_PATTERNS = {
+    "location": re.compile(r"어디|위치|장소|어느 (곳|방|공간)"),
+    "symptom": re.compile(r"증상|어떤 (문제|불편)|어떻게 (되|안)"),
 }
 
 
@@ -807,16 +813,23 @@ def _log_complaint_turn(
         observe_ask_repeat(turn.asked)
 
 
+def _same_field_ask(text: str, field: str) -> bool:
+    question = _MISSING_FIELD_REPLY.get(field, "")
+    if question and question in text:
+        return True
+    pattern = _ASK_FIELD_PATTERNS.get(field)
+    return bool(pattern and pattern.search(text))
+
+
 def _previous_same_field_asks(history: list, field: str | None) -> int:
     """바로 앞에서 같은 항목을 물은 횟수. 이번 질문이 세 번째면 2다."""
-    question = _MISSING_FIELD_REPLY.get(field or "")
-    if not question:
+    if not field or field not in _ASK_FIELD_PATTERNS:
         return 0
     count = 0
     for turn in reversed(history):
         if turn.role == "user":
             continue
-        if question in (turn.text or ""):
+        if _same_field_ask(turn.text or "", field):
             count += 1
             continue
         break
