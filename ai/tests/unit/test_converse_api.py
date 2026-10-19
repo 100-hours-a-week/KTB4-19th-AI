@@ -23,7 +23,7 @@ from zipsai.errors import (
     VectorStoreError,
 )
 from zipsai.main import app
-from zipsai.observability import _ContextFilter
+from zipsai.observability import _ContextFilter, collect_timings, note_llm_cost
 from zipsai.settings import EMBEDDING_DIM, Settings
 
 
@@ -304,6 +304,32 @@ def test_both_converse_paths_bind_conversation_id(monkeypatch, caplog):
         "stream_request_started",
     }
     assert all(record.conversation_id == "conv-001" for record in started)
+
+
+def test_request_totals_sum_priced_calls(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        collect_timings() as timings,
+        caplog.at_level(logging.INFO, logger="zipsai.api.converse"),
+    ):
+        note_llm_cost(0.25)
+        note_llm_cost(0.75)
+        converse_module._request_done(
+            0.0, timings, {"in_flight": 1}, outcome="ok", intent_route="knowledge"
+        )
+        converse_module._stream_request_done(
+            0.0, timings, 1, outcome="ok", intent_route="knowledge"
+        )
+
+    done = [
+        record
+        for record in caplog.records
+        if record.getMessage() in {"request_done", "stream_request_done"}
+    ]
+    assert {record.getMessage() for record in done} == {
+        "request_done",
+        "stream_request_done",
+    }
+    assert all(record.cost_usd_total == 1.0 for record in done)
 
 
 @pytest.mark.parametrize(

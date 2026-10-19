@@ -30,6 +30,7 @@ from zipsai.observability import (
     bind,
     collect_timings,
     is_cold,
+    llm_cost_total,
     llm_token_total,
     track_in_flight,
 )
@@ -127,7 +128,7 @@ def _stream_request_done(
             "http_status": 200,
             "stage_ms": dict(timings),
             "tokens_total": llm_token_total(),
-            "cost_usd_total": None,
+            "cost_usd_total": llm_cost_total(),
             "model": model,
             "intent_route": route_name,
             "outcome": outcome,
@@ -485,7 +486,7 @@ def _request_done(
             "streaming": False,
             "stage_ms": dict(timings),
             "tokens_total": llm_token_total(),
-            "cost_usd_total": None,
+            "cost_usd_total": llm_cost_total(),
         },
     )
     route = fields.get("intent_route")

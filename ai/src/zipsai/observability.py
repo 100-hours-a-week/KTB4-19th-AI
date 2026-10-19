@@ -85,7 +85,7 @@ _RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) 
 
 _context: ContextVar[dict[str, Any] | None] = ContextVar("log_context", default=None)
 _timings: ContextVar[dict[str, int] | None] = ContextVar("stage_timings", default=None)
-_usage_totals: ContextVar[dict[str, int] | None] = ContextVar(
+_usage_totals: ContextVar[dict[str, int | float] | None] = ContextVar(
     "llm_usage_totals", default=None
 )
 _stage_name: ContextVar[str | None] = ContextVar("stage_name", default=None)
@@ -291,7 +291,7 @@ def collect_timings():
     이어 붙이는 건 느리다. 마지막 요약 한 줄에 실어 보낸다.
     """
     collected: dict[str, int] = {}
-    usage = {"input": 0, "output": 0}
+    usage: dict[str, int | float] = {"input": 0, "output": 0, "cost": 0.0, "priced": 0}
     token = _timings.set(collected)
     usage_token = _usage_totals.set(usage)
     try:
@@ -316,7 +316,23 @@ def llm_token_total() -> int | None:
     usage = _usage_totals.get()
     if usage is None:
         return None
-    return usage["input"] + usage["output"]
+    return int(usage["input"]) + int(usage["output"])
+
+
+def note_llm_cost(cost_usd: float | None) -> None:
+    """이번 요청에서 계산된 호출 비용을 모은다. 단가가 없으면 더하지 않는다."""
+    usage = _usage_totals.get()
+    if usage is None or cost_usd is None:
+        return
+    usage["cost"] = float(usage["cost"]) + cost_usd
+    usage["priced"] = int(usage["priced"]) + 1
+
+
+def llm_cost_total() -> float | None:
+    usage = _usage_totals.get()
+    if usage is None or not usage.get("priced"):
+        return None
+    return float(usage["cost"])
 
 
 @contextmanager

@@ -26,8 +26,8 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.metrics import observe_llm
-from zipsai.observability import current_stage, note_llm_tokens
-from zipsai.settings import get_settings
+from zipsai.observability import current_stage, note_llm_cost, note_llm_tokens
+from zipsai.settings import call_cost_usd, get_settings
 from zipsai.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
@@ -115,8 +115,14 @@ class LlmCall:
         if output_text is not None:
             think_tag_present = "<think>" in output_text.lower()
             hangul_ratio = _hangul_ratio(output_text)
+        cost_usd = None
+        try:
+            cost_usd = call_cost_usd(get_settings(), self.purpose, tokens)
+        except (LlmUnavailableError, ValueError):
+            cost_usd = None
         try:
             note_llm_tokens(tokens)
+            note_llm_cost(cost_usd)
             observe_llm(
                 purpose=self.purpose,
                 model=self.model,
@@ -124,7 +130,7 @@ class LlmCall:
                 duration_seconds=latency_ms / 1000,
                 ttft_seconds=None if self.ttft_ms is None else self.ttft_ms / 1000,
                 tokens=tokens,
-                cost_usd=None,
+                cost_usd=cost_usd,
                 structured_output_ok=structured_output_ok,
             )
             logger.info(
@@ -149,7 +155,7 @@ class LlmCall:
                     "retry_reason": self.retry_reason,
                     "image_count": self.image_count,
                     "image_pixels_total": None,
-                    "cost_usd": None,
+                    "cost_usd": cost_usd,
                     "think_tag_present": think_tag_present,
                     "hangul_ratio": hangul_ratio,
                     **(

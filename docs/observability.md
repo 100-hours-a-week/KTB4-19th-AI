@@ -15,14 +15,14 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 | event | 추가 필드 |
 |---|---|
 | `http_access` | `method`, `path`(템플릿), `status`, `duration_ms`. `/health`·`/metrics`는 제외 |
-| `llm_call` | `purpose`, `provider_host`(base_url 호스트만), `model`, `attempt`, `streaming`, `latency_ms`, `ttft_ms`, 토큰 4종, `finish_reason`, `status_code`, `error_code`, `structured_output_ok`, `retry_reason`, `image_count`, `image_pixels_total`(항상 null), `cost_usd`(단가 없으면 null), `think_tag_present`, `hangul_ratio` |
+| `llm_call` | `purpose`, `provider_host`(base_url 호스트만), `model`, `attempt`, `streaming`, `latency_ms`, `ttft_ms`, 토큰 4종, `finish_reason`, `status_code`, `error_code`, `structured_output_ok`, `retry_reason`, `image_count`, `image_pixels_total`(항상 null), `cost_usd`(단가 쌍이 없으면 null), `think_tag_present`, `hangul_ratio` |
 | `stage_done` parse | `empty_pages`, `min_chars_per_page`, `tables_found`, `tables_parsed`, `tables_failed`(null), `table_fail_reasons`(null), `images_found`, `parser_status`, `ocr_used`(null), `failed_pages` |
 | `index_done` | `doc_bytes`, `pages`, `chunks`, `embed_batches`, `stage_ms`, `error_code` |
 | `stage_done` gate | 기존 `top_score`, `threshold`, `passed` |
 | `stage_done` hybrid | `score_min`, `score_max`, `doc_ids`(상위 5), `scores`(상위 5), `building_filter_applied`, `invalid_doc_hits`(null) |
 | `complaint_turn` | `asked_field`, `ask_repeat_count`, `draft_filled`(필드 이름), `missing_fields`, `urgency_level`, `image_count`, `images_analyzed`, `summary_chars`, `ocr_chars` |
 | `complaint_ask_repeated` | 같은 항목을 이미 2번 물었으면 WARNING. `asked_field`, `ask_repeat_count` |
-| `request_done` | 기존 필드 + `http_status`, `streaming`, `stage_ms`, `tokens_total`, `cost_usd_total`(null), `model` |
+| `request_done` | 기존 필드 + `http_status`, `streaming`, `stage_ms`, `tokens_total`, `cost_usd_total`(계산된 호출 비용의 합, 없으면 null), `model` |
 | `embed_request` / `embed_done` / `embed_failed` | `trace_id`, `texts`, `total_chars`, `max_chars`, `priority`, `queue_wait_ms`, `infer_ms`, `encode_ms`, `queue_len`, `duration_ms`, `model`, `device`, `load_avg`, `outcome`, `status_code`, `error_code` |
 | `model_loaded` / `warmup_done` | `duration_ms`, `model` |
 
@@ -42,7 +42,7 @@ count(
 
 `urgency_level`은 수집 중 null이다. 완료 카드도 지금 채점기(`urgency-llm`)가 level을 안 줘서 null이다. 점수로 level을 다시 만들지 않는다.
 
-`cost_usd`는 단가 설정이 없어 항상 null이다. 비용 카운터는 0으로 둔다.
+`cost_usd`는 입력·출력 단가가 둘 다 있을 때 `input/1e6*입력단가 + output/1e6*출력단가`다. 캐시 토큰은 빼지 않는다. `image_analysis`만 `VLM_PRICE_INPUT_PER_1M`·`VLM_PRICE_OUTPUT_PER_1M`을 쓰고, 다른 purpose는 `LLM_PRICE_INPUT_PER_1M`·`LLM_PRICE_OUTPUT_PER_1M`을 쓴다. 한 쌍 중 하나만 있거나 비어 있으면 null이고 `zipsai_llm_cost_usd_total`은 올리지 않는다. RunPod는 GPU 시간 과금이라 단가를 비운다. 비용은 RunPod 청구액으로 본다. OpenRouter처럼 토큰 과금일 때만 단가를 넣는다. `cost_usd_total`은 그 요청 안에서 계산된 `llm_call` 비용의 합이다.
 
 임베딩 대기는 #126 이후 락이 아니라 우선순위 큐다. 로그 필드는 `queue_wait_ms`다. 메트릭 `zipsai_embed_queue_wait_seconds`에 그 대기 시간을 넣고, `zipsai_embed_queue_length`에 그 요청의 `queue_len`을 넣는다.
 
