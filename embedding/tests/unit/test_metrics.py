@@ -1,8 +1,10 @@
 import os
 
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from embedding.main import app
+from embedding.metrics import record_embed
 
 _NAMES = (
     "zipsai_build_info",
@@ -11,7 +13,8 @@ _NAMES = (
     "zipsai_requests_in_flight",
     "zipsai_embed_requests_total",
     "zipsai_embed_duration_seconds",
-    "zipsai_embed_lock_wait_seconds",
+    "zipsai_embed_queue_wait_seconds",
+    "zipsai_embed_queue_length",
     "zipsai_embed_texts_total",
 )
 
@@ -28,6 +31,24 @@ def test_metrics_lists_the_embedding_series_without_auth() -> None:
         f'zipsai_build_info{{service="embedding",version="{version}"}} 1.0'
         in response.text
     )
+    assert "zipsai_embed_lock_wait_seconds" not in response.text
+
+
+def test_record_embed_sets_queue_length_and_wait() -> None:
+    before = REGISTRY.get_sample_value("zipsai_embed_queue_wait_seconds_count") or 0.0
+
+    record_embed(
+        outcome="ok",
+        texts=1,
+        duration_seconds=0.1,
+        queue_wait_seconds=0.2,
+        queue_len=4,
+    )
+
+    assert REGISTRY.get_sample_value("zipsai_embed_queue_length") == 4
+    assert (
+        REGISTRY.get_sample_value("zipsai_embed_queue_wait_seconds_count") or 0.0
+    ) == before + 1
 
 
 def _request_samples(body: str) -> list[str]:

@@ -44,7 +44,7 @@ count(
 
 `cost_usd`는 단가 설정이 없어 항상 null이다. 비용 카운터는 0으로 둔다.
 
-임베딩 대기는 #126 이후 락이 아니라 우선순위 큐다. 로그 필드는 `queue_wait_ms`다. 메트릭 `zipsai_embed_lock_wait_seconds`에 그 대기 시간을 넣는다.
+임베딩 대기는 #126 이후 락이 아니라 우선순위 큐다. 로그 필드는 `queue_wait_ms`다. 메트릭 `zipsai_embed_queue_wait_seconds`에 그 대기 시간을 넣고, `zipsai_embed_queue_length`에 그 요청의 `queue_len`을 넣는다.
 
 ## 메트릭
 
@@ -77,10 +77,11 @@ TTFT 경계(초): 0.25, 0.5, 1, 1.5, 2, 2.5, 3, 5, 10.
 | `zipsai_parse_tables_total` | `result` |
 | `zipsai_embed_requests_total` | `outcome` |
 | `zipsai_embed_duration_seconds` | `outcome` |
-| `zipsai_embed_lock_wait_seconds` | 없음 |
+| `zipsai_embed_queue_wait_seconds` | 없음 |
+| `zipsai_embed_queue_length` | 없음 |
 | `zipsai_embed_texts_total` | 없음 |
 
-`service`는 `ai-api` 또는 `embedding`이다. 임베딩 전용 네 개는 임베딩 프로세스에만 있다. `zipsai_build_info`의 `version`은 이미지 빌드 인자 `ZIPSAI_VERSION`이고, 없으면 `unknown`이다. 로그 필드 `version`은 같은 환경 변수가 없으면 null이다.
+`service`는 `ai-api` 또는 `embedding`이다. 임베딩 전용 다섯 개는 임베딩 프로세스에만 있다. `zipsai_build_info`의 `version`은 이미지 빌드 인자 `ZIPSAI_VERSION`이고, 없으면 `unknown`이다. 로그 필드 `version`은 같은 환경 변수가 없으면 null이다.
 
 Qdrant 메트릭은 `GET :6333/metrics`이고 `api-key` 헤더가 필요하다. compose가 API 키를 켜 두기 때문이다.
 
@@ -89,7 +90,7 @@ Qdrant 메트릭은 `GET :6333/metrics`이고 `api-key` 헤더가 필요하다. 
 | 지표 | 메트릭 |
 |---|---|
 | S1 | Prometheus `up` |
-| S6 | `zipsai_embed_requests_total`, `zipsai_embed_duration_seconds`, `zipsai_embed_lock_wait_seconds` |
+| S6 | `zipsai_embed_requests_total`, `zipsai_embed_duration_seconds`, `zipsai_embed_queue_wait_seconds`, `zipsai_embed_queue_length` |
 | Q1·Q3 | `zipsai_converse_duration_seconds`, `zipsai_stage_duration_seconds` |
 | Q4 | `zipsai_stage_failures_total`, `zipsai_http_requests_total`의 5xx |
 | Q7·Q9 | `zipsai_requests_in_flight`, `zipsai_http_requests_total` |

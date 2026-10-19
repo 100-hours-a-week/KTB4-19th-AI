@@ -100,6 +100,7 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
         else None
     )
     started = time.perf_counter()
+    queue_len: int | None = None
     _log_embed("embed_request", payload, outcome="started", started=started, status_code=0)
     try:
         if not encoder.ready:
@@ -146,6 +147,7 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
             texts=len(payload.texts),
             duration_seconds=(time.perf_counter() - started),
             queue_wait_seconds=None,
+            queue_len=queue_len,
         )
         raise
     except ModelBusyError as error:
@@ -164,6 +166,7 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
             texts=len(payload.texts),
             duration_seconds=(time.perf_counter() - started),
             queue_wait_seconds=None,
+            queue_len=queue_len,
         )
         raise HTTPException(status_code=503, detail="Embedding model is busy") from error
     except Exception:
@@ -182,6 +185,7 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
             texts=len(payload.texts),
             duration_seconds=(time.perf_counter() - started),
             queue_wait_seconds=None,
+            queue_len=queue_len,
         )
         raise
     else:
@@ -202,6 +206,7 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
             texts=len(payload.texts),
             duration_seconds=(time.perf_counter() - started),
             queue_wait_seconds=None if queue_wait_ms is None else queue_wait_ms / 1000,
+            queue_len=queue_len,
         )
         return EmbedResponse(dense=dense, sparse=sparse)
     finally:

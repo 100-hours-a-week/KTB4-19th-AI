@@ -46,12 +46,13 @@ EMBED_DURATION = Histogram(
     ["outcome"],
     buckets=_STAGE_BUCKETS,
 )
-# #126 이후 락이 아니라 우선순위 큐다. 대기 시간은 이 지표에 넣는다.
-EMBED_LOCK_WAIT = Histogram(
-    "zipsai_embed_lock_wait_seconds",
-    "Time waiting for the embedding worker",
+# #126 이후 락이 아니라 우선순위 큐다. 대기 시간과 길이를 여기 넣는다.
+EMBED_QUEUE_WAIT = Histogram(
+    "zipsai_embed_queue_wait_seconds",
+    "Time waiting in the embedding queue",
     buckets=_STAGE_BUCKETS,
 )
+EMBED_QUEUE_LENGTH = Gauge("zipsai_embed_queue_length", "Embedding queue length")
 EMBED_TEXTS = Counter("zipsai_embed_texts_total", "Texts submitted for embedding")
 
 
@@ -79,10 +80,13 @@ def record_embed(
     texts: int,
     duration_seconds: float,
     queue_wait_seconds: float | None,
+    queue_len: int | None = None,
 ) -> None:
     EMBED_REQUESTS.labels(outcome=outcome).inc()
     EMBED_DURATION.labels(outcome=outcome).observe(duration_seconds)
     if texts:
         EMBED_TEXTS.inc(texts)
     if queue_wait_seconds is not None:
-        EMBED_LOCK_WAIT.observe(queue_wait_seconds)
+        EMBED_QUEUE_WAIT.observe(queue_wait_seconds)
+    if queue_len is not None:
+        EMBED_QUEUE_LENGTH.set(queue_len)
