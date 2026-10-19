@@ -139,3 +139,63 @@ VLM_ANALYSIS_PROMPT = (
     "- Use JSON null when an observation is unavailable.\n"
     "- Do not infer or guess anything that is not visible in the image."
 )
+
+URGENCY_ASSESSMENT_SYSTEM_PROMPT = (
+    "Assess three independent risk dimensions for a Korean residential facility complaint, using only "
+    "the final symptom description, location, onset time, and any image evidence supplied. Do not "
+    "invent, estimate, or infer a value that the evidence does not state.\n\n"
+    "For each dimension (severity, imminence, scope) output one of three statuses:\n"
+    '- "supported": the evidence explicitly states or strongly and specifically implies a value on the '
+    "anchor scale below. Quote the exact phrase that supports it.\n"
+    '- "explicitly_absent": the evidence explicitly states there is no such risk, activity, or scope '
+    '(e.g. "불은 안 났어요", "지금은 멀쩡해요"). Always maps to value 0. Quote the phrase.\n'
+    '- "unknown": the evidence says nothing on this dimension either way. value, source, quote, and '
+    "attachment_id must all be null.\n\n"
+    "severity (0-4) — what outcome this problem could plausibly cause:\n"
+    "0 = explicitly confirmed no harm, no essential-function impact, no property damage.\n"
+    "1 = minor inconvenience or small property impact; essential function still works.\n"
+    "2 = a core utility (electricity, water supply, heating, drainage) is out, or ongoing localized "
+    "property damage.\n"
+    "3 = a specific health/safety hazard is plausible, or major property damage is evident.\n"
+    "4 = an immediate hazard that could cause death or serious injury right now (fire or smoke, gas "
+    "leak, exposed live wiring, structural collapse risk).\n\n"
+    "imminence (0-4) — the current temporal state of the problem:\n"
+    "0 = explicitly stated as over or resolved.\n"
+    "1 = current state unclear, or only hypothetical or possible language is used.\n"
+    "2 = confirmed currently present and stable, not worsening.\n"
+    "3 = confirmed recurring, worsening, or spreading.\n"
+    "4 = confirmed an uncontrolled, immediate danger happening right now.\n\n"
+    "scope (0-2) — how many spaces or units are affected:\n"
+    "0 = confined to one fixture, space, or unit, or no scope evidence at all.\n"
+    "1 = multiple spaces within one unit, or a limited shared space.\n"
+    "2 = confirmed to affect multiple units or the building broadly.\n\n"
+    "Rules:\n"
+    "- Treat the resident's own words as authoritative over an image summary if they conflict.\n"
+    "- An image summary only supports a dimension if it visually shows the condition; OCR text alone "
+    "(e.g. an appliance error code) does not by itself establish severity, imminence, or scope.\n"
+    '- quote must be an exact, contiguous substring of the symptom text (source="symptom") or of the '
+    'named image\'s summary (source="image", with attachment_id set to that image\'s id). Never '
+    "combine words from two different sentences into one quote.\n"
+    "- Never use location or image evidence to guess at facts the symptom text does not state.\n\n"
+    "Output only a JSON object with exactly these three keys: severity, imminence, scope. Each value is "
+    "an object with exactly these keys: status, value, source, attachment_id, quote. No markdown or "
+    "explanation.\n"
+    '{{"severity": {{"status": "unknown", "value": null, "source": null, "attachment_id": null, '
+    '"quote": null}}, "imminence": {{"status": "unknown", "value": null, "source": null, '
+    '"attachment_id": null, "quote": null}}, "scope": {{"status": "unknown", "value": null, '
+    '"source": null, "attachment_id": null, "quote": null}}}}'
+)
+
+URGENCY_ASSESSMENT_USER_TEMPLATE = (
+    "증상: {symptom}\n"
+    "위치: {location}\n"
+    "발생 시점: {occurred_at}\n"
+    "이미지 근거 (JSON, attachmentId/summary/ocrText): {image_evidence}"
+)
+
+URGENCY_ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", URGENCY_ASSESSMENT_SYSTEM_PROMPT),
+        ("user", URGENCY_ASSESSMENT_USER_TEMPLATE),
+    ]
+)
