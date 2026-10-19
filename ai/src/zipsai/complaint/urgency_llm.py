@@ -11,6 +11,11 @@ _MAX_VALUE: dict[DimensionName, int] = {
     "imminence": 4,
     "scope": 2,
 }
+_MIN_SUPPORTED_VALUE: dict[DimensionName, int] = {
+    "severity": 1,
+    "imminence": 1,
+    "scope": 0,
+}
 
 
 class DimensionJudgment(BaseModel):
@@ -39,10 +44,12 @@ def _validate_dimension(name: DimensionName, dimension: DimensionJudgment) -> No
     if dimension.status == "explicitly_absent" and dimension.value != 0:
         raise ValueError(f"{name}: explicitly_absent status must carry value 0")
     if dimension.status == "supported" and (
-        dimension.value is None or not (1 <= dimension.value <= max_value)
+        dimension.value is None
+        or not (_MIN_SUPPORTED_VALUE[name] <= dimension.value <= max_value)
     ):
         raise ValueError(
-            f"{name}: supported status must carry a value between 1 and {max_value}"
+            f"{name}: supported status must carry a value between "
+            f"{_MIN_SUPPORTED_VALUE[name]} and {max_value}"
         )
     if not dimension.quote:
         raise ValueError(f"{name}: {dimension.status} status must carry a quote")

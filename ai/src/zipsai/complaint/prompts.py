@@ -166,7 +166,7 @@ URGENCY_ASSESSMENT_SYSTEM_PROMPT = (
     "3 = confirmed recurring, worsening, or spreading.\n"
     "4 = confirmed an uncontrolled, immediate danger happening right now.\n\n"
     "scope (0-2) — how many spaces or units are affected:\n"
-    "0 = confined to one fixture, space, or unit, or no scope evidence at all.\n"
+    "0 = confirmed confined to one fixture, space, or unit. If scope is not stated, use unknown.\n"
     "1 = multiple spaces within one unit, or a limited shared space.\n"
     "2 = confirmed to affect multiple units or the building broadly.\n\n"
     "Rules:\n"
