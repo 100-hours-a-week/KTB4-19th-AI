@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from langfuse import Langfuse
 from pydantic import BaseModel
 
-from embedding.encoder import MODEL_ID, ModelBusyError, encoder
+from embedding.encoder import MODEL_ID, ModelBusyError, Priority, encoder
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,6 +22,7 @@ class EmbedRequest(BaseModel):
     texts: list[str]
     trace_id: str
     max_wait_seconds: float | None = None
+    priority: Priority = "index"
 
 
 class EmbedResponse(BaseModel):
@@ -78,13 +79,23 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
                 len(payload.texts),
                 os.getloadavg(),
             )
-            dense, sparse = encoder.encode(
-                payload.texts, max_wait=payload.max_wait_seconds
+            result = encoder.encode(
+                payload.texts,
+                max_wait=payload.max_wait_seconds,
+                priority=payload.priority,
             )
+            dense, sparse = result.dense, result.sparse
             # uvicorn 접속 로그("POST /embed ... 200 OK")엔 trace_id가 안 실린다.
             # 요청 줄과 시간순으로만 대조하던 걸 trace_id로 직접 맞출 수 있게 완료 줄을 따로 남긴다.
             logger.info(
-                "embed done trace_id=%s texts=%d", payload.trace_id, len(payload.texts)
+                "embed done trace_id=%s texts=%d priority=%s queue_wait_ms=%.0f "
+                "infer_ms=%.0f queue_len=%d",
+                payload.trace_id,
+                len(payload.texts),
+                payload.priority,
+                result.queue_wait_ms,
+                result.infer_ms,
+                result.queue_len,
             )
         else:
             dense, sparse = [], []
@@ -95,7 +106,9 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
     except ModelBusyError as error:
         if observation:
             observation.update(output={"status_code": 503}, level="ERROR")
-        raise HTTPException(status_code=503, detail="Embedding model is busy") from error
+        raise HTTPException(
+            status_code=503, detail="Embedding model is busy"
+        ) from error
     except Exception:
         if observation:
             observation.update(output={"status_code": 500}, level="ERROR")
