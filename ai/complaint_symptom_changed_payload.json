@@ -1,0 +1,35 @@
+{
+    "building_id": 2,
+    "room_no": "301",
+    "resident_id": "linda",
+    "conversation_id": "conv-symptom-change-001",
+    "turn_id": "turn-symptom-change-001",
+    "trace_id": "trace-symptom-change-001",
+    "current_route": "complaint",
+    "current_complaint_state": "collecting",
+    "message": {
+      "message_id": "msg-symptom-change-001",
+      "text": "같은 민원으로 처리해 주세요. 이번에는 물이 새는게 아니라 이상한 소리가 납니다.",
+      "images": []
+    },
+    "conversation_history": [
+      {
+        "message_id": "msg-previous-user-001",
+        "role": "user",
+        "text": "화장실에서 물이 새고 있어요.",
+        "images": []
+      },
+      {
+        "message_id": "msg-previous-assistant-001",
+        "role": "assistant",
+        "text": "어디에서 물이 새고 있나요?"
+      }
+    ],
+    "complaint_draft": {
+      "issue_type": "leak",
+      "location": null,
+      "symptom": "화장실에서 물이 새고 있음",
+      "occurred_at": null,
+      "attachmentIds": []
+    }
+  }

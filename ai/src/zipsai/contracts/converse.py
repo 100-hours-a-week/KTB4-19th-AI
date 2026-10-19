@@ -78,6 +78,9 @@ class ComplaintDraft(BaseModel):
 
 class CompletedComplaintDraft(ComplaintDraft):
     representative_attachment_id: int | None = None
+    urgency_score: int | None = None
+    is_urgent: bool | None = None
+    urgency_version: str | None = None
 
 
 class ImageAnalysis(BaseModel):

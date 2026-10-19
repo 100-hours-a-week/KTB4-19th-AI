@@ -10,6 +10,7 @@ from zipsai.complaint.node import (
     handle_complaint,
     handle_complaint_stream,
 )
+from zipsai.complaint.urgency_llm import UrgencyResult
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
@@ -29,6 +30,17 @@ def _node_records(caplog: pytest.LogCaptureFixture) -> list:
 @pytest.fixture(autouse=True)
 def _stub_structured_llm(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(node_module, "generate_structured", lambda **_: None)
+
+
+@pytest.fixture(autouse=True)
+def _stub_assess_urgency(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        node_module,
+        "assess_urgency",
+        lambda *_args, **_kwargs: UrgencyResult(
+            score=None, is_urgent=None, urgency_version="test-stub"
+        ),
+    )
 
 
 def _make_request(
@@ -213,7 +225,7 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     result = handle_complaint(request)["result"]
 
     assert result.complaint_draft.model_dump(
-        exclude={"representative_attachment_id"}
+        exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
     ) == ComplaintDraft(
         issue_type="water_supply",
         location="화장실",
@@ -379,7 +391,7 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
     outcome = handle_complaint(request)
 
     assert outcome["result"].complaint_draft.model_dump(
-        exclude={"representative_attachment_id"}
+        exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
     ) == ComplaintDraft(
         issue_type="facility",
         location="세탁실",
@@ -620,6 +632,7 @@ def test_handle_complaint_logs_stages_and_turn(
     assert [(r.stage, r.outcome) for r in stages] == [
         ("text_interpretation", "ok"),
         ("turn_finalization", "skipped"),
+        ("urgency_assessment", "ok"),
     ]
     assert all(r.duration_ms >= 0 for r in stages)
 
@@ -852,3 +865,52 @@ def test_handle_complaint_propagates_interpretation_failure(
         handle_complaint(
             _make_request("욕실 바닥이 젖었어요", ["https://example.com/leak.jpg"])
         )
+
+
+def test_ready_for_card_attaches_urgency_result(monkeypatch: pytest.MonkeyPatch):
+    request = _make_request("주방에서 가스 누출 냄새가 나요")
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(location="주방", symptom="주방에서 가스 누출 냄새가 나요")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "assess_urgency",
+        lambda *_args, **_kwargs: node_module.UrgencyResult(
+            score=58, is_urgent=True, urgency_version="urgency-llm-v1-phase0"
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft.urgency_score == 58
+    assert result.complaint_draft.is_urgent is True
+    assert result.complaint_draft.urgency_version == "urgency-llm-v1-phase0"
+
+
+def test_ready_for_card_keeps_null_urgency_on_assessment_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("세탁기가 안 돼요")
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(location="세탁실", symptom="세탁기가 안 돼요")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "assess_urgency",
+        lambda *_args, **_kwargs: node_module.UrgencyResult(
+            score=None, is_urgent=None, urgency_version="urgency-llm-v1-phase0"
+        ),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft.urgency_score is None
+    assert result.complaint_draft.is_urgent is None
