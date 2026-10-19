@@ -68,9 +68,12 @@ class UrgencyEvidence(BaseModel):
 
     @model_validator(mode="after")
     def validate_dimensions(self) -> "UrgencyEvidence":
-        _validate_dimension("severity", self.severity)
-        _validate_dimension("imminence", self.imminence)
-        _validate_dimension("scope", self.scope)
+        for name in ("severity", "imminence", "scope"):
+            try:
+                _validate_dimension(name, getattr(self, name))
+            except ValueError:
+                # 한 축의 잘못된 판단이 다른 축의 유효한 근거를 버리지 않게 한다.
+                setattr(self, name, DimensionJudgment(status="unknown"))
         return self
 
 
@@ -253,14 +256,6 @@ def assess_urgency(
         occurred_at=draft.occurred_at.isoformat() if draft.occurred_at else "미상",
         image_evidence=_format_image_evidence(image_analysis),
     )
-    # 알려진 한계(2026-10-19 리뷰, 보류 결정): try가 generate_structured 호출만
-    # 감싼다. 아래 _verify_evidence가 재구성하는 UrgencyEvidence는 지금 구조상
-    # 항상 이미 검증된 두 재료(LLM 원본 그대로, 또는 전부 비어 있는 고정값
-    # _UNKNOWN_DIMENSION)만 받으므로 Task 1의 model_validator가 실패할 길이 없어
-    # 보호 밖에 둬도 당장은 안전하다. 다만 이건 구조적 보장이 아니라 우연한
-    # 안전이다 — _verify_dimension이나 Task 1 검증 규칙을 바꿀 때는 이 가정이
-    # 깨지지 않는지 다시 확인하고, 필요하면 try 범위를 _verify_evidence 호출까지
-    # 넓힐 것.
     try:
         evidence = generate_structured(
             system_prompt=str(system_message.content),

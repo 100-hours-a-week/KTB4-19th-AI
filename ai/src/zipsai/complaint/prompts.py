@@ -148,7 +148,9 @@ URGENCY_ASSESSMENT_SYSTEM_PROMPT = (
     '- "supported": the evidence explicitly states or strongly and specifically implies a value on the '
     "anchor scale below. Quote the exact phrase that supports it.\n"
     '- "explicitly_absent": the evidence explicitly states there is no such risk, activity, or scope '
-    '(e.g. "불은 안 났어요", "지금은 멀쩡해요"). Always maps to value 0. Quote the phrase.\n'
+    '(e.g. "불은 안 났어요", "지금은 멀쩡해요"). Always maps to value 0. Quote the phrase. '
+    'For imminence, use this status when the issue is explicitly over or resolved; never return '
+    'status="supported" with value 0.\n'
     '- "unknown": the evidence says nothing on this dimension either way. value, source, quote, and '
     "attachment_id must all be null.\n\n"
     "severity (0-4) — what outcome this problem could plausibly cause:\n"
@@ -160,7 +162,7 @@ URGENCY_ASSESSMENT_SYSTEM_PROMPT = (
     "4 = an immediate hazard that could cause death or serious injury right now (fire or smoke, gas "
     "leak, exposed live wiring, structural collapse risk).\n\n"
     "imminence (0-4) — the current temporal state of the problem:\n"
-    "0 = explicitly stated as over or resolved.\n"
+    "0 = explicitly stated as over or resolved; use status=explicitly_absent.\n"
     "1 = current state unclear, or only hypothetical or possible language is used.\n"
     "2 = confirmed currently present and stable, not worsening.\n"
     "3 = confirmed recurring, worsening, or spreading.\n"

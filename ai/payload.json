@@ -1,0 +1,17 @@
+{
+    "building_id": 2,
+"room_no": "301",
+    "resident_id": "linda",
+    "conversation_id": "conv-001",
+    "turn_id": "turn-stream-001",
+    "trace_id": "trace-stream-001",
+    "current_route": null,
+    "current_complaint_state": null,
+    "message": {
+      "message_id": "msg-stream-001",
+      "text": "세탁실은 몇 시까지 이용할 수 있나요?",
+        "images": []
+    },
+    "conversation_history": [],
+    "complaint_draft": null
+}

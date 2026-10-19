@@ -1,5 +1,4 @@
 import pytest
-from pydantic import ValidationError
 
 from zipsai.complaint.urgency_llm import DimensionJudgment, UrgencyEvidence
 
@@ -20,46 +19,52 @@ def test_unknown_status_accepts_all_nulls():
     assert evidence.severity.value is None
 
 
-def test_unknown_status_rejects_a_value():
-    with pytest.raises(ValidationError):
-        _evidence(severity=DimensionJudgment(status="unknown", value=2))
+def test_unknown_status_discards_a_value():
+    evidence = _evidence(severity=DimensionJudgment(status="unknown", value=2))
+
+    assert evidence.severity.status == "unknown"
+    assert evidence.severity.value is None
 
 
-def test_supported_status_requires_value_in_range():
-    with pytest.raises(ValidationError):
-        _evidence(
-            severity=DimensionJudgment(
-                status="supported", value=5, source="symptom", quote="가스 누출"
-            )
+def test_supported_status_discards_out_of_range_value():
+    evidence = _evidence(
+        severity=DimensionJudgment(
+            status="supported", value=5, source="symptom", quote="가스 누출"
         )
+    )
+
+    assert evidence.severity.status == "unknown"
 
 
-def test_supported_status_requires_quote():
-    with pytest.raises(ValidationError):
-        _evidence(
-            severity=DimensionJudgment(status="supported", value=4, source="symptom")
+def test_supported_status_without_quote_becomes_unknown():
+    evidence = _evidence(
+        severity=DimensionJudgment(status="supported", value=4, source="symptom")
+    )
+
+    assert evidence.severity.status == "unknown"
+
+
+def test_explicitly_absent_with_nonzero_value_becomes_unknown():
+    evidence = _evidence(
+        severity=DimensionJudgment(
+            status="explicitly_absent",
+            value=1,
+            source="symptom",
+            quote="불은 안 났어요",
         )
+    )
+
+    assert evidence.severity.status == "unknown"
 
 
-def test_explicitly_absent_requires_value_zero():
-    with pytest.raises(ValidationError):
-        _evidence(
-            severity=DimensionJudgment(
-                status="explicitly_absent",
-                value=1,
-                source="symptom",
-                quote="불은 안 났어요",
-            )
+def test_image_source_without_attachment_id_becomes_unknown():
+    evidence = _evidence(
+        severity=DimensionJudgment(
+            status="supported", value=4, source="image", quote="검은 연기"
         )
+    )
 
-
-def test_image_source_requires_attachment_id():
-    with pytest.raises(ValidationError):
-        _evidence(
-            severity=DimensionJudgment(
-                status="supported", value=4, source="image", quote="검은 연기"
-            )
-        )
+    assert evidence.severity.status == "unknown"
 
 
 def test_valid_supported_dimension_with_image_source():
@@ -95,6 +100,26 @@ def _absent(*, quote: str = "끝났어요") -> DimensionJudgment:
 
 def _unknown() -> DimensionJudgment:
     return DimensionJudgment(status="unknown")
+
+
+def test_invalid_dimension_becomes_unknown_without_dropping_other_evidence():
+    evidence = _evidence(
+        severity=_supported(4),
+        imminence=DimensionJudgment(
+            status="supported", value=0, source="symptom", quote="멈췄어요"
+        ),
+    )
+
+    assert evidence.severity.value == 4
+    assert evidence.imminence.status == "unknown"
+
+
+def test_supported_scope_accepts_zero_for_one_space():
+    evidence = UrgencyEvidence(
+        severity=_unknown(), imminence=_unknown(), scope=_supported(0, quote="주방에서")
+    )
+
+    assert evidence.scope.value == 0
 
 
 def test_all_dimensions_known_matches_design_doc_worst_case():

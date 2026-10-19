@@ -1,0 +1,17 @@
+{
+    "building_id": 1,
+    "room_no": "301",
+    "resident_id": "linda",
+    "conversation_id": "conv-001",
+    "turn_id": "turn-stream-001",
+    "trace_id": "trace-stream-001",
+    "current_route": null,
+    "current_complaint_state": null,
+    "message": {
+      "message_id": "msg-complaint-stream-001",
+      "text": "화장실 천장에서 물이 새고 있습니다. 민원으로 접수해 주세요.",
+      "images": []
+    },
+    "conversation_history": [],
+    "complaint_draft": null
+}
