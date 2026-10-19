@@ -6,7 +6,7 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 
 ## 남기지 않는 것
 
-입주민 원문, 답변, 프롬프트, 문서·청크·OCR 본문, 사진 요약, 민원 위치·증상 문자열, API 키, 비밀번호, presigned URL. 포매터는 `sk-`, `Bearer`, 32자 이상 hex, 슬래시 없는 40자 이상 base64, 전화번호, 차량번호, 쿼리가 붙은 URL, 띄어쓴 한글 문장을 `[REDACTED]`로 바꾼다. 민감 키의 문자열·목록·객체는 통째로 가리고, 숫자·bool·null은 남긴다. `texts`는 개수다. 한 글자라도 가리면 `redacted=true`.
+입주민 원문, 답변, 프롬프트, 문서·청크·OCR 본문, 사진 요약, 민원 위치·증상 문자열, API 키, 비밀번호, presigned URL. 포매터는 `sk-`, `Bearer`, 32자 이상 hex, 슬래시 없는 40자 이상 base64, 전화번호, 차량번호, 쿼리가 붙은 URL, 띄어쓴 한글 문장을 `[REDACTED]`로 바꾼다. 띄어쓴 한글 문장은 가려지니 에러 메시지는 영어로 쓴다. 원인은 `error_code`, `error_type`, `stage`로 남긴다. 민감 키의 문자열·목록·객체는 통째로 가리고, 숫자·bool·null은 남긴다. `texts`는 개수다. 한 글자라도 가리면 `redacted=true`.
 
 ## 이벤트
 

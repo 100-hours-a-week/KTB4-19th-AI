@@ -1,11 +1,12 @@
 import json
 import logging
 
+import pytest
 from fastapi.testclient import TestClient
 
 from zipsai.access import AccessLogMiddleware
 from zipsai.main import app
-from zipsai.observability import COMMON_FIELDS, SERVICE_NAME, JsonFormatter
+from zipsai.observability import COMMON_FIELDS, SERVICE_NAME, JsonFormatter, scrub_text
 
 _SENTENCE = "화장실 천장에서 물이 새요"
 
@@ -51,6 +52,24 @@ def test_formatter_redacts_secrets_phone_and_resident_text() -> None:
     assert _SENTENCE not in rendered
     assert payload["redacted"] is True
     assert payload["text"] == "[REDACTED]"
+
+
+# embedding/tests/unit/test_logging.py와 같은 표다. 한쪽만 고치지 않는다.
+_SCRUB_CASES = (
+    ("sk-test-secret-key-value", "[REDACTED]", True),
+    ("Bearer xyz", "[REDACTED]", True),
+    ("010-1234-5678", "[REDACTED]", True),
+    ("화장실 천장에서 물이 새요", "[REDACTED]", True),
+    ("550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440000", False),
+    ("0123456789abcdef0123456789abcdef", "[REDACTED]", True),
+)
+
+
+@pytest.mark.parametrize(("raw", "expected", "redacted"), _SCRUB_CASES)
+def test_scrub_text_matches_the_shared_table(
+    raw: str, expected: str, redacted: bool
+) -> None:
+    assert scrub_text(raw) == (expected, redacted)
 
 
 def test_formatter_keeps_a_numeric_count_on_a_sensitive_key() -> None:
