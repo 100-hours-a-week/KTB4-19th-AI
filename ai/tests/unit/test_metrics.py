@@ -1,8 +1,11 @@
+import os
+
 from fastapi.testclient import TestClient
 
 from zipsai.main import app
 
 _NAMES = (
+    "zipsai_build_info",
     "zipsai_http_requests_total",
     "zipsai_http_request_duration_seconds",
     "zipsai_requests_in_flight",
@@ -38,6 +41,11 @@ def test_metrics_lists_the_ai_series_without_auth() -> None:
     assert "text/plain" in response.headers["content-type"]
     for name in _NAMES:
         assert name in response.text
+    version = os.getenv("ZIPSAI_VERSION") or "unknown"
+    assert (
+        f'zipsai_build_info{{service="ai-api",version="{version}"}} 1.0'
+        in response.text
+    )
 
 
 def test_health_does_not_increment_the_request_counter() -> None:

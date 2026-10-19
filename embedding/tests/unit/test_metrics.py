@@ -1,8 +1,11 @@
+import os
+
 from fastapi.testclient import TestClient
 
 from embedding.main import app
 
 _NAMES = (
+    "zipsai_build_info",
     "zipsai_http_requests_total",
     "zipsai_http_request_duration_seconds",
     "zipsai_requests_in_flight",
@@ -20,6 +23,11 @@ def test_metrics_lists_the_embedding_series_without_auth() -> None:
     assert "text/plain" in response.headers["content-type"]
     for name in _NAMES:
         assert name in response.text
+    version = os.getenv("ZIPSAI_VERSION") or "unknown"
+    assert (
+        f'zipsai_build_info{{service="embedding",version="{version}"}} 1.0'
+        in response.text
+    )
 
 
 def _request_samples(body: str) -> list[str]:

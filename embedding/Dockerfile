@@ -9,6 +9,8 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim
+ARG ZIPSAI_VERSION=unknown
+ENV ZIPSAI_VERSION=$ZIPSAI_VERSION
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 # libgl1·libglib2.0-0은 docling(OpenCV)용이라 ai-api 이미지로 옮겼다.

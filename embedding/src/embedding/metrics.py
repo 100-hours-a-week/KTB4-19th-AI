@@ -1,8 +1,19 @@
 """Prometheus 지표. 워커는 1개라 multiprocess 모드는 쓰지 않는다."""
 
+import os
+
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 SERVICE = "embedding"
+
+BUILD_INFO = Gauge(
+    "zipsai_build_info",
+    "Running build. The sample value is always 1.",
+    ["service", "version"],
+)
+BUILD_INFO.labels(
+    service=SERVICE, version=os.getenv("ZIPSAI_VERSION") or "unknown"
+).set(1)
 
 # AI와 같은 요청·단계 경계. 임베딩 추론은 단계 쪽에 가깝다.
 _REQUEST_BUCKETS = (0.5, 1, 2, 4, 6, 12, 15, 18, 20, 25, 30, 60, 120)

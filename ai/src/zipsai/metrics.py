@@ -1,8 +1,19 @@
 """Prometheus 지표. 워커는 1개라 multiprocess 모드는 쓰지 않는다."""
 
+import os
+
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 SERVICE = "ai-api"
+
+BUILD_INFO = Gauge(
+    "zipsai_build_info",
+    "Running build. The sample value is always 1.",
+    ["service", "version"],
+)
+BUILD_INFO.labels(
+    service=SERVICE, version=os.getenv("ZIPSAI_VERSION") or "unknown"
+).set(1)
 
 # 운영 목표(초). 경계 안쪽 비율로 목표 이내 여부를 바로 센다.
 _REQUEST_BUCKETS = (0.5, 1, 2, 4, 6, 12, 15, 18, 20, 25, 30, 60, 120)

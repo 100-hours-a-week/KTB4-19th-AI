@@ -58,6 +58,7 @@ TTFT 경계(초): 0.25, 0.5, 1, 1.5, 2, 2.5, 3, 5, 10.
 
 | 이름 | 라벨 |
 |---|---|
+| `zipsai_build_info` | `service`, `version`. 값은 항상 1 |
 | `zipsai_http_requests_total` | `service`, `method`, `path`, `status` |
 | `zipsai_http_request_duration_seconds` | `service`, `method`, `path` |
 | `zipsai_requests_in_flight` | `service` |
@@ -79,7 +80,7 @@ TTFT 경계(초): 0.25, 0.5, 1, 1.5, 2, 2.5, 3, 5, 10.
 | `zipsai_embed_lock_wait_seconds` | 없음 |
 | `zipsai_embed_texts_total` | 없음 |
 
-`service`는 `ai-api` 또는 `embedding`이다. 임베딩 전용 네 개는 임베딩 프로세스에만 있다.
+`service`는 `ai-api` 또는 `embedding`이다. 임베딩 전용 네 개는 임베딩 프로세스에만 있다. `zipsai_build_info`의 `version`은 이미지 빌드 인자 `ZIPSAI_VERSION`이고, 없으면 `unknown`이다. 로그 필드 `version`은 같은 환경 변수가 없으면 null이다.
 
 Qdrant 메트릭은 `GET :6333/metrics`이고 `api-key` 헤더가 필요하다. compose가 API 키를 켜 두기 때문이다.
 
