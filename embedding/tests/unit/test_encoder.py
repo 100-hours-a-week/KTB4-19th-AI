@@ -30,6 +30,7 @@ class FakeModel:
         self.entered = threading.Event()
         self.release = threading.Event()
         self.fail_on: set[str] = set()
+        self.drop_last_result = False
         self.clock = clock
 
     def encode(self, texts: list[str], **_: object) -> dict:
@@ -41,9 +42,10 @@ class FakeModel:
             self.clock.now += 0.5
         if self.fail_on & set(texts):
             raise RuntimeError("model failed")
+        returned = texts[:-1] if self.drop_last_result else texts
         return {
-            "dense_vecs": np.array([[float(sum(map(ord, t)))] for t in texts]),
-            "lexical_weights": [{t: 1.0} for t in texts],
+            "dense_vecs": np.array([[float(sum(map(ord, t)))] for t in returned]),
+            "lexical_weights": [{t: 1.0} for t in returned],
         }
 
 
@@ -269,6 +271,43 @@ def test_model_error_reaches_the_request_and_the_worker_survives(make_encoder) -
         encoder.encode(["boom"])
 
     assert encoder.ready
+    assert encoder.encode(["ok"]).sparse == [{"ok": 1.0}]
+
+
+def test_short_model_output_fails_the_request_and_the_worker_survives(
+    make_encoder,
+) -> None:
+    encoder, model = make_encoder()
+    model.drop_last_result = True
+
+    with pytest.raises(RuntimeError, match="0 dense and 0 sparse vectors for 1 texts"):
+        encoder.encode(["a"])
+
+    model.drop_last_result = False
+    assert encoder._thread.is_alive()
+    assert encoder.ready
+    assert encoder.encode(["ok"]).sparse == [{"ok": 1.0}]
+
+
+def test_unexpected_error_in_the_worker_loop_fails_only_that_batch(
+    make_encoder,
+) -> None:
+    encoder, _ = make_encoder()
+    original = encoder._process
+    failed: list[bool] = []
+
+    def process(batch):
+        if not failed:
+            failed.append(True)
+            raise ValueError("unexpected")
+        original(batch)
+
+    encoder._process = process
+
+    with pytest.raises(ValueError, match="unexpected"):
+        encoder.encode(["a"])
+
+    assert encoder._thread.is_alive()
     assert encoder.encode(["ok"]).sparse == [{"ok": 1.0}]
 
 

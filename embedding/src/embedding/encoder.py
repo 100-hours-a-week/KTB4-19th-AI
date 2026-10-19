@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import CancelledError, Future
+from concurrent.futures import CancelledError, Future, InvalidStateError
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -216,8 +216,27 @@ class BgeM3Encoder:
             future.cancel()
 
     def _run(self) -> None:
-        while (batch := self._next_batch()) is not None:
-            self._process(batch)
+        while True:
+            batch: list[_Item] = []
+            try:
+                batch = self._next_batch()
+                if batch is None:
+                    return
+                self._process(batch)
+            except Exception as error:
+                # 워커가 죽으면 이후 모든 요청이 멈추고 ready가 꺼진다. 이 묶음만 실패시키고 계속 돈다.
+                logger.exception("embedding worker failed on a batch")
+                self._fail(batch or [], error)
+
+    @staticmethod
+    def _fail(items: list[_Item], error: Exception) -> None:
+        for item in items:
+            # 이미 끝났거나 그 사이 취소된 항목은 건너뛴다.
+            try:
+                if not item.future.done():
+                    item.future.set_exception(error)
+            except InvalidStateError:
+                pass
 
     def _next_batch(self) -> list[_Item] | None:
         with self._cond:
@@ -261,11 +280,15 @@ class BgeM3Encoder:
                 return_colbert_vecs=False,
             )
             dense, sparse = _normalize(output)
+            if len(dense) != len(live) or len(sparse) != len(live):
+                raise RuntimeError(
+                    f"Model returned {len(dense)} dense and {len(sparse)} sparse "
+                    f"vectors for {len(live)} texts"
+                )
         except Exception as error:
-            # 워커가 죽으면 이후 모든 요청이 멈춘다. 예외는 요청에 돌려주고 계속 돈다.
+            # 예외는 요청에 돌려주고 워커는 계속 돈다.
             logger.exception("embedding inference failed")
-            for item in live:
-                item.future.set_exception(error)
+            self._fail(live, error)
             return
         infer_s = (self._clock() - started) / len(live)
         for index, item in enumerate(live):
