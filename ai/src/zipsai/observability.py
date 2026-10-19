@@ -85,6 +85,9 @@ _RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) 
 
 _context: ContextVar[dict[str, Any] | None] = ContextVar("log_context", default=None)
 _timings: ContextVar[dict[str, int] | None] = ContextVar("stage_timings", default=None)
+_usage_totals: ContextVar[dict[str, int] | None] = ContextVar(
+    "llm_usage_totals", default=None
+)
 _stage_name: ContextVar[str | None] = ContextVar("stage_name", default=None)
 
 _in_flight = 0
@@ -148,7 +151,8 @@ def scrub_text(value: str) -> tuple[str, bool]:
 
 
 def scrub_value(key: str, value: Any) -> tuple[Any, bool]:
-    if key in _SENSITIVE_KEYS:
+    # 키 이름이 민감해도 건수는 남긴다. 본문 문자열·목록·객체만 통째로 가린다.
+    if key in _SENSITIVE_KEYS and isinstance(value, (str, list, dict)):
         return _REDACTED, True
     if isinstance(value, str):
         return scrub_text(value)
@@ -287,11 +291,32 @@ def collect_timings():
     이어 붙이는 건 느리다. 마지막 요약 한 줄에 실어 보낸다.
     """
     collected: dict[str, int] = {}
+    usage = {"input": 0, "output": 0}
     token = _timings.set(collected)
+    usage_token = _usage_totals.set(usage)
     try:
         yield collected
     finally:
         _timings.reset(token)
+        _usage_totals.reset(usage_token)
+
+
+def note_llm_tokens(tokens: dict[str, int | None]) -> None:
+    """이번 요청의 입력·출력 토큰을 모은다. 캐시는 입력에 포함돼 다시 더하지 않는다."""
+    usage = _usage_totals.get()
+    if usage is None:
+        return
+    for kind in ("input", "output"):
+        amount = tokens.get(kind)
+        if amount:
+            usage[kind] = usage[kind] + int(amount)
+
+
+def llm_token_total() -> int | None:
+    usage = _usage_totals.get()
+    if usage is None:
+        return None
+    return usage["input"] + usage["output"]
 
 
 @contextmanager

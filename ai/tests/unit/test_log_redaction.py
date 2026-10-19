@@ -53,6 +53,14 @@ def test_formatter_redacts_secrets_phone_and_resident_text() -> None:
     assert payload["text"] == "[REDACTED]"
 
 
+def test_formatter_keeps_a_numeric_count_on_a_sensitive_key() -> None:
+    payload = _line("stage_done", texts=3, text=["화장실 천장에서 물이 새요"])
+
+    assert payload["texts"] == 3
+    assert payload["text"] == "[REDACTED]"
+    assert "물이 새요" not in json.dumps(payload, ensure_ascii=False)
+
+
 def _access(caplog) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == "zipsai.access"]
 

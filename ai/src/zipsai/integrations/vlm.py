@@ -24,7 +24,9 @@ from zipsai.errors import (
 from zipsai.integrations.llm import (
     _REQUIRE_STRUCTURED_OUTPUTS,
     _get_client,
+    _reason,
     _retry_after,
+    start_llm_call,
 )
 from zipsai.settings import get_settings
 from zipsai.tracing import get_tracing_client
@@ -54,6 +56,19 @@ def classify_and_analyze(
         for image in images
         if image.url
     )
+    call = start_llm_call(
+        purpose="image_analysis" if images else "intent",
+        model=settings.vlm_model,
+        base_url=settings.llm_base_url,
+        streaming=False,
+        structured=True,
+        image_count=len(images),
+    )
+    outcome = "ok"
+    status_code: int | None = 200
+    err_code: str | None = None
+    finish_reason: str | None = None
+    structured_ok: bool | None = True
     try:
         response = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
@@ -67,25 +82,53 @@ def classify_and_analyze(
             response_format=_ModelIntentAndImages,
             extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )
+        call.usage = getattr(response, "usage", None)
+        if not response.choices or response.choices[0].message.parsed is None:
+            outcome = "fail"
+            structured_ok = False
+            err_code = "structured_output"
+            raise ImageAnalysisError("VLM returned an invalid intent or image analysis")
+        if response.choices[0].message.refusal:
+            outcome = "fail"
+            structured_ok = False
+            err_code = "structured_output"
+            raise ImageAnalysisError("VLM refused intent or image analysis")
+        finish_reason = _reason(getattr(response.choices[0], "finish_reason", None))
     except RateLimitError as error:
+        outcome, status_code, err_code, structured_ok = "fail", 429, "MODEL_RATE_LIMITED", None
         raise LlmRateLimitedError(
             "VLM rate limit exceeded", retry_after_seconds=_retry_after(error)
         ) from None
     except APITimeoutError:
+        outcome, status_code, err_code, structured_ok = "fail", None, "MODEL_TIMEOUT", None
         raise LlmTimeoutError("VLM request timed out") from None
     except APIStatusError as error:
+        outcome = "fail"
+        status_code = error.status_code
+        structured_ok = None
+        err_code = "MODEL_UPSTREAM_ERROR" if error.status_code >= 500 else "DEPENDENCY_NOT_READY"
         if error.status_code >= 500:
             raise LlmUpstreamError("VLM provider returned an upstream error") from None
         raise LlmUnavailableError("VLM request failed") from None
-    except (LengthFinishReasonError, ContentFilterFinishReasonError):
+    except (LengthFinishReasonError, ContentFilterFinishReasonError) as error:
+        outcome = "fail"
+        structured_ok = False
+        finish_reason = (
+            "length" if isinstance(error, LengthFinishReasonError) else "content_filter"
+        )
+        err_code = type(error).__name__
         raise ImageAnalysisError("VLM response was truncated or filtered") from None
     except APIError:
+        outcome, status_code, err_code, structured_ok = "fail", None, "DEPENDENCY_NOT_READY", None
         raise LlmUnavailableError("VLM request failed") from None
-
-    if not response.choices or response.choices[0].message.parsed is None:
-        raise ImageAnalysisError("VLM returned an invalid intent or image analysis")
-    if response.choices[0].message.refusal:
-        raise ImageAnalysisError("VLM refused intent or image analysis")
+    finally:
+        call.finish(
+            outcome=outcome,
+            status_code=status_code,
+            error_code=err_code,
+            finish_reason=finish_reason,
+            structured_output_ok=structured_ok,
+        )
     parsed = response.choices[0].message.parsed
     if not images:
         return parsed.route, ImageAnalysis(images=[]), parsed.contextualized_message

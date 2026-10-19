@@ -24,7 +24,14 @@ from zipsai.errors import (
     VectorStoreError,
     error_code,
 )
-from zipsai.observability import bind, collect_timings, is_cold, track_in_flight
+from zipsai.metrics import observe_converse
+from zipsai.observability import (
+    bind,
+    collect_timings,
+    is_cold,
+    llm_token_total,
+    track_in_flight,
+)
 from zipsai.orchestration.graph import build_graph
 from zipsai.settings import get_settings
 from zipsai.tracing import trace_turn
@@ -185,14 +192,28 @@ async def _stream_converse(request: ConverseRequest):
             settings=settings,
             started_at=started_at,
         )
+        total_ms = int((perf_counter() - started_at) * 1000)
+        route = state.get("route")
         logger.info(
             "stream_request_done",
             extra={
                 "in_flight": in_flight,
-                "total_ms": int((perf_counter() - started_at) * 1000),
+                "total_ms": total_ms,
                 "reply_chars": len(state.get("reply") or ""),
                 "timings": timings,
+                "streaming": True,
+                "http_status": 200,
+                "stage_ms": dict(timings),
+                "tokens_total": llm_token_total(),
+                "cost_usd_total": None,
+                "model": settings.llm_model,
+                "intent_route": route.value if route else None,
             },
+        )
+        observe_converse(
+            route.value if route else "unknown",
+            "ok",
+            total_ms / 1000,
         )
         if trace is not None:
             trace.update(
@@ -321,6 +342,7 @@ def _handle(
         has_evidence=route_result.has_sufficient_evidence,
         citations=len(route_result.citations or []),
         reply_chars=len(reply),
+        model=settings.llm_model,
     )
     return _build_success_response(
         request,
@@ -365,15 +387,27 @@ def _request_done(
     **fields: object,
 ) -> None:
     """요청 하나에 한 줄. 단계별 소요시간을 여기에 모아 병목을 한눈에 본다."""
+    total_ms = int((perf_counter() - started_at) * 1000)
     logger.info(
         "request_done",
         extra={
-            "total_ms": int((perf_counter() - started_at) * 1000),
+            "total_ms": total_ms,
             **received,
             **{f"{name}_ms": elapsed for name, elapsed in timings.items()},
             **_qdrant_ms(timings),
             **fields,
+            "http_status": fields.get("status_code"),
+            "streaming": False,
+            "stage_ms": dict(timings),
+            "tokens_total": llm_token_total(),
+            "cost_usd_total": None,
         },
+    )
+    route = fields.get("intent_route")
+    observe_converse(
+        str(route) if route else "unknown",
+        str(fields.get("outcome") or "unknown"),
+        total_ms / 1000,
     )
 
 

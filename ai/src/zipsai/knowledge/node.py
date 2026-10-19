@@ -21,6 +21,7 @@ from zipsai.knowledge.prompts import (
     format_context,
 )
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
+from zipsai.metrics import observe_fallback
 from zipsai.observability import skipped, stage
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ def _prepare_knowledge(
             ).strip()
             search_question = rewritten or question
             step["question_chars"] = len(search_question)
+            step["rewritten"] = search_question != question
 
     def search(candidate: str) -> list[models.ScoredPoint]:
         return search_chunks(
@@ -228,6 +230,7 @@ def _prepare_knowledge(
             for rank, chunk in enumerate(chunks, start=1)
         ]
         step["context_chars"] = len(context)
+        step["chunks_used"] = len(chunks)
 
     return _KnowledgePreparation(
         question=question,
@@ -265,6 +268,7 @@ def _fallback(
         "fallback",
         extra={"reason": reason, "has_question": bool(qa_question)},
     )
+    observe_fallback(reason)
     return {
         "complaint_state": None,
         "reply": reply,
