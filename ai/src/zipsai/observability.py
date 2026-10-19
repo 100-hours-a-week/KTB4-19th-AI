@@ -382,11 +382,12 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
                     trace.update(output={"outcome": "ok"})
     except Exception as error:
         code = error_code(error)
+        duration_ms = _record(name, started)
         logger.exception(
             "stage_done",
             extra={
                 "stage": name,
-                "duration_ms": _record(name, started),
+                "duration_ms": duration_ms,
                 "outcome": "fail",
                 "error_code": code,
                 "error_type": type(error).__name__,
@@ -396,7 +397,7 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
         )
         # 작업 전체 요약 한 줄에 어느 단계에서 죽었는지를 담기 위해 올려 보낸다.
         error.stage = name
-        _observe_stage(name, "fail", _record(name, started) / 1000, code)
+        _observe_stage(name, "fail", duration_ms / 1000, code)
         raise
     finally:
         _stage_name.reset(stage_token)
@@ -406,7 +407,7 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
         "stage_done",
         extra={
             "stage": name,
-            "duration_ms": _record(name, started),
+            "duration_ms": duration_ms,
             "outcome": "ok",
             "error_code": None,
             **extra,
