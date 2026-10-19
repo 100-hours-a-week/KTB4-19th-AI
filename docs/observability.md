@@ -95,23 +95,23 @@ Qdrant 메트릭은 `GET :6333/metrics`이고 `api-key` 헤더가 필요하다. 
 | Q7·Q9 | `zipsai_requests_in_flight`, `zipsai_http_requests_total` |
 | Q13 | `zipsai_llm_tokens_total`, `zipsai_llm_cost_usd_total` |
 
-Q1k·Q2·I2·S5의 판정 정의는 여전히 로그다. 아래 쿼리는 Loki로 옮겨도 같은 값을 내기 위한 예시다. 스트림 라벨 이름은 클라우드 수집 설정에 맞춘다.
+Q1k·Q2·I2·S5의 판정 정의는 여전히 로그다. 운영 로그는 Loki에 쌓인다. 스트림 라벨은 `service`(`ai-api`/`embedding`/`qdrant`)와 `env`만 쓴다. `trace_id`, `turn_id`, `conversation_id`는 JSON 필드라 `| json`으로 꺼낸다.
 
 ```logql
 # Q1k knowledge p95. 목표 20000ms 이하
 quantile_over_time(0.95,
-  {service="ai-api"} | json | event=`request_done` | intent_route=`knowledge` | unwrap total_ms [1h]
+  {service="ai-api"} | json | event=~"request_done|stream_request_done" | intent_route=`knowledge` | unwrap total_ms [1h]
 )
 ```
 
 ```logql
 # Q2 60초 초과. 목표 0
-count_over_time({service="ai-api"} | json | event=`request_done` | total_ms > 60000 [1h])
+count_over_time({service="ai-api"} | json | event=~"request_done|stream_request_done" | total_ms > 60000 [1h])
 ```
 
 ```logql
-# Q4 에러 응답. agent_error 기준
-count_over_time({service="ai-api"} | json | event=`agent_error` [1h])
+# Q4 에러 응답. 두 done 이벤트의 실패
+count_over_time({service="ai-api"} | json | event=~"request_done|stream_request_done" | outcome=`fail` [1h])
 ```
 
 ```logql
