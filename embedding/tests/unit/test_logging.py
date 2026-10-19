@@ -49,6 +49,14 @@ def test_formatter_redacts_secrets_phone_and_resident_text() -> None:
     assert payload["redacted"] is True
 
 
+def test_formatter_keeps_a_numeric_count_on_a_sensitive_key() -> None:
+    payload = _line("embed_done", texts=1, text=["화장실 천장에서 물이 새요"])
+
+    assert payload["texts"] == 1
+    assert payload["text"] == "[REDACTED]"
+    assert "물이 새요" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_health_is_not_access_logged(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="embedding.access"):
         TestClient(app).get("/health")

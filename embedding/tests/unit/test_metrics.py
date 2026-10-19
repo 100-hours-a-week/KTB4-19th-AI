@@ -33,5 +33,4 @@ def test_health_does_not_record_an_embedding_request() -> None:
     client.get("/health")
     after = _request_samples(client.get("/metrics").text)
 
-    assert before == []
-    assert after == []
+    assert after == before

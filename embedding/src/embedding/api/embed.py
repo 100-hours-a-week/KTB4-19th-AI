@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException
@@ -7,6 +8,7 @@ from langfuse import Langfuse
 from pydantic import BaseModel
 
 from embedding.encoder import MODEL_ID, ModelBusyError, Priority, encoder
+from embedding.metrics import record_embed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,6 +41,47 @@ def _tracing_client() -> Langfuse | None:
     return Langfuse()
 
 
+def _size(texts: list[str]) -> dict[str, int]:
+    return {
+        "texts": len(texts),
+        "total_chars": sum(map(len, texts)),
+        "max_chars": max((len(text) for text in texts), default=0),
+    }
+
+
+def _log_embed(
+    event: str,
+    payload: EmbedRequest,
+    *,
+    outcome: str,
+    started: float,
+    status_code: int,
+    error_code: str | None = None,
+    queue_wait_ms: float | None = None,
+    infer_ms: float | None = None,
+    queue_len: int | None = None,
+) -> None:
+    logger.info(
+        event,
+        extra={
+            "trace_id": payload.trace_id,
+            **_size(payload.texts),
+            "priority": payload.priority,
+            "model": MODEL_ID,
+            "device": "cpu",
+            "load_avg": [round(value, 2) for value in os.getloadavg()],
+            "outcome": outcome,
+            "status_code": status_code,
+            "error_code": error_code,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "queue_wait_ms": queue_wait_ms,
+            "encode_ms": infer_ms,
+            "infer_ms": infer_ms,
+            "queue_len": queue_len,
+        },
+    )
+
+
 @router.post("/embed", response_model=EmbedResponse)
 def embed(payload: EmbedRequest) -> EmbedResponse:
     client = _tracing_client()
@@ -56,6 +99,8 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
         if client
         else None
     )
+    started = time.perf_counter()
+    _log_embed("embed_request", payload, outcome="started", started=started, status_code=0)
     try:
         if not encoder.ready:
             raise HTTPException(status_code=503, detail="Model is still loading")
@@ -70,52 +115,94 @@ def embed(payload: EmbedRequest) -> EmbedResponse:
                 detail=f"each text must be at most {MAX_TEXT_CHARS} characters",
             )
         if payload.texts:
-            # 구조화 로거가 없어 trace_id를 메시지 문자열에 싣는다 — CloudWatch
-            # filter-log-events로 값 검색은 되지만 필드 파싱은 안 된다.
-            # load는 CPU 경합 의심 시 그 순간 값을 사후에 지표 권한 없이도 로그로 확인하기 위함.
-            logger.info(
-                "embed request trace_id=%s texts=%d load=%s",
-                payload.trace_id,
-                len(payload.texts),
-                os.getloadavg(),
-            )
             result = encoder.encode(
                 payload.texts,
                 max_wait=payload.max_wait_seconds,
                 priority=payload.priority,
             )
             dense, sparse = result.dense, result.sparse
-            # uvicorn 접속 로그("POST /embed ... 200 OK")엔 trace_id가 안 실린다.
-            # 요청 줄과 시간순으로만 대조하던 걸 trace_id로 직접 맞출 수 있게 완료 줄을 따로 남긴다.
-            logger.info(
-                "embed done trace_id=%s texts=%d priority=%s queue_wait_ms=%.0f "
-                "infer_ms=%.0f queue_len=%d",
-                payload.trace_id,
-                len(payload.texts),
-                payload.priority,
-                result.queue_wait_ms,
-                result.infer_ms,
-                result.queue_len,
-            )
+            queue_wait_ms = result.queue_wait_ms
+            infer_ms = result.infer_ms
+            queue_len = result.queue_len
         else:
             dense, sparse = [], []
+            queue_wait_ms = None
+            infer_ms = None
+            queue_len = None
     except HTTPException as error:
         if observation:
             observation.update(output={"status_code": error.status_code}, level="ERROR")
+        outcome = "rejected" if error.status_code == 422 else "unavailable"
+        _log_embed(
+            "embed_failed",
+            payload,
+            outcome=outcome,
+            started=started,
+            status_code=error.status_code,
+            error_code=outcome,
+        )
+        record_embed(
+            outcome=outcome,
+            texts=len(payload.texts),
+            duration_seconds=(time.perf_counter() - started),
+            queue_wait_seconds=None,
+        )
         raise
     except ModelBusyError as error:
         if observation:
             observation.update(output={"status_code": 503}, level="ERROR")
-        raise HTTPException(
-            status_code=503, detail="Embedding model is busy"
-        ) from error
+        _log_embed(
+            "embed_failed",
+            payload,
+            outcome="busy",
+            started=started,
+            status_code=503,
+            error_code="busy",
+        )
+        record_embed(
+            outcome="busy",
+            texts=len(payload.texts),
+            duration_seconds=(time.perf_counter() - started),
+            queue_wait_seconds=None,
+        )
+        raise HTTPException(status_code=503, detail="Embedding model is busy") from error
     except Exception:
         if observation:
             observation.update(output={"status_code": 500}, level="ERROR")
+        _log_embed(
+            "embed_failed",
+            payload,
+            outcome="error",
+            started=started,
+            status_code=500,
+            error_code="error",
+        )
+        record_embed(
+            outcome="error",
+            texts=len(payload.texts),
+            duration_seconds=(time.perf_counter() - started),
+            queue_wait_seconds=None,
+        )
         raise
     else:
         if observation:
             observation.update(output={"status_code": 200, "vectors": len(dense)})
+        _log_embed(
+            "embed_done",
+            payload,
+            outcome="ok",
+            started=started,
+            status_code=200,
+            queue_wait_ms=queue_wait_ms,
+            infer_ms=infer_ms,
+            queue_len=queue_len,
+        )
+        record_embed(
+            outcome="ok",
+            texts=len(payload.texts),
+            duration_seconds=(time.perf_counter() - started),
+            queue_wait_seconds=None if queue_wait_ms is None else queue_wait_ms / 1000,
+        )
         return EmbedResponse(dense=dense, sparse=sparse)
     finally:
         if observation:

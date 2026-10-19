@@ -95,7 +95,8 @@ def scrub_text(value: str) -> tuple[str, bool]:
 
 
 def scrub_value(key: str, value: Any) -> tuple[Any, bool]:
-    if key in _SENSITIVE_KEYS:
+    # 키 이름이 민감해도 건수는 남긴다. 본문 문자열·목록·객체만 통째로 가린다.
+    if key in _SENSITIVE_KEYS and isinstance(value, (str, list, dict)):
         return _REDACTED, True
     if isinstance(value, str):
         return scrub_text(value)
