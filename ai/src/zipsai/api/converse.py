@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from time import perf_counter
@@ -93,6 +94,54 @@ def _sse(data: dict[str, object]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+_CONVERSE_OUTCOMES = {"ok", "fail", "cancelled"}
+
+
+def _converse_outcome(value: object) -> str:
+    text = str(value) if value else "fail"
+    return text if text in _CONVERSE_OUTCOMES else "fail"
+
+
+def _stream_request_done(
+    started_at: float,
+    timings: dict[str, int],
+    in_flight: int,
+    *,
+    outcome: str,
+    intent_route: object,
+    model: str | None = None,
+    error_code: str | None = None,
+    error_type: str | None = None,
+    reply_chars: int | None = None,
+) -> None:
+    total_ms = int((perf_counter() - started_at) * 1000)
+    route_name = getattr(intent_route, "value", intent_route)
+    logger.info(
+        "stream_request_done",
+        extra={
+            "in_flight": in_flight,
+            "total_ms": total_ms,
+            "timings": timings,
+            "streaming": True,
+            "http_status": 200,
+            "stage_ms": dict(timings),
+            "tokens_total": llm_token_total(),
+            "cost_usd_total": None,
+            "model": model,
+            "intent_route": route_name,
+            "outcome": outcome,
+            "error_code": error_code,
+            "error_type": error_type,
+            "reply_chars": reply_chars,
+        },
+    )
+    observe_converse(
+        str(route_name) if route_name else "unknown",
+        outcome,
+        total_ms / 1000,
+    )
+
+
 async def _stream_converse(request: ConverseRequest):
     started_at = perf_counter()
     with (
@@ -109,13 +158,6 @@ async def _stream_converse(request: ConverseRequest):
         collect_timings() as timings,
         trace_turn(request) as trace,
     ):
-        logger.info("stream_request_started", extra={"in_flight": in_flight})
-        yield _sse(
-            {
-                "type": "status",
-                "status": "응답을 준비하고 있습니다.",
-            }
-        )
         state = {
             "request": request,
             "route": None,
@@ -124,7 +166,16 @@ async def _stream_converse(request: ConverseRequest):
             "result": RouteResult(),
         }
         streamed_reply = False
+        settings = None
+        logged = False
         try:
+            logger.info("stream_request_started", extra={"in_flight": in_flight})
+            yield _sse(
+                {
+                    "type": "status",
+                    "status": "응답을 준비하고 있습니다.",
+                }
+            )
             settings = get_settings()
             async for mode, event in build_graph(streaming=True).astream(
                 state,
@@ -148,6 +199,17 @@ async def _stream_converse(request: ConverseRequest):
                 trace.update(
                     output={"outcome": "fail", "error_type": type(error).__name__}
                 )
+            _stream_request_done(
+                started_at,
+                timings,
+                in_flight,
+                outcome="fail",
+                intent_route=state.get("route") or request.current_route,
+                model=None if settings is None else settings.llm_model,
+                error_code=error_code(error),
+                error_type=type(error).__name__,
+            )
+            logged = True
             yield _sse(
                 {
                     "type": "error",
@@ -156,6 +218,18 @@ async def _stream_converse(request: ConverseRequest):
             )
             yield _sse({"type": "done"})
             return
+        except (asyncio.CancelledError, GeneratorExit) as error:
+            if not logged:
+                _stream_request_done(
+                    started_at,
+                    timings,
+                    in_flight,
+                    outcome="cancelled",
+                    intent_route=state.get("route") or request.current_route,
+                    model=None if settings is None else settings.llm_model,
+                    error_type=type(error).__name__,
+                )
+            raise
         except Exception as error:
             # 스트림이 시작된 뒤에는 HTTP 상태 코드를 바꿀 수 없으므로,
             # 예상하지 못한 예외도 SSE 오류 이벤트로 알리고 정상 종료한다.
@@ -164,6 +238,17 @@ async def _stream_converse(request: ConverseRequest):
                 trace.update(
                     output={"outcome": "fail", "error_type": type(error).__name__}
                 )
+            _stream_request_done(
+                started_at,
+                timings,
+                in_flight,
+                outcome="fail",
+                intent_route=state.get("route") or request.current_route,
+                model=None if settings is None else settings.llm_model,
+                error_code=error_code(error),
+                error_type=type(error).__name__,
+            )
+            logged = True
             yield _sse(
                 {
                     "type": "error",
@@ -178,6 +263,16 @@ async def _stream_converse(request: ConverseRequest):
                 {"type": "delta", "field": "reply", "text": state["reply"]}
             )
         if not state.get("reply") or not state.get("route"):
+            _stream_request_done(
+                started_at,
+                timings,
+                in_flight,
+                outcome="fail",
+                intent_route=state.get("route") or request.current_route,
+                model=None if settings is None else settings.llm_model,
+                error_code="INTERNAL_SERVER_ERROR",
+            )
+            logged = True
             yield _sse(
                 {
                     "type": "error",
@@ -192,29 +287,17 @@ async def _stream_converse(request: ConverseRequest):
             settings=settings,
             started_at=started_at,
         )
-        total_ms = int((perf_counter() - started_at) * 1000)
         route = state.get("route")
-        logger.info(
-            "stream_request_done",
-            extra={
-                "in_flight": in_flight,
-                "total_ms": total_ms,
-                "reply_chars": len(state.get("reply") or ""),
-                "timings": timings,
-                "streaming": True,
-                "http_status": 200,
-                "stage_ms": dict(timings),
-                "tokens_total": llm_token_total(),
-                "cost_usd_total": None,
-                "model": settings.llm_model,
-                "intent_route": route.value if route else None,
-            },
+        _stream_request_done(
+            started_at,
+            timings,
+            in_flight,
+            outcome="ok",
+            intent_route=route,
+            model=settings.llm_model,
+            reply_chars=len(state.get("reply") or ""),
         )
-        observe_converse(
-            route.value if route else "unknown",
-            "ok",
-            total_ms / 1000,
-        )
+        logged = True
         if trace is not None:
             trace.update(
                 output={
@@ -406,7 +489,7 @@ def _request_done(
     route = fields.get("intent_route")
     observe_converse(
         str(route) if route else "unknown",
-        str(fields.get("outcome") or "unknown"),
+        _converse_outcome(fields.get("outcome")),
         total_ms / 1000,
     )
 

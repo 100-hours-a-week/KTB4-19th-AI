@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from qdrant_client import models
 
 import zipsai.api.converse as converse_module
@@ -10,7 +12,7 @@ import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
-from zipsai.contracts.converse import ImageAnalysis, Route
+from zipsai.contracts.converse import ConverseRequest, ImageAnalysis, Route
 from zipsai.errors import (
     ComplaintExtractionError,
     EmbeddingError,
@@ -212,6 +214,140 @@ def test_converse_stream_terminates_after_unexpected_error(monkeypatch):
     assert '"type": "delta"' in response.text
     assert '"type": "error"' in response.text
     assert response.text.endswith('data: {"type": "done"}\n\n')
+
+
+def _converse_count(route: str, outcome: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "zipsai_converse_duration_seconds_count",
+            {"route": route, "outcome": outcome},
+        )
+        or 0.0
+    )
+
+
+def _stream_done(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stream_request_done"
+    ]
+
+
+def test_stream_success_records_ok(monkeypatch, caplog):
+    graph = _FakeGraph(
+        {
+            "route": Route.KNOWLEDGE,
+            "complaint_state": None,
+            "reply": "안내",
+        }
+    )
+    monkeypatch.setattr(converse_module, "build_graph", lambda streaming=False: graph)
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+    before = _converse_count("knowledge", "ok")
+
+    with caplog.at_level(logging.INFO, logger="zipsai.api.converse"):
+        response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    recorded = _stream_done(caplog)
+    assert recorded[-1].outcome == "ok"
+    assert recorded[-1].intent_route == "knowledge"
+    assert recorded[-1].error_code is None
+    assert "네" not in recorded[-1].getMessage()
+    assert _converse_count("knowledge", "ok") == before + 1
+
+
+@pytest.mark.parametrize(
+    ("result", "error_type"),
+    [
+        (LlmUnavailableError("LLM request failed"), "LlmUnavailableError"),
+        (RuntimeError("unexpected stream failure"), "RuntimeError"),
+    ],
+)
+def test_stream_failures_record_fail(monkeypatch, caplog, result, error_type):
+    graph = _FakeGraph(result)
+    monkeypatch.setattr(converse_module, "build_graph", lambda streaming=False: graph)
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+    before = _converse_count("unknown", "fail")
+
+    with caplog.at_level(logging.INFO, logger="zipsai.api.converse"):
+        response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    recorded = _stream_done(caplog)
+    assert recorded[-1].outcome == "fail"
+    assert recorded[-1].error_type == error_type
+    assert recorded[-1].error_code
+    assert recorded[-1].total_ms >= 0
+    assert _converse_count("unknown", "fail") == before + 1
+
+
+def test_stream_without_reply_records_fail(monkeypatch, caplog):
+    graph = _FakeGraph(
+        {"route": Route.KNOWLEDGE, "complaint_state": None, "reply": None}
+    )
+    monkeypatch.setattr(converse_module, "build_graph", lambda streaming=False: graph)
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+    before = _converse_count("knowledge", "fail")
+
+    with caplog.at_level(logging.INFO, logger="zipsai.api.converse"):
+        response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert '"type": "error"' in response.text
+    recorded = _stream_done(caplog)
+    assert recorded[-1].outcome == "fail"
+    assert recorded[-1].error_code == "INTERNAL_SERVER_ERROR"
+    assert recorded[-1].intent_route == "knowledge"
+    assert _converse_count("knowledge", "fail") == before + 1
+
+
+def test_closed_stream_records_cancelled(monkeypatch, caplog):
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+    before = _converse_count("unknown", "cancelled")
+    request = ConverseRequest.model_validate(_payload())
+
+    async def close_early() -> None:
+        stream = converse_module._stream_converse(request)
+        await anext(stream)
+        await stream.aclose()
+
+    with caplog.at_level(logging.INFO, logger="zipsai.api.converse"):
+        asyncio.run(close_early())
+
+    recorded = _stream_done(caplog)
+    assert recorded[-1].outcome == "cancelled"
+    assert recorded[-1].error_type == "GeneratorExit"
+    assert _converse_count("unknown", "cancelled") == before + 1
+
+
+def test_request_done_metric_drops_unknown_outcomes():
+    before = _converse_count("knowledge", "fail")
+    converse_module._request_done(
+        0,
+        {},
+        {"in_flight": 0},
+        outcome="weird",
+        status_code=500,
+        intent_route="knowledge",
+    )
+    assert _converse_count("knowledge", "fail") == before + 1
 
 
 @pytest.mark.parametrize(
