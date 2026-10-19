@@ -2,6 +2,7 @@ import pytest
 
 import zipsai.complaint.node as node_module
 from zipsai.complaint.node import _TurnInterpretation, handle_complaint
+from zipsai.complaint.urgency_llm import UrgencyResult
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
@@ -18,6 +19,17 @@ def _stub_interpreter(monkeypatch: pytest.MonkeyPatch):
         node_module,
         "_interpret_with_stage",
         lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_assess_urgency(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        node_module,
+        "assess_urgency",
+        lambda *_args, **_kwargs: UrgencyResult(
+            score=None, is_urgent=None, urgency_version="test-stub"
+        ),
     )
 
 
