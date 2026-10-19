@@ -250,6 +250,74 @@ def test_generate_text_stream_yields_only_non_empty_text_chunks(monkeypatch):
 
     assert chunks == ["안녕", "하세요"]
     assert completions.kwargs is not None
+    assert completions.kwargs["stream_options"] == {"include_usage": True}
+
+
+def test_stream_reads_usage_from_the_trailing_chunk(monkeypatch, caplog):
+    usage = SimpleNamespace(prompt_tokens=4, completion_tokens=2, total_tokens=6)
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="답"))],
+                usage=None,
+            ),
+            SimpleNamespace(choices=[], usage=usage),
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    sink: dict[str, object] = {}
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in llm_module.generate_text_stream(
+                "system", "user", usage_sink=sink
+            )
+        ]
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert asyncio.run(collect()) == ["답"]
+
+    recorded = _llm_calls(caplog)
+    assert sink["input_tokens"] == 4
+    assert sink["output_tokens"] == 2
+    assert recorded[-1].input_tokens == 4
+    assert recorded[-1].output_tokens == 2
+    assert not hasattr(recorded[-1], "usage_missing")
+
+
+def test_stream_without_usage_marks_tokens_missing(monkeypatch, caplog):
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="답"))],
+                usage=None,
+            )
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in llm_module.generate_text_stream("system", "user")
+        ]
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert asyncio.run(collect()) == ["답"]
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].usage_missing is True
+    assert recorded[-1].input_tokens is None
+    assert recorded[-1].output_tokens is None
 
 
 def _duration_count(outcome: str) -> float:

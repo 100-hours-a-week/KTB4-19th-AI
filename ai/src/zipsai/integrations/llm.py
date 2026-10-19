@@ -152,6 +152,11 @@ class LlmCall:
                     "cost_usd": None,
                     "think_tag_present": think_tag_present,
                     "hangul_ratio": hangul_ratio,
+                    **(
+                        {"usage_missing": True}
+                        if self.streaming and self.usage is None
+                        else {}
+                    ),
                 },
             )
         except Exception:  # noqa: BLE001 로그 실패가 답변을 막으면 안 된다.
@@ -307,6 +312,7 @@ async def generate_text_stream(
                 {"role": "user", "content": user_prompt},
             ],
             stream=True,
+            stream_options={"include_usage": True},
         )
         async for chunk in stream:
             usage = getattr(chunk, "usage", None)
