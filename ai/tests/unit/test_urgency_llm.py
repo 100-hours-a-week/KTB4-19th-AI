@@ -154,3 +154,101 @@ def test_unknown_severity_and_imminence_map_to_one_not_zero():
     # severity=1, imminence=1, scope=2 -> 50*1/4 + 30*1/4 + 20*2/2 = 12.5+7.5+20 = 40
     assert result.score == 40
     assert result.is_urgent is False
+
+
+import zipsai.complaint.urgency_llm as urgency_llm_module
+from zipsai.complaint.urgency_llm import assess_urgency
+from zipsai.contracts.converse import ComplaintDraft, ImageAnalysis, ImageObservation
+from zipsai.errors import LlmTimeoutError
+
+
+def _extracted_evidence(**overrides: object) -> UrgencyEvidence:
+    base = {
+        "severity": DimensionJudgment(
+            status="supported", value=4, source="symptom", quote="가스 누출"
+        ),
+        "imminence": DimensionJudgment(status="unknown"),
+        "scope": DimensionJudgment(status="unknown"),
+    }
+    base.update(overrides)
+    return UrgencyEvidence(**base)
+
+
+def test_assess_urgency_scores_verified_evidence(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        urgency_llm_module, "generate_structured", lambda **_: _extracted_evidence()
+    )
+
+    result = assess_urgency(
+        ComplaintDraft(symptom="주방에서 가스 누출 냄새가 나요"), None
+    )
+
+    assert result.score == 58
+    assert result.is_urgent is True
+
+
+def test_assess_urgency_downgrades_quote_not_found_in_symptom(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bad_evidence = _extracted_evidence(
+        severity=DimensionJudgment(
+            status="supported", value=4, source="symptom", quote="존재하지 않는 문구"
+        )
+    )
+    monkeypatch.setattr(
+        urgency_llm_module, "generate_structured", lambda **_: bad_evidence
+    )
+
+    result = assess_urgency(
+        ComplaintDraft(symptom="주방에서 가스 누출 냄새가 나요"), None
+    )
+
+    assert result.dimensions["severity"]["status"] == "unknown"
+    assert result.score is None  # 셋 다 unknown으로 떨어짐
+
+
+def test_assess_urgency_verifies_image_quote_against_named_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    evidence = _extracted_evidence(
+        severity=DimensionJudgment(
+            status="supported",
+            value=4,
+            source="image",
+            attachment_id=7,
+            quote="검은 연기가 보임",
+        )
+    )
+    monkeypatch.setattr(urgency_llm_module, "generate_structured", lambda **_: evidence)
+    image_analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=7, summary="검은 연기가 보임")]
+    )
+
+    result = assess_urgency(ComplaintDraft(symptom="연기가 나요"), image_analysis)
+
+    assert result.dimensions["severity"]["status"] == "supported"
+
+
+def test_assess_urgency_returns_null_result_when_llm_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def _raise(**_: object):
+        raise LlmTimeoutError("timed out")
+
+    monkeypatch.setattr(urgency_llm_module, "generate_structured", _raise)
+
+    result = assess_urgency(ComplaintDraft(symptom="아무 문제나"), None)
+
+    assert result.score is None
+    assert result.is_urgent is None
+
+
+def test_assess_urgency_returns_null_result_when_llm_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(urgency_llm_module, "generate_structured", lambda **_: None)
+
+    result = assess_urgency(ComplaintDraft(symptom="아무 문제나"), None)
+
+    assert result.score is None
+    assert result.is_urgent is None

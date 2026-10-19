@@ -146,3 +146,135 @@ def score_urgency(evidence: UrgencyEvidence, config: ScoringConfig) -> UrgencyRe
         urgency_version=config.version,
         dimensions=_dimension_summary(evidence),
     )
+
+
+import json
+import logging
+
+from pydantic import ValidationError
+
+from zipsai.complaint.prompts import URGENCY_ASSESSMENT_PROMPT
+from zipsai.contracts.converse import ComplaintDraft, ImageAnalysis
+from zipsai.errors import (
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    LlmUpstreamError,
+)
+from zipsai.integrations.llm import generate_structured
+
+logger = logging.getLogger(__name__)
+
+_RECOVERABLE_LLM_ERRORS = (
+    LlmRateLimitedError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+    LlmUpstreamError,
+)
+
+_UNKNOWN_DIMENSION = DimensionJudgment(status="unknown")
+
+
+def _unscored_result() -> UrgencyResult:
+    return UrgencyResult(score=None, is_urgent=None, urgency_version=URGENCY_VERSION)
+
+
+def _format_image_evidence(image_analysis: ImageAnalysis | None) -> str:
+    if not image_analysis:
+        return "없음"
+    return json.dumps(
+        [
+            {
+                "attachmentId": image.attachment_id,
+                "summary": image.summary,
+                "ocrText": image.ocr_text,
+            }
+            for image in image_analysis.images
+        ],
+        ensure_ascii=False,
+    )
+
+
+def _image_summary(
+    image_analysis: ImageAnalysis | None, attachment_id: int | None
+) -> str | None:
+    if image_analysis is None or attachment_id is None:
+        return None
+    for image in image_analysis.images:
+        if image.attachment_id == attachment_id:
+            return image.summary
+    return None
+
+
+def _verify_dimension(
+    dimension: DimensionJudgment, symptom: str, image_analysis: ImageAnalysis | None
+) -> DimensionJudgment:
+    if dimension.status == "unknown":
+        return dimension
+    if not dimension.quote:
+        return _UNKNOWN_DIMENSION
+    if dimension.source == "symptom":
+        source_text = symptom
+    elif dimension.source == "image":
+        source_text = _image_summary(image_analysis, dimension.attachment_id)
+    else:
+        source_text = None
+    if not source_text or dimension.quote not in source_text:
+        return _UNKNOWN_DIMENSION
+    return dimension
+
+
+def _verify_evidence(
+    evidence: UrgencyEvidence, symptom: str, image_analysis: ImageAnalysis | None
+) -> UrgencyEvidence:
+    return UrgencyEvidence(
+        severity=_verify_dimension(evidence.severity, symptom, image_analysis),
+        imminence=_verify_dimension(evidence.imminence, symptom, image_analysis),
+        scope=_verify_dimension(evidence.scope, symptom, image_analysis),
+    )
+
+
+def assess_urgency(
+    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+) -> UrgencyResult:
+    """완료 카드 시점에만 호출한다. 실패해도 예외를 던지지 않고 null 결과로 흡수한다 —
+    긴급도는 참고 정보일 뿐 접수 흐름을 막으면 안 된다(2026-10-17 설계 "실패·안전 동작")."""
+    symptom = draft.symptom or ""
+    system_message, user_message = URGENCY_ASSESSMENT_PROMPT.format_messages(
+        symptom=symptom,
+        location=draft.location or "미상",
+        occurred_at=draft.occurred_at.isoformat() if draft.occurred_at else "미상",
+        image_evidence=_format_image_evidence(image_analysis),
+    )
+    # 알려진 한계(2026-10-19 리뷰, 보류 결정): try가 generate_structured 호출만
+    # 감싼다. 아래 _verify_evidence가 재구성하는 UrgencyEvidence는 지금 구조상
+    # 항상 이미 검증된 두 재료(LLM 원본 그대로, 또는 전부 비어 있는 고정값
+    # _UNKNOWN_DIMENSION)만 받으므로 Task 1의 model_validator가 실패할 길이 없어
+    # 보호 밖에 둬도 당장은 안전하다. 다만 이건 구조적 보장이 아니라 우연한
+    # 안전이다 — _verify_dimension이나 Task 1 검증 규칙을 바꿀 때는 이 가정이
+    # 깨지지 않는지 다시 확인하고, 필요하면 try 범위를 _verify_evidence 호출까지
+    # 넓힐 것.
+    try:
+        evidence = generate_structured(
+            system_prompt=str(system_message.content),
+            user_prompt=str(user_message.content),
+            response_format=UrgencyEvidence,
+        )
+    except (*_RECOVERABLE_LLM_ERRORS, ValidationError) as error:
+        logger.exception(
+            "urgency_assessment_failed",
+            extra={
+                "error_type": type(error).__name__,
+                "urgency_version": URGENCY_VERSION,
+            },
+        )
+        return _unscored_result()
+
+    if evidence is None:
+        logger.warning(
+            "urgency_assessment_empty", extra={"urgency_version": URGENCY_VERSION}
+        )
+        return _unscored_result()
+
+    verified = _verify_evidence(evidence, symptom, image_analysis)
+    return score_urgency(verified, DEFAULT_SCORING_CONFIG)
