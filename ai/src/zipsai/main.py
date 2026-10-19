@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+from zipsai.access import AccessLogMiddleware
 from zipsai.api.comment import router as comment_router
 from zipsai.api.converse import router as converse_router
 from zipsai.api.error_responses import (
@@ -45,6 +46,7 @@ app.add_middleware(
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+app.add_middleware(AccessLogMiddleware)
 app.include_router(converse_router)
 app.include_router(health_router)
 app.include_router(indexing_router, prefix=API_PREFIX)

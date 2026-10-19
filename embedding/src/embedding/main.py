@@ -1,15 +1,16 @@
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from embedding.access import AccessLogMiddleware
 from embedding.api.embed import _tracing_client
 from embedding.api.embed import router as embed_router
 from embedding.api.health import router as health_router
 from embedding.encoder import encoder
+from embedding.logging import configure_logging
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 
 
 @asynccontextmanager
@@ -30,5 +31,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="embedding", lifespan=lifespan)
+app.add_middleware(AccessLogMiddleware)
 app.include_router(health_router)
 app.include_router(embed_router)
