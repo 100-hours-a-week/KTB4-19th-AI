@@ -64,8 +64,8 @@ def classify_and_analyze(
         structured=True,
         image_count=len(images),
     )
-    outcome = "ok"
-    status_code: int | None = 200
+    outcome = "fail"
+    status_code: int | None = None
     err_code: str | None = None
     finish_reason: str | None = None
     structured_ok: bool | None = True
@@ -94,6 +94,8 @@ def classify_and_analyze(
             err_code = "structured_output"
             raise ImageAnalysisError("VLM refused intent or image analysis")
         finish_reason = _reason(getattr(response.choices[0], "finish_reason", None))
+        outcome = "ok"
+        status_code = 200
     except RateLimitError as error:
         outcome, status_code, err_code, structured_ok = "fail", 429, "MODEL_RATE_LIMITED", None
         raise LlmRateLimitedError(
@@ -121,6 +123,13 @@ def classify_and_analyze(
     except APIError:
         outcome, status_code, err_code, structured_ok = "fail", None, "DEPENDENCY_NOT_READY", None
         raise LlmUnavailableError("VLM request failed") from None
+    except Exception as error:
+        outcome = "fail"
+        if err_code is None:
+            status_code = None
+            err_code = type(error).__name__
+            structured_ok = None
+        raise
     finally:
         call.finish(
             outcome=outcome,

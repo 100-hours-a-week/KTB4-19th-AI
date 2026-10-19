@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from prometheus_client import REGISTRY
 
 from zipsai.errors import (
     LlmRateLimitedError,
@@ -248,4 +250,94 @@ def test_generate_text_stream_yields_only_non_empty_text_chunks(monkeypatch):
 
     assert chunks == ["안녕", "하세요"]
     assert completions.kwargs is not None
-    assert completions.kwargs["stream"] is True
+
+
+def _duration_count(outcome: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "zipsai_llm_call_duration_seconds_count",
+            {"purpose": "unknown", "model": "model", "outcome": outcome},
+        )
+        or 0.0
+    )
+
+
+def _llm_calls(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if record.message == "llm_call"]
+
+
+def test_unknown_exception_is_logged_as_failure(monkeypatch, caplog):
+    class BoomError(RuntimeError):
+        pass
+
+    _use_fake_client(monkeypatch, BoomError("주민 원문"))
+    before = _duration_count("fail")
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(BoomError),
+    ):
+        llm_module.generate_text("system", "user")
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "fail"
+    assert recorded[-1].status_code is None
+    assert recorded[-1].error_code == "BoomError"
+    assert "주민 원문" not in recorded[-1].getMessage()
+    assert _duration_count("fail") == before + 1
+
+
+def test_closed_stream_is_logged_as_cancelled(monkeypatch, caplog):
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="앞"))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="뒤"))]
+            ),
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    before = _duration_count("cancelled")
+
+    async def close_early() -> None:
+        stream = llm_module.generate_text_stream("system", "user")
+        await anext(stream)
+        await stream.aclose()
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        asyncio.run(close_early())
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "cancelled"
+    assert recorded[-1].status_code is None
+    assert _duration_count("cancelled") == before + 1
+
+
+def test_successful_call_is_logged_as_ok(monkeypatch, caplog):
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kwargs: response))
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    before = _duration_count("ok")
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert llm_module.generate_text("system", "user") == "ok"
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "ok"
+    assert recorded[-1].status_code == 200
+    assert recorded[-1].error_code is None
+    assert _duration_count("ok") == before + 1

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -130,6 +131,7 @@ class LlmCall:
                 "llm_call",
                 extra={
                     "purpose": self.purpose,
+                    "outcome": outcome,
                     "provider_host": provider_host(self.base_url),
                     "model": self.model,
                     "attempt": self.attempt,
@@ -200,8 +202,8 @@ def generate_text(
         attempt=attempt,
         retry_reason=retry_reason,
     )
-    outcome = "ok"
-    status_code: int | None = 200
+    outcome = "fail"
+    status_code: int | None = None
     err_code: str | None = None
     finish_reason: str | None = None
     structured_ok: bool | None = True if response_format else None
@@ -235,6 +237,8 @@ def generate_text(
             raise LlmUnavailableError("LLM returned an empty response")
         output_text = content
         finish_reason = _reason(getattr(response.choices[0], "finish_reason", None))
+        outcome = "ok"
+        status_code = 200
         return content
     except RateLimitError as error:
         outcome, status_code, err_code = "fail", 429, "MODEL_RATE_LIMITED"
@@ -254,6 +258,12 @@ def generate_text(
     except APIError as error:
         outcome, status_code, err_code = "fail", None, "DEPENDENCY_NOT_READY"
         raise LlmUnavailableError("LLM request failed") from error
+    except Exception as error:
+        outcome = "fail"
+        if err_code is None:
+            status_code = None
+            err_code = type(error).__name__
+        raise
     finally:
         call.finish(
             outcome=outcome,
@@ -282,8 +292,8 @@ async def generate_text_stream(
         structured=False,
         attempt=attempt,
     )
-    outcome = "ok"
-    status_code: int | None = 200
+    outcome = "fail"
+    status_code: int | None = None
     err_code: str | None = None
     parts: list[str] = []
     try:
@@ -310,6 +320,12 @@ async def generate_text_stream(
                 call.mark_ttft()
                 parts.append(text)
                 yield text
+        outcome = "ok"
+        status_code = 200
+    except (asyncio.CancelledError, GeneratorExit):
+        outcome = "cancelled"
+        status_code = None
+        raise
     except RateLimitError as error:
         outcome, status_code, err_code = "fail", 429, "MODEL_RATE_LIMITED"
         raise LlmRateLimitedError(
@@ -328,6 +344,12 @@ async def generate_text_stream(
     except APIError as error:
         outcome, status_code, err_code = "fail", None, "DEPENDENCY_NOT_READY"
         raise LlmUnavailableError("LLM request failed") from error
+    except Exception as error:
+        outcome = "fail"
+        if err_code is None:
+            status_code = None
+            err_code = type(error).__name__
+        raise
     finally:
         call.finish(
             outcome=outcome,
@@ -359,8 +381,8 @@ def generate_structured[T: BaseModel](
         attempt=attempt,
         retry_reason=retry_reason,
     )
-    outcome = "ok"
-    status_code: int | None = 200
+    outcome = "fail"
+    status_code: int | None = None
     err_code: str | None = None
     finish_reason: str | None = None
     structured_ok: bool | None = True
@@ -390,6 +412,8 @@ def generate_structured[T: BaseModel](
             structured_ok = False
             err_code = "structured_output"
             return None
+        outcome = "ok"
+        status_code = 200
         return message.parsed
     except RateLimitError as error:
         outcome, status_code, err_code, structured_ok = "fail", 429, "MODEL_RATE_LIMITED", None
@@ -418,6 +442,13 @@ def generate_structured[T: BaseModel](
     except APIError as error:
         outcome, status_code, err_code, structured_ok = "fail", None, "DEPENDENCY_NOT_READY", None
         raise LlmUnavailableError("LLM request failed") from error
+    except Exception as error:
+        outcome = "fail"
+        if err_code is None:
+            status_code = None
+            err_code = type(error).__name__
+            structured_ok = None
+        raise
     finally:
         call.finish(
             outcome=outcome,
