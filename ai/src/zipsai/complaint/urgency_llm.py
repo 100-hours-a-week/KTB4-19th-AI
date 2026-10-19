@@ -65,3 +65,84 @@ class UrgencyEvidence(BaseModel):
         _validate_dimension("imminence", self.imminence)
         _validate_dimension("scope", self.scope)
         return self
+
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class ScoringConfig:
+    severity_weight: int
+    imminence_weight: int
+    scope_weight: int
+    urgent_threshold: int
+    version: str
+
+
+URGENCY_VERSION = "urgency-llm-v1-phase0"
+
+DEFAULT_SCORING_CONFIG = ScoringConfig(
+    severity_weight=50,
+    imminence_weight=30,
+    scope_weight=20,
+    urgent_threshold=60,
+    version=URGENCY_VERSION,
+)
+
+
+@dataclass(frozen=True)
+class UrgencyResult:
+    score: int | None
+    is_urgent: bool | None
+    urgency_version: str
+    dimensions: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+def _numeric_value(dimension: DimensionJudgment, *, unknown_value: int) -> int:
+    if dimension.status == "unknown":
+        return unknown_value
+    assert dimension.value is not None
+    return dimension.value
+
+
+def _dimension_summary(evidence: UrgencyEvidence) -> dict[str, dict[str, object]]:
+    return {
+        name: {"status": dimension.status, "value": dimension.value}
+        for name, dimension in (
+            ("severity", evidence.severity),
+            ("imminence", evidence.imminence),
+            ("scope", evidence.scope),
+        )
+    }
+
+
+def score_urgency(evidence: UrgencyEvidence, config: ScoringConfig) -> UrgencyResult:
+    """합산 공식이 임박성 낮은 S=4를 과소평가하는 걸 막으려고 severity==4면 점수와
+    무관하게 is_urgent를 강제한다 — 2026-10-17 재설계 문서의 override 규칙."""
+    dimensions = (evidence.severity, evidence.imminence, evidence.scope)
+    if all(dimension.status == "unknown" for dimension in dimensions):
+        return UrgencyResult(
+            score=None,
+            is_urgent=None,
+            urgency_version=config.version,
+            dimensions=_dimension_summary(evidence),
+        )
+
+    severity_value = _numeric_value(evidence.severity, unknown_value=1)
+    imminence_value = _numeric_value(evidence.imminence, unknown_value=1)
+    scope_value = _numeric_value(evidence.scope, unknown_value=0)
+
+    score = round(
+        config.severity_weight * severity_value / 4
+        + config.imminence_weight * imminence_value / 4
+        + config.scope_weight * scope_value / 2
+    )
+    is_urgent = score >= config.urgent_threshold or (
+        evidence.severity.status == "supported" and evidence.severity.value == 4
+    )
+    return UrgencyResult(
+        score=score,
+        is_urgent=is_urgent,
+        urgency_version=config.version,
+        dimensions=_dimension_summary(evidence),
+    )
