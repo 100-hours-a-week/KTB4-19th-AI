@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.integrations import llm as llm_module
-from zipsai.observability import collect_timings, llm_cost_total
+from zipsai.observability import JsonFormatter, collect_timings, llm_cost_total
 from zipsai.settings import Settings, call_cost_usd, get_settings
 
 
@@ -526,3 +527,150 @@ def test_one_price_does_not_increment_the_cost_counter(
 
     assert _llm_calls(caplog)[-1].cost_usd is None
     assert (REGISTRY.get_sample_value("zipsai_llm_cost_usd_total", labels) or 0.0) == before
+
+
+_LLM_CALL_FIELDS = (
+    "purpose",
+    "provider_host",
+    "model",
+    "attempt",
+    "streaming",
+    "latency_ms",
+    "ttft_ms",
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+    "finish_reason",
+    "status_code",
+    "error_code",
+    "structured_output_ok",
+    "retry_reason",
+    "image_count",
+    "image_pixels_total",
+    "cost_usd",
+    "think_tag_present",
+    "hangul_ratio",
+)
+_SYSTEM_SECRET = "SYSTEM_SECRET_TEXT"
+_USER_SECRET = "USER_SECRET_TEXT"
+_RESPONSE_SECRET = "RESPONSE_SECRET_TEXT"
+
+
+def _success_response(content: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=content),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=4, completion_tokens=5),
+    )
+
+
+def test_successful_llm_call_line_has_the_documented_fields(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    response = _success_response(_RESPONSE_SECRET)
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings("key", "https://api.example.com/v1", "model", 30),
+    )
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert (
+            llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET) == _RESPONSE_SECRET
+        )
+
+    line = JsonFormatter().format(_llm_calls(caplog)[-1])
+    payload = json.loads(line)
+    for name in _LLM_CALL_FIELDS:
+        assert name in payload
+    assert payload["provider_host"] == "api.example.com"
+    assert payload["status_code"] == 200
+    assert payload["image_pixels_total"] is None
+    assert _SYSTEM_SECRET not in line
+    assert _USER_SECRET not in line
+    assert _RESPONSE_SECRET not in line
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            RateLimitError("rate limited", response=_response(429), body=None),
+            429,
+            "MODEL_RATE_LIMITED",
+        ),
+        (APITimeoutError(_request()), None, "MODEL_TIMEOUT"),
+        (
+            APIStatusError("upstream", response=_response(500), body=None),
+            500,
+            "MODEL_UPSTREAM_ERROR",
+        ),
+        (
+            APIStatusError("bad request", response=_response(400), body=None),
+            400,
+            "DEPENDENCY_NOT_READY",
+        ),
+    ],
+)
+def test_http_errors_log_status_and_error_code(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    status_code: int | None,
+    error_code: str,
+) -> None:
+    _use_fake_client(monkeypatch, error)
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(
+            (LlmRateLimitedError, LlmTimeoutError, LlmUpstreamError, LlmUnavailableError)
+        ),
+    ):
+        llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET)
+
+    record = _llm_calls(caplog)[-1]
+    assert record.status_code == status_code
+    assert record.error_code == error_code
+    line = JsonFormatter().format(record)
+    assert _SYSTEM_SECRET not in line
+    assert _USER_SECRET not in line
+
+
+def test_runpod_provider_host_keeps_only_the_hostname(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    endpoint = "endpoint-SHOULD-NOT-LEAK"
+    base_url = f"https://api.runpod.ai/v2/{endpoint}/openai/v1"
+    assert llm_module.provider_host(base_url) == "api.runpod.ai"
+    response = _success_response(_RESPONSE_SECRET)
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings("key", base_url, "model", 30),
+    )
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET)
+
+    line = JsonFormatter().format(_llm_calls(caplog)[-1])
+    assert json.loads(line)["provider_host"] == "api.runpod.ai"
+    assert endpoint not in line
+    assert _RESPONSE_SECRET not in line
