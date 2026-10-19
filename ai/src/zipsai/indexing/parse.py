@@ -11,6 +11,51 @@ from docling.document_converter import (
 
 from zipsai.errors import PdfParseError
 
+
+class ParsedPages(list[dict[str, int | str]]):
+    """페이지 목록에 표·빈 페이지 개수를 붙인다. 실패 이유는 docling이 안 준다."""
+
+    tables_found: int | None = None
+    tables_parsed: int | None = None
+    tables_failed: int | None = None
+    table_fail_reasons: dict[str, int] | None = None
+    empty_pages: int | None = None
+    min_chars_per_page: int | None = None
+    images_found: int | None = None
+    parser_status: str | None = None
+    ocr_used: bool | None = None
+    ocr_pages: int | None = None
+    failed_pages: list[int] | None = None
+
+
+def conversion_stats(result: object, pages: list[dict[str, int | str]]) -> ParsedPages:
+    parsed = ParsedPages(pages)
+    document = getattr(result, "document", None)
+    tables = list(getattr(document, "tables", []) or [])
+    parsed.tables_found = len(tables)
+    parsed.tables_parsed = len(tables)
+    # 버린 표의 이유는 ErrorItem이 구조 인식 실패를 구분하지 않는다.
+    parsed.tables_failed = None
+    parsed.table_fail_reasons = None
+    texts = [str(page.get("text", "")) for page in pages]
+    parsed.empty_pages = sum(1 for text in texts if not text.strip())
+    parsed.min_chars_per_page = min((len(text) for text in texts), default=0)
+    pictures = getattr(document, "pictures", None)
+    parsed.images_found = len(pictures) if pictures is not None else None
+    status = getattr(result, "status", None)
+    parsed.parser_status = getattr(status, "name", None) if status is not None else None
+    if parsed.parser_status is None and status is not None:
+        parsed.parser_status = str(status)
+    parsed.ocr_used = None
+    parsed.ocr_pages = None
+    failed: list[int] = []
+    for error in getattr(result, "errors", []) or []:
+        page_no = getattr(error, "page_no", None)
+        if isinstance(page_no, int):
+            failed.append(page_no)
+    parsed.failed_pages = sorted(set(failed)) or None
+    return parsed
+
 # RapidOCR 기본 언어가 중국어라 지정하지 않으면 한글이 한자로 나온다.
 OCR_LANGUAGE = "korean"
 # RapidOcrOptions 기본 backend는 onnxruntime인데 설치돼 있지 않다. 이미 받아둔 torch를 쓴다.
@@ -37,7 +82,7 @@ def _converter() -> DocumentConverter:
     )
 
 
-def parse_document(source: str | Path) -> list[dict[str, int | str]]:
+def parse_document(source: str | Path) -> ParsedPages:
     path = Path(source)
     try:
         if not path.is_file():
@@ -48,7 +93,8 @@ def parse_document(source: str | Path) -> list[dict[str, int | str]]:
         raise PdfParseError(f"File is unreadable: {path}") from exc
 
     try:
-        document = _converter().convert(path).document
+        converted = _converter().convert(path)
+        document = converted.document
         page_numbers = sorted(document.pages)
         if not page_numbers:
             raise PdfParseError(f"Document has no pages: {path}")
@@ -59,7 +105,7 @@ def parse_document(source: str | Path) -> list[dict[str, int | str]]:
         ]
         if not any(page["text"].strip() for page in pages):
             raise PdfParseError(f"Document has no usable text: {path}")
-        return pages
+        return conversion_stats(converted, pages)
     except PdfParseError:
         raise
     except Exception as exc:

@@ -18,6 +18,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /app /app
+ARG ZIPSAI_VERSION=unknown
+ENV ZIPSAI_VERSION=$ZIPSAI_VERSION
 USER app
 EXPOSE 8000
 ENTRYPOINT ["uvicorn", "embedding.main:app", "--host", "0.0.0.0", "--port", "8000"]

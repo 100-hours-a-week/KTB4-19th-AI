@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -6,6 +7,8 @@ from typing import Final
 from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -56,6 +59,18 @@ ALLOW_DATA_URL_IMAGES: Final = (
 REQUIRED_SETTINGS: Final = ("QDRANT_URL", "S3_BUCKET")
 
 
+def _optional_price(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        # LogRecord.name은 로거 이름이라 설정 이름은 setting에 둔다. 값은 남기지 않는다.
+        logger.warning("invalid_price_setting", extra={"setting": name})
+        return None
+
+
 def missing_required_settings() -> list[str]:
     values = {
         "QDRANT_URL": QDRANT_URL,
@@ -72,6 +87,29 @@ class Settings:
     llm_timeout_seconds: float
     llm_judge_model: str | None = None
     vlm_model: str = VLM_MODEL
+    llm_price_input_per_1m: float | None = None
+    llm_price_output_per_1m: float | None = None
+    vlm_price_input_per_1m: float | None = None
+    vlm_price_output_per_1m: float | None = None
+
+
+def call_cost_usd(
+    settings: Settings, purpose: str, tokens: dict[str, int | None]
+) -> float | None:
+    """토큰 단가가 한 쌍으로 있을 때만 USD를 계산한다. 캐시 토큰은 빼지 않는다."""
+    if purpose == "image_analysis":
+        in_price = settings.vlm_price_input_per_1m
+        out_price = settings.vlm_price_output_per_1m
+    else:
+        in_price = settings.llm_price_input_per_1m
+        out_price = settings.llm_price_output_per_1m
+    if in_price is None or out_price is None:
+        return None
+    incoming = tokens.get("input")
+    outgoing = tokens.get("output")
+    if incoming is None or outgoing is None:
+        return None
+    return incoming / 1_000_000 * in_price + outgoing / 1_000_000 * out_price
 
 
 @lru_cache
@@ -91,4 +129,8 @@ def get_settings() -> Settings:
         llm_model=model,
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         llm_judge_model=LLM_JUDGE_MODEL,
+        llm_price_input_per_1m=_optional_price("LLM_PRICE_INPUT_PER_1M"),
+        llm_price_output_per_1m=_optional_price("LLM_PRICE_OUTPUT_PER_1M"),
+        vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
+        vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
     )

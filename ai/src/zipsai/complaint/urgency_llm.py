@@ -261,6 +261,7 @@ def assess_urgency(
             system_prompt=str(system_message.content),
             user_prompt=str(user_message.content),
             response_format=UrgencyEvidence,
+            purpose="urgency",
         )
     except (*_RECOVERABLE_LLM_ERRORS, ValidationError) as error:
         logger.exception(

@@ -84,11 +84,10 @@ class HttpEncoder:
                 return response.json()
             except httpx.HTTPError as exc:
                 if not _is_transient(exc):
-                    detail = ""
-                    if isinstance(exc, httpx.HTTPStatusError):
-                        detail = f" {exc.response.text[:500]}"
+                    # 응답 본문에는 입력 문장이 들어 있을 수 있어 상태만 남긴다.
                     raise EmbeddingError(
-                        f"Embedding request failed: {exc}{detail}"
+                        "Embedding request failed: "
+                        f"{type(exc).__name__} status={_status_code(exc)}"
                     ) from exc
                 last = exc
                 # 다음 시도가 성공하면 이 실패는 어디에도 남지 않는다.
