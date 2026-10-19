@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Literal
 
 import httpx
 
@@ -20,6 +21,7 @@ ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 5.0
 
 EncodeOutput = tuple[list[list[float]], list[dict[str, float]]]
+Priority = Literal["query", "index"]
 
 
 def _status_code(exc: httpx.HTTPError) -> int | None:
@@ -42,10 +44,12 @@ class HttpEncoder:
         retry_delay: float = RETRY_DELAY_SECONDS,
         attempts: int = ATTEMPTS,
         lock_wait_seconds: float | None = None,
+        priority: Priority = "index",
     ) -> None:
         self._retry_delay = retry_delay
         self._attempts = attempts
         self._lock_wait_seconds = lock_wait_seconds
+        self._priority = priority
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -73,6 +77,7 @@ class HttpEncoder:
                         "texts": texts,
                         "trace_id": trace_id,
                         "max_wait_seconds": self._lock_wait_seconds,
+                        "priority": self._priority,
                     },
                 )
                 response.raise_for_status()

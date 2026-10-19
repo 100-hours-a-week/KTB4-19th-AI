@@ -6,7 +6,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from embedding.api import embed as embed_api
 from embedding.api import health as health_api
 from embedding.api.embed import MAX_BATCH_SIZE, MAX_TEXT_CHARS
-from embedding.encoder import ModelBusyError
+from embedding.encoder import EncodeResult, ModelBusyError
 from embedding.main import app
 
 
@@ -16,15 +16,26 @@ class FakeEncoder:
         self.busy = busy
         self.calls: list[list[str]] = []
         self.max_waits: list[float | None] = []
+        self.priorities: list[str] = []
 
     def encode(
-        self, texts: list[str], max_wait: float | None = None
-    ) -> tuple[list[list[float]], list[dict[str, float]]]:
+        self,
+        texts: list[str],
+        max_wait: float | None = None,
+        priority: str = "index",
+    ) -> EncodeResult:
         self.calls.append(texts)
         self.max_waits.append(max_wait)
+        self.priorities.append(priority)
         if self.busy:
             raise ModelBusyError("busy")
-        return [[0.1, 0.2] for _ in texts], [{"7": 0.5} for _ in texts]
+        return EncodeResult(
+            dense=[[0.1, 0.2] for _ in texts],
+            sparse=[{"7": 0.5} for _ in texts],
+            queue_wait_ms=12.4,
+            infer_ms=34.6,
+            queue_len=3,
+        )
 
 
 @pytest.fixture
@@ -143,6 +154,62 @@ def test_embed_passes_max_wait_seconds_to_the_encoder(
 
     assert response.status_code == 200
     assert encoder.max_waits == [3.5]
+
+
+def test_embed_without_priority_is_treated_as_index(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"], "trace_id": "trace-001", "max_wait_seconds": 3.5},
+    )
+
+    assert response.status_code == 200
+    assert encoder.priorities == ["index"]
+    assert encoder.max_waits == [3.5]
+
+
+@pytest.mark.parametrize("priority", ["query", "index"])
+def test_embed_passes_priority_to_the_encoder(
+    client: TestClient, encoder: FakeEncoder, priority: str
+) -> None:
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"], "trace_id": "trace-001", "priority": priority},
+    )
+
+    assert response.status_code == 200
+    assert encoder.priorities == [priority]
+
+
+def test_embed_rejects_an_unknown_priority(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    response = client.post(
+        "/embed",
+        json={"texts": ["청크"], "trace_id": "trace-001", "priority": "urgent"},
+    )
+
+    assert response.status_code == 422
+    assert encoder.calls == []
+
+
+def test_embed_done_log_carries_queue_and_inference_timings(
+    client: TestClient, encoder: FakeEncoder, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("INFO", logger=embed_api.logger.name):
+        client.post(
+            "/embed",
+            json={"texts": ["청크"], "trace_id": "trace-001", "priority": "query"},
+        )
+
+    done = [r.getMessage() for r in caplog.records if "embed done" in r.getMessage()]
+    assert done == [
+        (
+            "embed done trace_id=trace-001 texts=1 priority=query "
+            "queue_wait_ms=12 infer_ms=35 queue_len=3"
+        )
+    ]
 
 
 def test_embed_reports_busy_when_the_lock_is_not_acquired_in_time(

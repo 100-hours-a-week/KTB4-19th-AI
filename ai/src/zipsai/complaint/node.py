@@ -16,6 +16,7 @@ from zipsai.complaint.prompts import (
     TURN_REPLY_PROMPT,
     TURN_SYMPTOM_PROMPT,
 )
+from zipsai.complaint.urgency_llm import UrgencyResult, assess_urgency
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
@@ -341,8 +342,13 @@ def _ready_for_card(
     representative_id = _representative_attachment_id(
         request, draft, image_analysis
     )
+    urgency = _assess_urgency_with_stage(draft, image_analysis)
     response_draft = CompletedComplaintDraft(
-        **draft.model_dump(), representative_attachment_id=representative_id
+        **draft.model_dump(),
+        representative_attachment_id=representative_id,
+        urgency_score=urgency.score,
+        is_urgent=urgency.is_urgent,
+        urgency_version=urgency.urgency_version,
     )
     return _ComplaintTurn(
         result=RouteResult(
@@ -450,6 +456,20 @@ def _interpret_with_stage(
             contextualized_message=contextualized_message,
             usage_sink=step,
         )
+
+
+def _assess_urgency_with_stage(
+    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+) -> UrgencyResult:
+    """Phase 0 — 내부 로그 전용. assess_urgency가 실패를 null로 흡수하므로 여기선
+    성공/실패를 가리지 않고 항상 결과를 기록한다."""
+    with stage("urgency_assessment", logger) as step:
+        result = assess_urgency(draft, image_analysis)
+        step["urgency_score"] = result.score
+        step["is_urgent"] = result.is_urgent
+        step["urgency_version"] = result.urgency_version
+        step["urgency_dimensions"] = result.dimensions
+        return result
 
 
 def _gather_turn_evidence(
