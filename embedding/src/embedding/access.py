@@ -10,9 +10,15 @@ _QUIET_PATHS = frozenset({"/health", "/metrics"})
 
 
 class AccessLogMiddleware:
-    def __init__(self, app: Any, record_http: Any | None = None) -> None:
+    def __init__(
+        self,
+        app: Any,
+        record_http: Any | None = None,
+        start_http: Any | None = None,
+    ) -> None:
         self.app = app
         self._record_http = record_http
+        self._start_http = start_http
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -25,6 +31,8 @@ class AccessLogMiddleware:
 
         started = time.perf_counter()
         status = 500
+        if self._start_http is not None:
+            self._start_http()
 
         async def send_wrapper(message: dict) -> None:
             nonlocal status

@@ -2,6 +2,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from embedding.access import AccessLogMiddleware
 from embedding.api.embed import _tracing_client
@@ -9,6 +11,7 @@ from embedding.api.embed import router as embed_router
 from embedding.api.health import router as health_router
 from embedding.encoder import encoder
 from embedding.logging import configure_logging
+from embedding.metrics import finish_http, metrics_payload, start_http
 
 configure_logging()
 
@@ -31,6 +34,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="embedding", lifespan=lifespan)
-app.add_middleware(AccessLogMiddleware)
+app.add_middleware(
+    AccessLogMiddleware, record_http=finish_http, start_http=start_http
+)
 app.include_router(health_router)
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(metrics_payload(), media_type=CONTENT_TYPE_LATEST)
+
+
 app.include_router(embed_router)

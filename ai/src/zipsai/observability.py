@@ -108,6 +108,17 @@ def current_stage() -> str | None:
     return _stage_name.get()
 
 
+def _observe_stage(
+    name: str,
+    outcome: str,
+    duration_seconds: float,
+    error_code: str | None = None,
+) -> None:
+    from zipsai.metrics import observe_stage
+
+    observe_stage(name, outcome, duration_seconds, error_code)
+
+
 def _scrub_url(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.hostname
@@ -329,13 +340,14 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
                 if trace is not None:
                     trace.update(output={"outcome": "ok"})
     except Exception as error:
+        code = error_code(error)
         logger.exception(
             "stage_done",
             extra={
                 "stage": name,
                 "duration_ms": _record(name, started),
                 "outcome": "fail",
-                "error_code": error_code(error),
+                "error_code": code,
                 "error_type": type(error).__name__,
                 "error": str(error),
                 **extra,
@@ -343,9 +355,12 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
         )
         # 작업 전체 요약 한 줄에 어느 단계에서 죽었는지를 담기 위해 올려 보낸다.
         error.stage = name
+        _observe_stage(name, "fail", _record(name, started) / 1000, code)
         raise
     finally:
         _stage_name.reset(stage_token)
+    duration_ms = _record(name, started)
+    _observe_stage(name, "ok", duration_ms / 1000)
     logger.info(
         "stage_done",
         extra={
@@ -366,6 +381,7 @@ def skipped(
     줄이 없으면 "느려서 안 찍힌 건지 건너뛴 건지" 구분할 수 없다. 이유는 기본값을
     두지 않는다. 기본값이 있으면 이유 없는 skipped 줄이 조용히 늘어난다.
     """
+    _observe_stage(name, "skipped", 0)
     logger.info(
         "stage_done",
         extra={
