@@ -203,13 +203,15 @@ def test_embed_done_log_carries_queue_and_inference_timings(
             json={"texts": ["청크"], "trace_id": "trace-001", "priority": "query"},
         )
 
-    done = [r.getMessage() for r in caplog.records if "embed done" in r.getMessage()]
-    assert done == [
-        (
-            "embed done trace_id=trace-001 texts=1 priority=query "
-            "queue_wait_ms=12 infer_ms=35 queue_len=3"
-        )
-    ]
+    done = [record for record in caplog.records if record.getMessage() == "embed_done"]
+    assert len(done) == 1
+    assert done[0].trace_id == "trace-001"
+    assert done[0].texts == 1
+    assert done[0].priority == "query"
+    assert done[0].queue_wait_ms == 12.4
+    assert done[0].infer_ms == 34.6
+    assert done[0].queue_len == 3
+    assert "청크" not in done[0].getMessage()
 
 
 def test_embed_reports_busy_when_the_lock_is_not_acquired_in_time(

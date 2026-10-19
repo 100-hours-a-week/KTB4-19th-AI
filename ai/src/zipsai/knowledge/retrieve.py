@@ -13,6 +13,7 @@ from zipsai.integrations.qdrant import (
     resident_visible_filter,
     to_sparse_vector,
 )
+from zipsai.metrics import observe_gate
 from zipsai.observability import skipped, stage
 from zipsai.settings import QDRANT_COLLECTION
 
@@ -47,8 +48,9 @@ def query_encoder() -> HttpEncoder:
 
 def encode_question(question: str, *, encoder: Encoder, trace_id: str) -> QueryVector:
     """질문 하나를 색인과 같은 bge-m3로 dense·sparse 벡터로 만든다."""
-    with stage("encode", logger, question_len=len(question)):
+    with stage("encode", logger, question_len=len(question)) as step:
         dense, sparse = encoder.encode([question], trace_id)
+        step["embedding_status"] = "ok"
     return dense[0], sparse[0]
 
 
@@ -90,6 +92,7 @@ def search_chunks(
         passed = top_score is not None and top_score >= SCORE_THRESHOLD
         step["top_score"] = round(top_score, 4) if top_score is not None else None
         step["passed"] = passed
+        observe_gate(passed)
 
     if not passed:
         skipped("hybrid", logger, skip_reason="gate_blocked")
@@ -119,5 +122,14 @@ def search_chunks(
         ).points
         step["hits"] = len(hits)
         step["distinct_docs"] = len({(hit.payload or {}).get("doc_id") for hit in hits})
+        scores = [hit.score for hit in hits if hit.score is not None]
+        step["score_min"] = round(min(scores), 4) if scores else None
+        step["score_max"] = round(max(scores), 4) if scores else None
+        step["doc_ids"] = [(hit.payload or {}).get("doc_id") for hit in hits[:5]]
+        step["scores"] = [
+            round(hit.score, 4) if hit.score is not None else None for hit in hits[:5]
+        ]
+        step["building_filter_applied"] = True
+        step["invalid_doc_hits"] = None
 
     return hits
