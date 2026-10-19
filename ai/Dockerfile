@@ -23,12 +23,12 @@ COPY ai/scripts ./scripts
 RUN uv sync --frozen --no-dev
 
 FROM base
-ARG ZIPSAI_VERSION=unknown
-ENV ZIPSAI_VERSION=$ZIPSAI_VERSION
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
 RUN groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /app /app
+ARG ZIPSAI_VERSION=unknown
+ENV ZIPSAI_VERSION=$ZIPSAI_VERSION
 USER app
 EXPOSE 8000
 ENTRYPOINT ["uvicorn", "zipsai.main:app", "--host", "0.0.0.0", "--port", "8000"]
