@@ -21,6 +21,7 @@ from zipsai.contracts.sync_response import CommentResult, SyncBody
 from zipsai.indexing.admission import Rejected, acquire, in_flight, release
 from zipsai.indexing.comment import delete_comments, upsert_comments
 from zipsai.indexing.reasons import retryable_for
+from zipsai.metrics import record_indexing_result
 from zipsai.observability import bind, elapsed_ms, stage
 from zipsai.settings import LOCATION_PLACEHOLDER
 
@@ -96,6 +97,11 @@ def _handle(kind: Kind, payload: CommentBatch) -> JSONResponse:
                 slots, comment_results, durations, strict=True
             ):
                 _log_item(kind, payload.trace_id, job_id, slot, result, duration)
+            metric_kind = "comment_upsert" if kind == "upsert" else "comment_delete"
+            for item in comment_results:
+                record_indexing_result(
+                    metric_kind, item.status.value, item.reason_code
+                )
             logger.info(
                 "comment_done",
                 extra={

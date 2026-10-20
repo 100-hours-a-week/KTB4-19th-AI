@@ -350,6 +350,30 @@ def test_validation_failure_logs_field_names_only(scheduled, caplog):
     assert accepted.complaint_detail_ids == "9004"
 
 
+def test_comment_results_are_counted(scheduled):
+    from zipsai.metrics import INDEXING_RESULTS
+
+    def count(kind: str, status: str, reason: str) -> float:
+        return INDEXING_RESULTS.labels(
+            kind=kind, status=status, reason_code=reason
+        )._value.get()
+
+    before_ok = count("comment_upsert", "succeeded", "none")
+    before_skip = count("comment_upsert", "skipped", "VALIDATION_FAILED")
+    before_delete = count("comment_delete", "succeeded", "none")
+    bad = _item(complaint_detail_id=9004, complaint_type="OTHER")
+
+    post(f"{COMMENT_API_PREFIX}/comment", _request(_item(), bad))
+    post(
+        f"{COMMENT_API_PREFIX}/comment/delete",
+        {"trace_id": "t", "items": [_delete_item()]},
+    )
+
+    assert count("comment_upsert", "succeeded", "none") == before_ok + 1
+    assert count("comment_upsert", "skipped", "VALIDATION_FAILED") == before_skip + 1
+    assert count("comment_delete", "succeeded", "none") == before_delete + 1
+
+
 def test_422_omits_invalid_items_for_batch_level_error(scheduled):
     status, body = post(f"{COMMENT_API_PREFIX}/comment", {"items": [_item()]})
 

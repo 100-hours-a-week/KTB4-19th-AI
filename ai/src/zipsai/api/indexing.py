@@ -12,13 +12,20 @@ from qdrant_client import QdrantClient
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.contracts.notification import ResultStatus
 from zipsai.contracts.sync_response import DocumentResult, SyncBody
-from zipsai.indexing.admission import Rejected, acquire, document_key, release
+from zipsai.indexing.admission import (
+    Rejected,
+    acquire,
+    document_key,
+    in_flight,
+    release,
+)
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.reasons import retryable_for
 from zipsai.indexing.upsert import delete_missing_documents
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
 from zipsai.integrations.s3 import download
+from zipsai.metrics import record_indexing_result
 from zipsai.observability import bind, elapsed_ms, stage
 from zipsai.tracing import trace_job
 
@@ -216,7 +223,9 @@ def _job_fields(
 @router.post("/jobs", response_class=JSONResponse)
 def create_job(payload: IndexingJobRequest) -> JSONResponse:
     # 색인 계약에는 turn_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
+    started = perf_counter()
     job_id = str(uuid4())
+    file_key_path, file_key_ext = _file_key_parts(payload.file_key)
     logger.info(
         "job_accepted",
         extra={
@@ -228,24 +237,92 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
             "reconcile_count": len(payload.valid_doc_ids)
             if payload.valid_doc_ids
             else 0,
+            "doc_title": payload.title,
+            "file_key_path": file_key_path,
+            "file_key_ext": file_key_ext,
+            "valid_doc_ids": None
+            if payload.valid_doc_ids is None
+            else ",".join(payload.valid_doc_ids),
+            "valid_doc_count": None
+            if payload.valid_doc_ids is None
+            else len(payload.valid_doc_ids),
         },
     )
     key = document_key(payload)
     try:
         acquire(key)
     except Rejected as rejected:
-        return _rejected(payload.trace_id, rejected)
+        return _rejected(payload, rejected)
     try:
         outcome = _run_job(payload, job_id)
     finally:
         release(key)
+    _log_index_result(payload, job_id, outcome, started)
+    for item in outcome.results:
+        record_indexing_result(item.kind, item.status.value, item.reason_code)
     body = SyncBody(trace_id=payload.trace_id, results=outcome.results).to_body()
     return JSONResponse(status_code=200, content=body)
 
 
-def _rejected(trace_id: str, rejected: Rejected) -> JSONResponse:
+def _file_key_parts(file_key: str | None) -> tuple[str | None, str | None]:
+    if not file_key:
+        return None, None
+    path = file_key.split("?", 1)[0]
+    name = path.rsplit("/", 1)[-1]
+    if "." not in name:
+        return path, None
+    suffix = name.rsplit(".", 1)[-1]
+    return path, suffix or None
+
+
+def _log_index_result(
+    payload: IndexingJobRequest, job_id: str, outcome: JobOutcome, started: float
+) -> None:
+    index = next((item for item in outcome.results if item.kind == "document_index"), None)
+    cleanup = next(
+        (item for item in outcome.results if item.kind == "document_cleanup"), None
+    )
+    logger.info(
+        "index_result",
+        extra={
+            "trace_id": payload.trace_id,
+            "job_id": job_id,
+            "doc_id": payload.doc_id,
+            "building_id": payload.building_id,
+            "http_status": 200,
+            "index_status": None if index is None else index.status.value,
+            "index_reason": None if index is None else index.reason_code,
+            "index_retryable": None if index is None else index.retryable,
+            "cleanup_status": None if cleanup is None else cleanup.status.value,
+            "cleanup_reason": None if cleanup is None else cleanup.reason_code,
+            "cleanup_retryable": None if cleanup is None else cleanup.retryable,
+            "total_ms": elapsed_ms(started),
+            "pages": outcome.pages,
+            "chunks": outcome.chunks,
+            "points": outcome.points,
+            "reconcile_count": None
+            if payload.valid_doc_ids is None
+            else len(payload.valid_doc_ids),
+        },
+    )
+
+
+def _rejected(payload: IndexingJobRequest, rejected: Rejected) -> JSONResponse:
+    logger.info(
+        "indexing_rejected",
+        extra={
+            "trace_id": payload.trace_id,
+            "route": "jobs",
+            "error_code": rejected.error_code,
+            "doc_id": payload.doc_id,
+            "building_id": payload.building_id,
+            "items": None,
+            "indexing_in_flight": in_flight(),
+            "retry_after_s": rejected.retry_after,
+        },
+    )
     return JSONResponse(
         status_code=rejected.status_code,
-        content={"trace_id": trace_id, "error_code": rejected.error_code},
+        content={"trace_id": payload.trace_id, "error_code": rejected.error_code},
         headers={"Retry-After": str(rejected.retry_after)},
     )

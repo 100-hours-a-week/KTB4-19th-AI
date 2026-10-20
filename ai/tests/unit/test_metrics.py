@@ -21,6 +21,7 @@ _NAMES = (
     "zipsai_fallbacks_total",
     "zipsai_complaint_ask_repeats_total",
     "zipsai_index_jobs_total",
+    "zipsai_indexing_results_total",
     "zipsai_parse_tables_total",
 )
 

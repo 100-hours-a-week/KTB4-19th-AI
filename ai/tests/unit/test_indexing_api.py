@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import threading
 
 import pytest
@@ -10,6 +11,7 @@ from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.indexing import admission
 from zipsai.indexing.admission import reset as reset_admission
 from zipsai.main import app
+from zipsai.metrics import INDEXING_RESULTS
 
 # 자동 fixture가 대체하기 전의 원본. 실제 실행 경로를 보는 테스트가 쓴다.
 REAL_RUN_JOB = indexing._run_job
@@ -269,6 +271,64 @@ def _install_pipeline(
     monkeypatch.setattr(indexing, "delete_missing_documents", cleanup)
 
 
+def _result_count(kind: str, status: str, reason: str) -> float:
+    return INDEXING_RESULTS.labels(
+        kind=kind, status=status, reason_code=reason
+    )._value.get()
+
+
+def test_job_accepted_strips_the_file_key_query(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    payload = valid_payload() | {
+        "title": "물탱크 청소 안내",
+        "file_key": "s3://zipsai-files/buildings/101/notice-001.PDF?X-Amz-Signature=abc",
+        "valid_doc_ids": ["notice-001", "rule-2"],
+    }
+
+    post("/api/v3/ai/indexing/jobs", payload)
+
+    accepted = next(
+        record for record in caplog.records if record.getMessage() == "job_accepted"
+    )
+    assert accepted.doc_title == "물탱크 청소 안내"
+    assert not hasattr(accepted, "title")
+    assert accepted.file_key_path == "s3://zipsai-files/buildings/101/notice-001.PDF"
+    assert accepted.file_key_ext == "PDF"
+    assert "Signature" not in accepted.file_key_path
+    assert accepted.valid_doc_ids == "notice-001,rule-2"
+    assert accepted.valid_doc_count == 2
+
+
+def test_missing_list_and_extension_are_null(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    payload = valid_payload() | {"file_key": "buildings/101/notice"}
+
+    post("/api/v3/ai/indexing/jobs", payload)
+
+    accepted = next(
+        record for record in caplog.records if record.getMessage() == "job_accepted"
+    )
+    assert accepted.file_key_ext is None
+    assert accepted.valid_doc_ids is None
+    assert accepted.valid_doc_count is None
+    assert accepted.reconcile_count == 0
+
+
+def test_empty_valid_doc_ids_log_as_an_empty_string(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    payload = valid_payload() | {"valid_doc_ids": []}
+
+    post("/api/v3/ai/indexing/jobs", payload)
+
+    accepted = next(
+        record for record in caplog.records if record.getMessage() == "job_accepted"
+    )
+    assert accepted.valid_doc_ids == ""
+    assert accepted.valid_doc_count == 0
+
+
 def test_success_returns_index_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_pipeline(monkeypatch)
     payload = valid_payload() | {"valid_doc_ids": ["notice-001"]}
@@ -284,6 +344,34 @@ def test_success_returns_index_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> N
     assert results[0]["retryable"] is False
     assert results[1]["kind"] == "document_cleanup"
     assert "doc_id" not in results[1]
+
+
+def test_index_result_logs_both_sides(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    _install_pipeline(monkeypatch)
+    before = _result_count("document_index", "succeeded", "none")
+    payload = valid_payload() | {"valid_doc_ids": ["notice-001"]}
+
+    post("/api/v3/ai/indexing/jobs", payload)
+
+    line = next(
+        record for record in caplog.records if record.getMessage() == "index_result"
+    )
+    assert line.http_status == 200
+    assert line.index_status == "succeeded"
+    assert line.index_reason is None
+    assert line.index_retryable is False
+    assert line.cleanup_status == "succeeded"
+    assert line.cleanup_reason is None
+    assert line.pages == 2
+    assert line.chunks == 3
+    assert line.points == 3
+    assert line.reconcile_count == 1
+    assert not hasattr(line, "doc_title")
+    assert "Water tank" not in str(line.__dict__)
+    assert _result_count("document_index", "succeeded", "none") == before + 1
 
 
 def test_parse_failure_skips_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,6 +395,38 @@ def test_parse_failure_skips_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
+def test_index_result_logs_a_parse_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    _install_pipeline(
+        monkeypatch, index_status=JobStatus.FAILED, reasons=("PARSE_FAILED",)
+    )
+
+    post("/api/v3/ai/indexing/jobs", valid_payload() | {"valid_doc_ids": ["notice-001"]})
+
+    line = next(
+        record for record in caplog.records if record.getMessage() == "index_result"
+    )
+    assert line.index_status == "failed"
+    assert line.index_reason == "PARSE_FAILED"
+    assert line.index_retryable is False
+    assert line.cleanup_status == "skipped"
+    assert line.cleanup_reason == "INDEX_FAILED"
+    assert line.cleanup_retryable is False
+
+
+def test_unknown_reason_is_counted_as_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_pipeline(
+        monkeypatch, index_status=JobStatus.FAILED, reasons=("NOT_A_REAL_CODE",)
+    )
+    before = _result_count("document_index", "failed", "other")
+
+    post("/api/v3/ai/indexing/jobs", valid_payload())
+
+    assert _result_count("document_index", "failed", "other") == before + 1
+
+
 def test_setup_failure_fails_index_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     def broken() -> tuple[object, object]:
         raise RuntimeError("qdrant unreachable")
@@ -325,7 +445,10 @@ def test_setup_failure_fails_index_and_cleanup(monkeypatch: pytest.MonkeyPatch) 
     ]
 
 
-def test_cleanup_only_returns_one_result(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_only_returns_one_result(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
     _install_pipeline(monkeypatch)
 
     status_code, body = post(
@@ -347,6 +470,14 @@ def test_cleanup_only_returns_one_result(monkeypatch: pytest.MonkeyPatch) -> Non
             "retryable": False,
         }
     ]
+    line = next(
+        record for record in caplog.records if record.getMessage() == "index_result"
+    )
+    assert line.index_status is None
+    assert line.index_reason is None
+    assert line.index_retryable is None
+    assert line.cleanup_status == "succeeded"
+    assert line.doc_id is None
 
 
 def _hold_job(monkeypatch: pytest.MonkeyPatch):
@@ -366,8 +497,9 @@ def _hold_job(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_same_doc_id_returns_429_until_the_job_finishes(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
     started, let_go = _hold_job(monkeypatch)
     holder = threading.Thread(
         target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
@@ -380,6 +512,18 @@ def test_same_doc_id_returns_429_until_the_job_finishes(
     assert status_code == 429
     assert post.headers["retry-after"] == "30"
     assert json.loads(body) == {"trace_id": "trace-001", "error_code": "IN_PROGRESS"}
+    rejected = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "indexing_rejected"
+    )
+    assert rejected.route == "jobs"
+    assert rejected.error_code == "IN_PROGRESS"
+    assert rejected.doc_id == "notice-001"
+    assert rejected.building_id == 101
+    assert rejected.items is None
+    assert rejected.indexing_in_flight == 1
+    assert rejected.retry_after_s == 30
     let_go.set()
     holder.join(2)
     status_code, _ = post("/api/v3/ai/indexing/jobs", valid_payload())
@@ -421,7 +565,10 @@ def test_exception_releases_the_document_lock(monkeypatch: pytest.MonkeyPatch) -
         assert status_code != 429
 
 
-def test_over_capacity_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_over_capacity_returns_503(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
     monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
     reset_admission()
     started, let_go = _hold_job(monkeypatch)
@@ -439,6 +586,15 @@ def test_over_capacity_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
     assert post.headers["retry-after"] == "10"
     assert json.loads(body) == {"trace_id": "trace-002", "error_code": "BUSY"}
     assert admission.in_flight() == 1
+    rejected = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "indexing_rejected"
+    )
+    assert rejected.error_code == "BUSY"
+    assert rejected.doc_id == "notice-002"
+    assert rejected.indexing_in_flight == 1
+    assert rejected.retry_after_s == 10
     let_go.set()
     holder.join(2)
     assert admission.in_flight() == 0
