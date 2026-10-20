@@ -45,6 +45,7 @@ def run_indexing_job(
     encoder: Encoder,
     client: QdrantClient,
     on_fail: Callable[[str], None] | None = None,
+    on_stats: Callable[[int | None, int | None, int | None], None] | None = None,
 ) -> JobStatus:
     doc_id = request.doc_id
     # 첫 작업은 docling이 OCR·레이아웃 모델을 올리느라 수십 초가 더 걸린다.
@@ -150,6 +151,8 @@ def run_indexing_job(
                     if isinstance(error, EmptyDocumentError)
                     else _STAGE_REASON.get(failed_stage, "INDEX_FAILED")
                 )
+            if on_stats is not None:
+                on_stats(page_count, chunk_count, point_count)
             return JobStatus.FAILED
 
         logger.info(
@@ -168,4 +171,6 @@ def run_indexing_job(
             },
         )
     observe_index_job("ok", None)
+    if on_stats is not None:
+        on_stats(page_count, chunk_count, point_count)
     return JobStatus.SUCCEEDED

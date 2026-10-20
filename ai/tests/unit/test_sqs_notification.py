@@ -72,19 +72,17 @@ def _run_document_job(monkeypatch, payload, *, index_status, reasons=()):
     from zipsai.api import indexing
     from zipsai.contracts.indexing import IndexingJobRequest
 
-    sent = []
     monkeypatch.setattr(indexing, "_dependencies", lambda: (object(), object()))
-    monkeypatch.setattr(indexing, "send_notification", sent.append)
 
-    def fake_run(request, *, on_fail, **_kwargs):
+    def fake_run(request, *, on_fail, on_stats=None, **_kwargs):
         for reason in reasons:
             on_fail(reason)
         return index_status
 
     monkeypatch.setattr(indexing, "run_indexing_job", fake_run)
     monkeypatch.setattr(indexing, "delete_missing_documents", lambda *a: None)
-    indexing._run_job(IndexingJobRequest.model_validate(payload), "job")
-    return [n.to_message() for n in sent]
+    outcome = indexing._run_job(IndexingJobRequest.model_validate(payload), "job")
+    return [item.to_dict() for item in outcome.results]
 
 
 DOC = {
@@ -97,27 +95,28 @@ DOC = {
 }
 
 
-def test_document_success_sends_index_and_cleanup(monkeypatch):
+def test_document_success_returns_index_and_cleanup(monkeypatch):
     from zipsai.contracts.indexing import JobStatus
 
-    sent = _run_document_job(monkeypatch, DOC, index_status=JobStatus.SUCCEEDED)
+    results = _run_document_job(monkeypatch, DOC, index_status=JobStatus.SUCCEEDED)
 
-    assert [m["kind"] for m in sent] == ["document_index", "document_cleanup"]
-    assert sent[0]["results"] == [
-        {"status": "succeeded", "reason_code": None, "doc_id": "notice-1"}
-    ]
-    assert sent[1]["results"] == [{"status": "succeeded", "reason_code": None}]
+    assert [item["kind"] for item in results] == ["document_index", "document_cleanup"]
+    assert results[0]["reason_code"] is None
+    assert results[0]["doc_id"] == "notice-1"
+    assert "doc_id" not in results[1]
 
 
 def test_index_failure_skips_cleanup(monkeypatch):
     from zipsai.contracts.indexing import JobStatus
 
-    sent = _run_document_job(
+    results = _run_document_job(
         monkeypatch, DOC, index_status=JobStatus.FAILED, reasons=["PARSE_FAILED"]
     )
 
-    assert sent[0]["results"][0]["reason_code"] == "PARSE_FAILED"
-    assert sent[1]["results"] == [{"status": "skipped", "reason_code": "INDEX_FAILED"}]
+    assert results[0]["reason_code"] == "PARSE_FAILED"
+    assert results[0]["retryable"] is False
+    assert results[1]["status"] == "skipped"
+    assert results[1]["reason_code"] == "INDEX_FAILED"
 
 
 def test_missing_queue_is_logged_as_a_warning(monkeypatch, caplog):
