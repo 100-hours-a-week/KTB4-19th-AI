@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -7,9 +8,14 @@ from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
 
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
+# 댓글 API는 v2기능이기 때문에 v2로 생성한다. 기존 문서 색인(v3)와 달라 따로 명시한다.
 API_PREFIX: Final = "/api/v3/ai/indexing"
+COMMENT_API_PREFIX: Final = "/api/v2/ai/indexing"
+
 EMBEDDING_DIM: Final = 1024
 # 로컬 바닐라 JS 테스트 페이지가 API를 호출할 수 있도록 기본값을 둔다.
 # 운영에서는 CORS_ORIGINS 환경 변수에 실제 프론트 origin을 쉼표로 지정한다.
@@ -30,6 +36,12 @@ EMBEDDING_API_URL: Final = os.getenv("EMBEDDING_API_URL", "http://embedding:8000
 AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
 # 인증을 켜지 않은 Qdrant에는 키가 없다. 필수로 두면 로컬과 테스트가 기동하지 못한다.
 QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
+# 마스킹 뒤 답변이 10자보다 짧으면 "처리 완료"같은 의미 없는 답으로 보고 색인하지 않는다.
+COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
+# 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
+LOCATION_PLACEHOLDER: Final = "미상"
+# 처리 결과를 BE에 알리는 SQS 큐. 비어 있으면 통지를 보내지 않는다.
+NOTIFICATION_QUEUE_URL: Final = os.getenv("NOTIFICATION_QUEUE_URL") or None
 
 # LLM_MODEL과 달리 없어도 기동은 된다. 민원 이미지 분석만 이 값을 쓴다.
 # compose가 빈 문자열로 넘길 수 있다. getenv의 기본값은 "키가 아예 없을 때"만
@@ -45,6 +57,18 @@ ALLOW_DATA_URL_IMAGES: Final = (
 )
 
 REQUIRED_SETTINGS: Final = ("QDRANT_URL", "S3_BUCKET")
+
+
+def _optional_price(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        # LogRecord.name은 로거 이름이라 설정 이름은 setting에 둔다. 값은 남기지 않는다.
+        logger.warning("invalid_price_setting", extra={"setting": name})
+        return None
 
 
 def missing_required_settings() -> list[str]:
@@ -63,6 +87,29 @@ class Settings:
     llm_timeout_seconds: float
     llm_judge_model: str | None = None
     vlm_model: str = VLM_MODEL
+    llm_price_input_per_1m: float | None = None
+    llm_price_output_per_1m: float | None = None
+    vlm_price_input_per_1m: float | None = None
+    vlm_price_output_per_1m: float | None = None
+
+
+def call_cost_usd(
+    settings: Settings, purpose: str, tokens: dict[str, int | None]
+) -> float | None:
+    """토큰 단가가 한 쌍으로 있을 때만 USD를 계산한다. 캐시 토큰은 빼지 않는다."""
+    if purpose == "image_analysis":
+        in_price = settings.vlm_price_input_per_1m
+        out_price = settings.vlm_price_output_per_1m
+    else:
+        in_price = settings.llm_price_input_per_1m
+        out_price = settings.llm_price_output_per_1m
+    if in_price is None or out_price is None:
+        return None
+    incoming = tokens.get("input")
+    outgoing = tokens.get("output")
+    if incoming is None or outgoing is None:
+        return None
+    return incoming / 1_000_000 * in_price + outgoing / 1_000_000 * out_price
 
 
 @lru_cache
@@ -82,4 +129,8 @@ def get_settings() -> Settings:
         llm_model=model,
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         llm_judge_model=LLM_JUDGE_MODEL,
+        llm_price_input_per_1m=_optional_price("LLM_PRICE_INPUT_PER_1M"),
+        llm_price_output_per_1m=_optional_price("LLM_PRICE_OUTPUT_PER_1M"),
+        vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
+        vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
     )

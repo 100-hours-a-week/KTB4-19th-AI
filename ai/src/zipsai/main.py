@@ -4,7 +4,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST
 
+from zipsai.access import AccessLogMiddleware
+from zipsai.api.comment import router as comment_router
 from zipsai.api.converse import router as converse_router
 from zipsai.api.error_responses import (
     request_validation_error_handler,
@@ -12,8 +16,14 @@ from zipsai.api.error_responses import (
 )
 from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
+from zipsai.metrics import finish_http, metrics_payload, start_http
 from zipsai.observability import configure_logging
-from zipsai.settings import API_PREFIX, CORS_ORIGINS, missing_required_settings
+from zipsai.settings import (
+    API_PREFIX,
+    COMMENT_API_PREFIX,
+    CORS_ORIGINS,
+    missing_required_settings,
+)
 from zipsai.tracing import get_tracing_client
 
 configure_logging()
@@ -39,8 +49,19 @@ app.add_middleware(
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+app.add_middleware(
+    AccessLogMiddleware, record_http=finish_http, start_http=start_http
+)
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(metrics_payload(), media_type=CONTENT_TYPE_LATEST)
+
+
 app.include_router(converse_router)
 app.include_router(health_router)
 app.include_router(indexing_router, prefix=API_PREFIX)
+app.include_router(comment_router, prefix=COMMENT_API_PREFIX)
 app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)

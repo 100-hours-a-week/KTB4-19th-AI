@@ -186,6 +186,7 @@ jobs:
           file: ai/Dockerfile
           push: true
           tags: ${{ env.ECR_REGISTRY }}/zipsai-ai-api:${{ steps.image-tag.outputs.value }}
+          build-args: ZIPSAI_VERSION=${{ steps.image-tag.outputs.value }}
           cache-from: type=gha,scope=ai-api
           cache-to: type=gha,mode=max,scope=ai-api
 
@@ -241,5 +242,6 @@ jobs:
           context: embedding
           push: true
           tags: ${{ env.ECR_REGISTRY }}/zipsai-embedding:${{ steps.image-tag.outputs.value }}
+          build-args: ZIPSAI_VERSION=${{ steps.image-tag.outputs.value }}
           cache-from: type=gha,scope=embedding
           cache-to: type=gha,mode=max,scope=embedding

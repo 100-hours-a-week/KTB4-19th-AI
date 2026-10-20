@@ -13,7 +13,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.integrations.llm import generate_text, generate_text_stream
-from zipsai.integrations.qdrant import get_client
+from zipsai.integrations.qdrant import COMMENT_SOURCE_TYPE, get_client
 from zipsai.knowledge.prompts import (
     IMAGE_QUESTION_PROMPT,
     KNOWLEDGE_PROMPT,
@@ -21,6 +21,7 @@ from zipsai.knowledge.prompts import (
     format_context,
 )
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
+from zipsai.metrics import observe_fallback
 from zipsai.observability import skipped, stage
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ def _prepare_knowledge(
             ).strip()
             search_question = rewritten or question
             step["question_chars"] = len(search_question)
+            step["rewritten"] = search_question != question
 
     def search(candidate: str) -> list[models.ScoredPoint]:
         return search_chunks(
@@ -228,6 +230,7 @@ def _prepare_knowledge(
             for rank, chunk in enumerate(chunks, start=1)
         ]
         step["context_chars"] = len(context)
+        step["chunks_used"] = len(chunks)
 
     return _KnowledgePreparation(
         question=question,
@@ -265,6 +268,7 @@ def _fallback(
         "fallback",
         extra={"reason": reason, "has_question": bool(qa_question)},
     )
+    observe_fallback(reason)
     return {
         "complaint_state": None,
         "reply": reply,
@@ -288,11 +292,30 @@ def _citations(chunks: list[models.ScoredPoint]) -> list[Citation]:
     for chunk in chunks:
         payload = chunk.payload or {}
         title = payload.get("title") or "제목 없음"
-        doc_id = payload.get("doc_id")
+        is_comment = payload.get("source_type") == COMMENT_SOURCE_TYPE
+        # 댓글에는 doc_id가 없고 모두 같은 제목이라, 제목으로 접으면 서로 다른 답변이 뭉개진다.
+        doc_id = (
+            str(payload["complaint_detail_id"])
+            if is_comment and "complaint_detail_id" in payload
+            else payload.get("doc_id")
+        )
         key = doc_id or title
         if key in seen:
             continue
         seen.add(key)
+        if is_comment:
+            # text 앞부분은 입주민이 쓴 질문이라 다른 입주민 화면에 내보내지 않는다.
+            snippet = (payload.get("answer") or "")[:SNIPPET_LENGTH]
+            citations.append(
+                Citation(
+                    source_type="qa_history",
+                    source_id=doc_id,
+                    title=title,
+                    snippet=snippet or None,
+                    url=None,
+                )
+            )
+            continue
         snippet = (payload.get("text") or "")[:SNIPPET_LENGTH]
         citations.append(
             Citation(

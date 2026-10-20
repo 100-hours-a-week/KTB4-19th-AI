@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -16,6 +17,7 @@ from zipsai.complaint.prompts import (
     TURN_REPLY_PROMPT,
     TURN_SYMPTOM_PROMPT,
 )
+from zipsai.complaint.urgency_llm import UrgencyResult, assess_urgency
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
@@ -39,6 +41,7 @@ from zipsai.errors import (
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_structured, generate_text_stream
 from zipsai.knowledge.retrieve import query_encoder
+from zipsai.metrics import observe_ask_repeat
 from zipsai.observability import elapsed_ms, skipped, stage
 
 logger = logging.getLogger(__name__)
@@ -110,8 +113,26 @@ def _interpret_turn(
             user_prompt=str(user_message.content),
             response_format=_InterpretationOutput,
             usage_sink=usage_sink,
+            purpose="complaint_interpretation",
+            attempt=attempt,
+            retry_reason=None if attempt == 1 else "empty_output",
         )
         if parsed is not None:
+            if usage_sink is not None:
+                issue = parsed.issue_type
+                usage_sink["complaint_switch"] = getattr(
+                    parsed.complaint_switch, "value", parsed.complaint_switch
+                )
+                usage_sink["issue_type"] = (
+                    getattr(issue, "value", issue) if issue else None
+                )
+                usage_sink["filled_fields"] = [
+                    name
+                    for name in ("issue_type", "location", "symptom", "occurred_at")
+                    if getattr(parsed, name, None)
+                ]
+                usage_sink["interpretation_attempts"] = attempt
+                usage_sink["parse_failed"] = False
             return _TurnInterpretation(
                 fields=ComplaintDraft(
                     issue_type=parsed.issue_type,
@@ -223,6 +244,11 @@ _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
     "symptom": "어떤 불편 증상인지 알려주세요.",
 }
+# 고정 문구는 LLM이 비었을 때만 나간다. 모델이 다듬은 질문도 같은 항목으로 센다.
+_ASK_FIELD_PATTERNS = {
+    "location": re.compile(r"어디|위치|장소|어느 (곳|방|공간)"),
+    "symptom": re.compile(r"증상|어떤 (문제|불편)|어떻게 (되|안)"),
+}
 
 
 @dataclass(frozen=True)
@@ -232,6 +258,7 @@ class _ComplaintTurn:
     complaint_state: ComplaintState | None
     asked: str | None
     reply_source: str
+    urgency_level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -341,8 +368,13 @@ def _ready_for_card(
     representative_id = _representative_attachment_id(
         request, draft, image_analysis
     )
+    urgency = _assess_urgency_with_stage(draft, image_analysis)
     response_draft = CompletedComplaintDraft(
-        **draft.model_dump(), representative_attachment_id=representative_id
+        **draft.model_dump(),
+        representative_attachment_id=representative_id,
+        urgency_score=urgency.score,
+        is_urgent=urgency.is_urgent,
+        urgency_version=urgency.urgency_version,
     )
     return _ComplaintTurn(
         result=RouteResult(
@@ -354,6 +386,7 @@ def _ready_for_card(
         complaint_state=None,
         asked=None,
         reply_source="complete",
+        urgency_level=getattr(urgency, "level", None),
     )
 
 
@@ -450,6 +483,20 @@ def _interpret_with_stage(
             contextualized_message=contextualized_message,
             usage_sink=step,
         )
+
+
+def _assess_urgency_with_stage(
+    draft: ComplaintDraft, image_analysis: ImageAnalysis | None
+) -> UrgencyResult:
+    """Phase 0 — 내부 로그 전용. assess_urgency가 실패를 null로 흡수하므로 여기선
+    성공/실패를 가리지 않고 항상 결과를 기록한다."""
+    with stage("urgency_assessment", logger) as step:
+        result = assess_urgency(draft, image_analysis)
+        step["urgency_score"] = result.score
+        step["is_urgent"] = result.is_urgent
+        step["urgency_version"] = result.urgency_version
+        step["urgency_dimensions"] = result.dimensions
+        return result
 
 
 def _gather_turn_evidence(
@@ -585,6 +632,7 @@ def _generate_turn_finalization(
                 user_prompt=str(messages[1].content),
                 response_format=_TurnFinalization,
                 usage_sink=step,
+                purpose="turn_finalization",
             )
     except (
         LlmRateLimitedError,
@@ -611,6 +659,7 @@ def _generate_turn_symptom(
             user_prompt=str(messages[1].content),
             response_format=_TurnSymptomOutput,
             usage_sink=step,
+            purpose="symptom_finalize",
         )
         return result.symptom.strip() if result and result.symptom else None
 
@@ -652,6 +701,7 @@ async def _stream_generated_reply(
             system_prompt=str(messages[0].content),
             user_prompt=str(messages[1].content),
             usage_sink=step,
+            purpose="turn_reply",
         ):
             parts.append(text)
             emit({"type": "delta", "field": "reply", "text": text})
@@ -725,6 +775,10 @@ def _log_complaint_turn(
 ) -> None:
     draft = turn.result.complaint_draft
     switch = progress.interpretation.switch
+    repeat = _previous_same_field_asks(request.conversation_history, turn.asked)
+    observations = (
+        turn.result.image_analysis.images if turn.result.image_analysis else []
+    )
     logger.info(
         "complaint_turn",
         extra={
@@ -732,16 +786,66 @@ def _log_complaint_turn(
             "total_ms": elapsed_ms(started_at),
             "switch": switch,
             "asked": turn.asked,
+            "asked_field": turn.asked,
+            "ask_repeat_count": repeat,
             "missing": turn.result.missing_fields,
+            "missing_fields": turn.result.missing_fields,
+            "draft_filled": _draft_filled(draft),
             "draft_changed": draft != request.complaint_draft,
             "location_unknown": draft.location == _UNKNOWN_LOCATION,
             "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
+            "urgency_level": turn.urgency_level,
+            "image_count": len(evidence.images),
+            "images_analyzed": len(observations),
+            "summary_chars": sum(len(image.summary or "") for image in observations),
+            "ocr_chars": sum(len(image.ocr_text or "") for image in observations),
             "photo": _photo_label(
                 evidence.images, turn.result.image_analysis, switch
             ),
         },
     )
+    if turn.asked and repeat >= 2:
+        logger.warning(
+            "complaint_ask_repeated",
+            extra={"asked_field": turn.asked, "ask_repeat_count": repeat},
+        )
+        observe_ask_repeat(turn.asked)
+
+
+def _same_field_ask(text: str, field: str) -> bool:
+    question = _MISSING_FIELD_REPLY.get(field, "")
+    if question and question in text:
+        return True
+    pattern = _ASK_FIELD_PATTERNS.get(field)
+    return bool(pattern and pattern.search(text))
+
+
+def _previous_same_field_asks(history: list, field: str | None) -> int:
+    """바로 앞에서 같은 항목을 물은 횟수. 이번 질문이 세 번째면 2다."""
+    if not field or field not in _ASK_FIELD_PATTERNS:
+        return 0
+    count = 0
+    for turn in reversed(history):
+        if turn.role == "user":
+            continue
+        if _same_field_ask(turn.text or "", field):
+            count += 1
+            continue
+        break
+    return count
+
+
+def _draft_filled(draft: ComplaintDraft) -> list[str]:
+    names: list[str] = []
+    for name in ("issue_type", "location", "symptom", "occurred_at"):
+        value = getattr(draft, name, None)
+        if not value:
+            continue
+        if name == "location" and value == _UNKNOWN_LOCATION:
+            continue
+        names.append(name)
+    return names
 
 
 def handle_complaint(

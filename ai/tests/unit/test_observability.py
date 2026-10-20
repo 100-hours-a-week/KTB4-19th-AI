@@ -3,6 +3,7 @@ import logging
 
 import pytest
 
+from zipsai import observability
 from zipsai.errors import LlmTimeoutError
 from zipsai.observability import (
     SERVICE_NAME,
@@ -21,6 +22,28 @@ logger = logging.getLogger("zipsai.test")
 
 def _records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == "zipsai.test"]
+
+
+def test_stage_records_the_duration_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    calls: list[str] = []
+
+    def _once(name: str, started: float) -> int:
+        calls.append(name)
+        return 12
+
+    monkeypatch.setattr(observability, "_record", _once)
+
+    with caplog.at_level(logging.INFO), stage("gate", logger):
+        pass
+    with pytest.raises(RuntimeError), stage("parse", logger):
+        raise RuntimeError("boom")
+
+    assert calls == ["gate", "parse"]
+    recorded = _records(caplog)
+    assert [record.duration_ms for record in recorded] == [12, 12]
+    assert [record.outcome for record in recorded] == ["ok", "fail"]
 
 
 def test_stage_logs_duration_even_when_nothing_fails(

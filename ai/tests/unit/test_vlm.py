@@ -1,3 +1,4 @@
+import logging
 import traceback
 from types import SimpleNamespace
 
@@ -274,3 +275,32 @@ def test_provider_error_does_not_log_signed_image_url(monkeypatch):
     assert caught.value.__suppress_context__
     assert "X-Amz-Signature" not in rendered_error
     assert "secret" not in rendered_error
+
+
+def test_unknown_vlm_exception_is_logged_as_failure(monkeypatch, caplog):
+    class BoomError(RuntimeError):
+        pass
+
+    def parse(**_kwargs: object) -> None:
+        raise BoomError("주민 원문")
+
+    monkeypatch.setattr(
+        vlm_module,
+        "_get_client",
+        lambda *_: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(parse=parse))
+        ),
+    )
+    _use_settings(monkeypatch)
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(BoomError),
+    ):
+        _classify()
+
+    recorded = [record for record in caplog.records if record.message == "llm_call"]
+    assert recorded[-1].outcome == "fail"
+    assert recorded[-1].status_code is None
+    assert recorded[-1].error_code == "BoomError"
+    assert "주민 원문" not in recorded[-1].getMessage()

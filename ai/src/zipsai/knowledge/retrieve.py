@@ -10,9 +10,10 @@ from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
     SPARSE_VECTOR,
-    building_condition,
+    resident_visible_filter,
     to_sparse_vector,
 )
+from zipsai.metrics import observe_gate
 from zipsai.observability import skipped, stage
 from zipsai.settings import QDRANT_COLLECTION
 
@@ -35,17 +36,21 @@ def query_encoder() -> HttpEncoder:
     # 첫 질의가 들어올 때 만든다. 임포트 시점에 embedding 컨테이너로 붙지 않는다.
     # 재시도는 배치용이다. 온라인에서 5초 자고 한 번 더 부르면 백엔드가 먼저 끊는다.
     # 여기서는 바로 503을 돌려주고 다시 시도할지는 백엔드가 정한다.
-    # 색인 배치가 락을 오래 쥐고 있으면 끝까지 기다리지 않고 3.5초에서 포기한다.
-    # 나머지 1.5초는 락을 잡은 뒤 실제 계산과 왕복에 쓸 몫이다.
+    # priority=query라 색인보다 먼저 처리된다. 그래도 앞선 추론 하나는 끝나야 하므로
+    # 큐에서 3.5초를 넘기면 포기한다. 나머지 1.5초는 실제 계산과 왕복에 쓸 몫이다.
     return HttpEncoder(
-        timeout=QUERY_TIMEOUT_SECONDS, attempts=1, lock_wait_seconds=3.5
+        timeout=QUERY_TIMEOUT_SECONDS,
+        attempts=1,
+        lock_wait_seconds=3.5,
+        priority="query",
     )
 
 
 def encode_question(question: str, *, encoder: Encoder, trace_id: str) -> QueryVector:
     """질문 하나를 색인과 같은 bge-m3로 dense·sparse 벡터로 만든다."""
-    with stage("encode", logger, question_len=len(question)):
+    with stage("encode", logger, question_len=len(question)) as step:
         dense, sparse = encoder.encode([question], trace_id)
+        step["embedding_status"] = "ok"
     return dense[0], sparse[0]
 
 
@@ -66,7 +71,7 @@ def search_chunks(
 ) -> list[models.ScoredPoint]:
     """건물 문서에서 질문과 가까운 청크를 회수한다. 근거가 없으면 빈 목록이다."""
     dense, sparse = question_vector
-    building_filter = models.Filter(must=[building_condition(building_id)])
+    building_filter = resident_visible_filter(building_id)
 
     # 게이트를 먼저 통과시킨다. 실패가 성공보다 빠르고 싸야 하므로,
     # dense 한 건도 임계값을 못 넘으면 하이브리드도 LLM도 돌리지 않는다.
@@ -87,6 +92,7 @@ def search_chunks(
         passed = top_score is not None and top_score >= SCORE_THRESHOLD
         step["top_score"] = round(top_score, 4) if top_score is not None else None
         step["passed"] = passed
+        observe_gate(passed)
 
     if not passed:
         skipped("hybrid", logger, skip_reason="gate_blocked")
@@ -116,5 +122,14 @@ def search_chunks(
         ).points
         step["hits"] = len(hits)
         step["distinct_docs"] = len({(hit.payload or {}).get("doc_id") for hit in hits})
+        scores = [hit.score for hit in hits if hit.score is not None]
+        step["score_min"] = round(min(scores), 4) if scores else None
+        step["score_max"] = round(max(scores), 4) if scores else None
+        step["doc_ids"] = [(hit.payload or {}).get("doc_id") for hit in hits[:5]]
+        step["scores"] = [
+            round(hit.score, 4) if hit.score is not None else None for hit in hits[:5]
+        ]
+        step["building_filter_applied"] = True
+        step["invalid_doc_hits"] = None
 
     return hits

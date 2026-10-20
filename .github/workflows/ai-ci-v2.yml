@@ -1,5 +1,4 @@
 name: AI CI V2
-# Trigger initial staging image builds when validating the V2 deployment setup.
 on:
   pull_request:
     branches: [staging, main]
@@ -84,11 +83,11 @@ jobs:
         run: |
           set -euo pipefail
           task_dir="$(mktemp -d)"
-          cp compose.v2.yaml "$task_dir/compose.yaml"
+          cp compose.v2.yaml "$task_dir/"
           printf '%s\n' 'LLM_API_KEY=test' > "$task_dir/runtime.env"
           export IMAGE_URI=example.invalid/validation:only AWS_REGION=ap-northeast-2
           export LOG_GROUP=/validation QDRANT_ADMIN_API_KEY=test-admin QDRANT_READ_ONLY_API_KEY=test-read
-          docker compose --project-directory "$task_dir" -f "$task_dir/compose.yaml" config -q
+          docker compose --project-directory "$task_dir" -f "$task_dir/compose.v2.yaml" config -q
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'push'
         with:
@@ -127,6 +126,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_AI_CI_V2_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Resolve SHA7 and detect immutable image
+        if: github.event_name == 'push'
         id: image
         env:
           REPOSITORY: ${{ matrix.repository }}
@@ -145,11 +145,12 @@ jobs:
             fi
           fi
       - uses: docker/setup-buildx-action@v3
-        if: steps.image.outputs.build == 'true'
+        if: github.event_name == 'push' && steps.image.outputs.build == 'true'
       - uses: aws-actions/amazon-ecr-login@v2
         if: github.event_name == 'push' && steps.image.outputs.build == 'true'
       - name: Build changed service; push only on staging
-        if: steps.image.outputs.build == 'true'
+        # PR: application tests and Compose validation only. Build the merged staging revision.
+        if: github.event_name == 'push' && steps.image.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
@@ -157,6 +158,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name == 'push' }}
           tags: '${{ env.ECR_REGISTRY }}/${{ matrix.repository }}:${{ steps.image.outputs.tag }}'
+          build-args: ZIPSAI_VERSION=${{ steps.image.outputs.tag }}
           labels: 'org.opencontainers.image.revision=${{ github.sha }}'
           cache-from: type=gha,scope=ai-v2-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=ai-v2-${{ matrix.service }}

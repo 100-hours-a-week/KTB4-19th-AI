@@ -6,6 +6,7 @@ from zipsai.contracts.indexing import IndexingJobRequest
 from zipsai.errors import EmptyDocumentError
 from zipsai.indexing.embed import EmbeddedChunk
 from zipsai.integrations.qdrant import (
+    COMMENT_SOURCE_TYPE,
     DENSE_VECTOR,
     SPARSE_VECTOR,
     building_condition,
@@ -87,7 +88,12 @@ def delete_missing_documents(
                     models.FieldCondition(
                         key="doc_id",
                         match=models.MatchAny(any=valid_doc_ids),
-                    )
+                    ),
+                    # 댓글에는 doc_id가 없다. 막지 않으면 문서 정리가 댓글을 전부 지운다.
+                    models.FieldCondition(
+                        key="source_type",
+                        match=models.MatchValue(value=COMMENT_SOURCE_TYPE),
+                    ),
                 ],
             )
         ),

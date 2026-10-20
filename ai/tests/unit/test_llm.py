@@ -1,9 +1,12 @@
 import asyncio
+import json
+import logging
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from prometheus_client import REGISTRY
 
 from zipsai.errors import (
     LlmRateLimitedError,
@@ -12,7 +15,8 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.integrations import llm as llm_module
-from zipsai.settings import Settings
+from zipsai.observability import JsonFormatter, collect_timings, llm_cost_total
+from zipsai.settings import Settings, call_cost_usd, get_settings
 
 
 class _FakeCompletions:
@@ -248,4 +252,453 @@ def test_generate_text_stream_yields_only_non_empty_text_chunks(monkeypatch):
 
     assert chunks == ["안녕", "하세요"]
     assert completions.kwargs is not None
-    assert completions.kwargs["stream"] is True
+    assert completions.kwargs["stream_options"] == {"include_usage": True}
+
+
+def test_stream_reads_usage_from_the_trailing_chunk(monkeypatch, caplog):
+    usage = SimpleNamespace(prompt_tokens=4, completion_tokens=2, total_tokens=6)
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="답"))],
+                usage=None,
+            ),
+            SimpleNamespace(choices=[], usage=usage),
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    sink: dict[str, object] = {}
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in llm_module.generate_text_stream(
+                "system", "user", usage_sink=sink
+            )
+        ]
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert asyncio.run(collect()) == ["답"]
+
+    recorded = _llm_calls(caplog)
+    assert sink["input_tokens"] == 4
+    assert sink["output_tokens"] == 2
+    assert recorded[-1].input_tokens == 4
+    assert recorded[-1].output_tokens == 2
+    assert not hasattr(recorded[-1], "usage_missing")
+
+
+def test_stream_without_usage_marks_tokens_missing(monkeypatch, caplog):
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="답"))],
+                usage=None,
+            )
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in llm_module.generate_text_stream("system", "user")
+        ]
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert asyncio.run(collect()) == ["답"]
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].usage_missing is True
+    assert recorded[-1].input_tokens is None
+    assert recorded[-1].output_tokens is None
+
+
+def _duration_count(outcome: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "zipsai_llm_call_duration_seconds_count",
+            {"purpose": "unknown", "model": "model", "outcome": outcome},
+        )
+        or 0.0
+    )
+
+
+def _llm_calls(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if record.message == "llm_call"]
+
+
+def test_unknown_exception_is_logged_as_failure(monkeypatch, caplog):
+    class BoomError(RuntimeError):
+        pass
+
+    _use_fake_client(monkeypatch, BoomError("주민 원문"))
+    before = _duration_count("fail")
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(BoomError),
+    ):
+        llm_module.generate_text("system", "user")
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "fail"
+    assert recorded[-1].status_code is None
+    assert recorded[-1].error_code == "BoomError"
+    assert "주민 원문" not in recorded[-1].getMessage()
+    assert _duration_count("fail") == before + 1
+
+
+def test_closed_stream_is_logged_as_cancelled(monkeypatch, caplog):
+    completions = _AsyncCompletions(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="앞"))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="뒤"))]
+            ),
+        ]
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    before = _duration_count("cancelled")
+
+    async def close_early() -> None:
+        stream = llm_module.generate_text_stream("system", "user")
+        await anext(stream)
+        await stream.aclose()
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        asyncio.run(close_early())
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "cancelled"
+    assert recorded[-1].status_code is None
+    assert _duration_count("cancelled") == before + 1
+
+
+def test_successful_call_is_logged_as_ok(monkeypatch, caplog):
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kwargs: response))
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module, "get_settings", lambda: Settings("key", None, "model", 30)
+    )
+    before = _duration_count("ok")
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert llm_module.generate_text("system", "user") == "ok"
+
+    recorded = _llm_calls(caplog)
+    assert recorded[-1].outcome == "ok"
+    assert recorded[-1].status_code == 200
+    assert recorded[-1].error_code is None
+    assert recorded[-1].cost_usd is None
+    assert _duration_count("ok") == before + 1
+
+
+def test_cost_uses_a_price_pair_and_keeps_cached_tokens() -> None:
+    tokens = {"input": 1_000_000, "output": 2_000_000, "cached": 500_000}
+    priced = Settings(
+        "key",
+        None,
+        "model",
+        30,
+        llm_price_input_per_1m=3.0,
+        llm_price_output_per_1m=6.0,
+    )
+    assert call_cost_usd(priced, "turn_reply", tokens) == 15.0
+
+    one_side = Settings("key", None, "model", 30, llm_price_input_per_1m=3.0)
+    assert call_cost_usd(one_side, "turn_reply", tokens) is None
+
+    vlm = Settings(
+        "key",
+        None,
+        "model",
+        30,
+        llm_price_input_per_1m=9.0,
+        llm_price_output_per_1m=9.0,
+        vlm_price_input_per_1m=1.0,
+        vlm_price_output_per_1m=2.0,
+    )
+    image_tokens = {"input": 1_000_000, "output": 1_000_000, "cached": 1_000_000}
+    assert call_cost_usd(vlm, "image_analysis", image_tokens) == 3.0
+    assert call_cost_usd(vlm, "turn_reply", {"input": 1_000_000, "output": 0}) == 9.0
+
+
+def test_blank_price_env_stays_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "key")
+    monkeypatch.setenv("LLM_MODEL", "model")
+    monkeypatch.setenv("LLM_PRICE_INPUT_PER_1M", " ")
+    monkeypatch.delenv("LLM_PRICE_OUTPUT_PER_1M", raising=False)
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.llm_price_input_per_1m is None
+        assert settings.llm_price_output_per_1m is None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_invalid_price_env_is_unset_and_settings_still_load(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    bad = "not-a-number"
+    monkeypatch.setenv("LLM_API_KEY", "key")
+    monkeypatch.setenv("LLM_MODEL", "model")
+    monkeypatch.setenv("LLM_PRICE_INPUT_PER_1M", bad)
+    monkeypatch.setenv("LLM_PRICE_OUTPUT_PER_1M", "2.5")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING, logger="zipsai.settings"):
+            settings = get_settings()
+        assert settings.llm_price_input_per_1m is None
+        assert settings.llm_price_output_per_1m == 2.5
+        warnings = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "invalid_price_setting"
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].setting == "LLM_PRICE_INPUT_PER_1M"
+        line = JsonFormatter().format(warnings[0])
+        assert bad not in line
+        assert "LLM_PRICE_INPUT_PER_1M" in line
+    finally:
+        get_settings.cache_clear()
+
+
+def test_priced_call_logs_cost_and_adds_it_to_the_request(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings(
+            "key",
+            None,
+            "model",
+            30,
+            llm_price_input_per_1m=1.0,
+            llm_price_output_per_1m=2.0,
+        ),
+    )
+    call = llm_module.LlmCall(
+        purpose="turn_reply",
+        model="model",
+        base_url=None,
+        streaming=False,
+        started=0.0,
+        structured=False,
+        usage=SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=1_000_000),
+    )
+    labels = {"purpose": "turn_reply", "model": "model"}
+    before = REGISTRY.get_sample_value("zipsai_llm_cost_usd_total", labels) or 0.0
+
+    with (
+        collect_timings(),
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+    ):
+        call.finish(outcome="ok", status_code=200, output_text="ok")
+        assert llm_cost_total() == 3.0
+
+    assert _llm_calls(caplog)[-1].cost_usd == 3.0
+    assert (REGISTRY.get_sample_value("zipsai_llm_cost_usd_total", labels) or 0.0) == (
+        before + 3.0
+    )
+
+
+def test_one_price_does_not_increment_the_cost_counter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings("key", None, "model", 30, llm_price_input_per_1m=1.0),
+    )
+    call = llm_module.LlmCall(
+        purpose="turn_reply",
+        model="model",
+        base_url=None,
+        streaming=False,
+        started=0.0,
+        structured=False,
+        usage=SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=1_000_000),
+    )
+    labels = {"purpose": "turn_reply", "model": "model"}
+    before = REGISTRY.get_sample_value("zipsai_llm_cost_usd_total", labels) or 0.0
+
+    with (
+        collect_timings(),
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+    ):
+        call.finish(outcome="ok", status_code=200, output_text="ok")
+        assert llm_cost_total() is None
+
+    assert _llm_calls(caplog)[-1].cost_usd is None
+    assert (REGISTRY.get_sample_value("zipsai_llm_cost_usd_total", labels) or 0.0) == before
+
+
+_LLM_CALL_FIELDS = (
+    "purpose",
+    "provider_host",
+    "model",
+    "attempt",
+    "streaming",
+    "latency_ms",
+    "ttft_ms",
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+    "finish_reason",
+    "status_code",
+    "error_code",
+    "structured_output_ok",
+    "retry_reason",
+    "image_count",
+    "image_pixels_total",
+    "cost_usd",
+    "think_tag_present",
+    "hangul_ratio",
+)
+_SYSTEM_SECRET = "SYSTEM_SECRET_TEXT"
+_USER_SECRET = "USER_SECRET_TEXT"
+_RESPONSE_SECRET = "RESPONSE_SECRET_TEXT"
+
+
+def _success_response(content: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=content),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=4, completion_tokens=5),
+    )
+
+
+def test_successful_llm_call_line_has_the_documented_fields(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    response = _success_response(_RESPONSE_SECRET)
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings("key", "https://api.example.com/v1", "model", 30),
+    )
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert (
+            llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET) == _RESPONSE_SECRET
+        )
+
+    line = JsonFormatter().format(_llm_calls(caplog)[-1])
+    payload = json.loads(line)
+    for name in _LLM_CALL_FIELDS:
+        assert name in payload
+    assert payload["provider_host"] == "api.example.com"
+    assert payload["status_code"] == 200
+    assert payload["image_pixels_total"] is None
+    assert _SYSTEM_SECRET not in line
+    assert _USER_SECRET not in line
+    assert _RESPONSE_SECRET not in line
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (
+            RateLimitError("rate limited", response=_response(429), body=None),
+            429,
+            "MODEL_RATE_LIMITED",
+        ),
+        (APITimeoutError(_request()), None, "MODEL_TIMEOUT"),
+        (
+            APIStatusError("upstream", response=_response(500), body=None),
+            500,
+            "MODEL_UPSTREAM_ERROR",
+        ),
+        (
+            APIStatusError("bad request", response=_response(400), body=None),
+            400,
+            "DEPENDENCY_NOT_READY",
+        ),
+    ],
+)
+def test_http_errors_log_status_and_error_code(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    status_code: int | None,
+    error_code: str,
+) -> None:
+    _use_fake_client(monkeypatch, error)
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(
+            (LlmRateLimitedError, LlmTimeoutError, LlmUpstreamError, LlmUnavailableError)
+        ),
+    ):
+        llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET)
+
+    record = _llm_calls(caplog)[-1]
+    assert record.status_code == status_code
+    assert record.error_code == error_code
+    line = JsonFormatter().format(record)
+    assert _SYSTEM_SECRET not in line
+    assert _USER_SECRET not in line
+
+
+def test_runpod_provider_host_keeps_only_the_hostname(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    endpoint = "endpoint-SHOULD-NOT-LEAK"
+    base_url = f"https://api.runpod.ai/v2/{endpoint}/openai/v1"
+    assert llm_module.provider_host(base_url) == "api.runpod.ai"
+    response = _success_response(_RESPONSE_SECRET)
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(llm_module, "_get_client", lambda *a, **k: fake_client)
+    monkeypatch.setattr(
+        llm_module,
+        "get_settings",
+        lambda: Settings("key", base_url, "model", 30),
+    )
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        llm_module.generate_text(_SYSTEM_SECRET, _USER_SECRET)
+
+    line = JsonFormatter().format(_llm_calls(caplog)[-1])
+    assert json.loads(line)["provider_host"] == "api.runpod.ai"
+    assert endpoint not in line
+    assert _RESPONSE_SECRET not in line

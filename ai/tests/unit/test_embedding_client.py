@@ -9,6 +9,7 @@ from zipsai.integrations.embedding_client import (
     BATCH_SIZE,
     HttpEncoder,
 )
+from zipsai.knowledge import retrieve
 
 
 def encoder_returning(handler) -> HttpEncoder:
@@ -66,6 +67,60 @@ def test_encode_sends_null_lock_wait_seconds_by_default() -> None:
     encoder_returning(handler).encode(["텍스트"], "trace-001")
 
     assert seen[0]["max_wait_seconds"] is None
+
+
+def test_encode_sends_index_priority_by_default() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.read()))
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    encoder_returning(handler).encode(["텍스트"], "trace-001")
+
+    assert seen[0]["priority"] == "index"
+
+
+def test_query_encoder_sends_query_priority_and_wait_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.read()))
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    real = HttpEncoder
+    monkeypatch.setattr(
+        retrieve,
+        "HttpEncoder",
+        lambda **kwargs: real(
+            base_url="http://embedding:8000",
+            transport=httpx.MockTransport(handler),
+            **kwargs,
+        ),
+    )
+    retrieve.query_encoder.cache_clear()
+    try:
+        retrieve.query_encoder().encode(["질문"], "trace-001")
+    finally:
+        retrieve.query_encoder.cache_clear()
+
+    assert seen[0]["priority"] == "query"
+    assert seen[0]["max_wait_seconds"] == 3.5
+
+
+def test_client_error_does_not_keep_the_response_body() -> None:
+    sentence = "화장실 천장에서 물이 새요"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, text=sentence)
+
+    with pytest.raises(EmbeddingError) as caught:
+        encoder_returning(handler).encode(["텍스트"], "trace-001")
+
+    assert sentence not in str(caught.value)
+    assert "status=422" in str(caught.value)
 
 
 def test_encode_raises_typed_error_on_server_error() -> None:
@@ -183,7 +238,9 @@ def test_encode_does_not_retry_a_rejected_request() -> None:
         attempts.append(1)
         return httpx.Response(422, json={"detail": "texts must hold at most 32 items"})
 
-    with pytest.raises(EmbeddingError, match="at most 32 items"):
+    with pytest.raises(EmbeddingError, match="status=422") as caught:
         encoder_returning(handler).encode(["청크"], "trace-001")
+
+    assert "at most 32 items" not in str(caught.value)
 
     assert len(attempts) == 1

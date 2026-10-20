@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Literal
 
 import httpx
 
@@ -20,6 +21,7 @@ ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 5.0
 
 EncodeOutput = tuple[list[list[float]], list[dict[str, float]]]
+Priority = Literal["query", "index"]
 
 
 def _status_code(exc: httpx.HTTPError) -> int | None:
@@ -42,10 +44,12 @@ class HttpEncoder:
         retry_delay: float = RETRY_DELAY_SECONDS,
         attempts: int = ATTEMPTS,
         lock_wait_seconds: float | None = None,
+        priority: Priority = "index",
     ) -> None:
         self._retry_delay = retry_delay
         self._attempts = attempts
         self._lock_wait_seconds = lock_wait_seconds
+        self._priority = priority
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -73,17 +77,17 @@ class HttpEncoder:
                         "texts": texts,
                         "trace_id": trace_id,
                         "max_wait_seconds": self._lock_wait_seconds,
+                        "priority": self._priority,
                     },
                 )
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPError as exc:
                 if not _is_transient(exc):
-                    detail = ""
-                    if isinstance(exc, httpx.HTTPStatusError):
-                        detail = f" {exc.response.text[:500]}"
+                    # 응답 본문에는 입력 문장이 들어 있을 수 있어 상태만 남긴다.
                     raise EmbeddingError(
-                        f"Embedding request failed: {exc}{detail}"
+                        "Embedding request failed: "
+                        f"{type(exc).__name__} status={_status_code(exc)}"
                     ) from exc
                 last = exc
                 # 다음 시도가 성공하면 이 실패는 어디에도 남지 않는다.
