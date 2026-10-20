@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.contracts.notification import ResultStatus
 from zipsai.contracts.sync_response import DocumentResult, SyncBody
+from zipsai.indexing.admission import Rejected, acquire, document_key, release
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.reasons import retryable_for
 from zipsai.indexing.upsert import delete_missing_documents
@@ -229,6 +230,22 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
             else 0,
         },
     )
-    outcome = _run_job(payload, job_id)
+    key = document_key(payload)
+    try:
+        acquire(key)
+    except Rejected as rejected:
+        return _rejected(payload.trace_id, rejected)
+    try:
+        outcome = _run_job(payload, job_id)
+    finally:
+        release(key)
     body = SyncBody(trace_id=payload.trace_id, results=outcome.results).to_body()
     return JSONResponse(status_code=200, content=body)
+
+
+def _rejected(trace_id: str, rejected: Rejected) -> JSONResponse:
+    return JSONResponse(
+        status_code=rejected.status_code,
+        content={"trace_id": trace_id, "error_code": rejected.error_code},
+        headers={"Retry-After": str(rejected.retry_after)},
+    )

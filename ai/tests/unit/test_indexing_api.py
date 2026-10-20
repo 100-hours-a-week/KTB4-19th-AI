@@ -1,11 +1,13 @@
 import asyncio
 import json
+import threading
 
 import pytest
 
 from zipsai.api import indexing
 from zipsai.api.indexing import JobOutcome
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
+from zipsai.indexing.admission import reset as reset_admission
 from zipsai.main import app
 
 # 자동 fixture가 대체하기 전의 원본. 실제 실행 경로를 보는 테스트가 쓴다.
@@ -15,6 +17,7 @@ REAL_RUN_JOB = indexing._run_job
 @pytest.fixture(autouse=True)
 def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> list[IndexingJobRequest]:
     # 배경 작업이 실제 S3·Embedding에 붙지 않게 막고 예약 여부만 기록한다.
+    reset_admission()
     runs: list[IndexingJobRequest] = []
     def fake(payload: IndexingJobRequest, _job_id: str) -> JobOutcome:
         runs.append(payload)
@@ -63,12 +66,16 @@ def post(path: str, payload: dict | None = None) -> tuple[int, bytes]:
         for message in messages
         if message["type"] == "http.response.body"
     )
-    status_code = next(
-        message["status"]
-        for message in messages
-        if message["type"] == "http.response.start"
+    start = next(
+        message for message in messages if message["type"] == "http.response.start"
     )
-    return status_code, response_body
+    post.headers = {
+        key.decode().lower(): value.decode() for key, value in start["headers"]
+    }
+    return start["status"], response_body
+
+
+post.headers = {}
 
 
 def valid_payload() -> dict:
@@ -339,3 +346,75 @@ def test_cleanup_only_returns_one_result(monkeypatch: pytest.MonkeyPatch) -> Non
             "retryable": False,
         }
     ]
+
+
+def _hold_job(monkeypatch: pytest.MonkeyPatch):
+    started = threading.Event()
+    let_go = threading.Event()
+    calls = {"n": 0}
+
+    def blocking(payload: IndexingJobRequest, _job_id: str) -> JobOutcome:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            started.set()
+            assert let_go.wait(2)
+        return JobOutcome(results=[])
+
+    monkeypatch.setattr(indexing, "_run_job", blocking)
+    return started, let_go
+
+
+def test_same_doc_id_returns_429_until_the_job_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started, let_go = _hold_job(monkeypatch)
+    holder = threading.Thread(
+        target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
+    )
+    holder.start()
+    assert started.wait(2)
+
+    status_code, body = post("/api/v3/ai/indexing/jobs", valid_payload())
+
+    assert status_code == 429
+    assert post.headers["retry-after"] == "30"
+    assert json.loads(body) == {"trace_id": "trace-001", "error_code": "IN_PROGRESS"}
+    let_go.set()
+    holder.join(2)
+    status_code, _ = post("/api/v3/ai/indexing/jobs", valid_payload())
+    assert status_code == 200
+
+
+def test_cleanup_without_doc_id_locks_the_building(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started, let_go = _hold_job(monkeypatch)
+    payload = {
+        "building_id": 101,
+        "trace_id": "trace-001",
+        "valid_doc_ids": ["doc-a"],
+    }
+    holder = threading.Thread(target=lambda: post("/api/v3/ai/indexing/jobs", payload))
+    holder.start()
+    assert started.wait(2)
+
+    status_code, body = post("/api/v3/ai/indexing/jobs", payload)
+
+    assert status_code == 429
+    assert json.loads(body)["error_code"] == "IN_PROGRESS"
+    let_go.set()
+    holder.join(2)
+
+
+def test_exception_releases_the_document_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(payload: IndexingJobRequest, _job_id: str) -> JobOutcome:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(indexing, "_run_job", boom)
+
+    for _ in range(2):
+        try:
+            status_code, _ = post("/api/v3/ai/indexing/jobs", valid_payload())
+        except RuntimeError:
+            continue
+        assert status_code != 429
