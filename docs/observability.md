@@ -18,6 +18,12 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 | `llm_call` | `purpose`, `provider_host`(base_url 호스트만), `model`, `attempt`, `streaming`, `latency_ms`, `ttft_ms`, 토큰 4종, `finish_reason`, `status_code`, `error_code`, `structured_output_ok`, `retry_reason`, `image_count`, `image_pixels_total`(항상 null), `cost_usd`(단가 쌍이 없으면 null), `think_tag_present`, `hangul_ratio` |
 | `stage_done` parse | `empty_pages`, `min_chars_per_page`, `tables_found`, `tables_parsed`, `tables_failed`(null), `table_fail_reasons`(null), `images_found`, `parser_status`, `ocr_used`(null), `failed_pages` |
 | `index_done` | `doc_bytes`, `pages`, `chunks`, `embed_batches`, `stage_ms`, `error_code` |
+| `job_accepted` | `doc_title`, `file_key_path`(쿼리 제거), `file_key_ext`, `valid_doc_ids`(쉼표 문자열. 빈 목록은 `""`, 없으면 null), `valid_doc_count` |
+| `index_result` | 문서 요청이 200으로 끝날 때 한 줄. `http_status`, `index_status`, `index_reason`, `index_retryable`, `cleanup_status`, `cleanup_reason`, `cleanup_retryable`, `total_ms`, `pages`, `chunks`, `points`, `reconcile_count`. 없는 쪽은 null |
+| `comment_accepted` | `kind`(`upsert`/`delete`), `items`, `building_ids`, `complaint_detail_ids`(정수만, 쉼표) |
+| `comment_item_done` | 답변 한 건. `kind`, `status`, `reason_code`, `retryable`, `duration_ms`, `comment_chars`, `symptom_chars`, `validation_fields`, `complaint_type`, `issue_type`, `has_location`, `has_occurred_time`. 본문·위치·증상 문자열은 없다 |
+| `comment_done` | `kind`, `items`, `succeeded`, `failed`, `skipped`, `total_ms`, `http_status`, `indexing_in_flight`, `embed_batches`, `embed_ms` |
+| `indexing_rejected` | 429 `IN_PROGRESS` 또는 503 `BUSY`. `route`, `error_code`, `doc_id`, `building_id`, `items`, `indexing_in_flight`(거절된 요청은 빠짐), `retry_after_s` |
 | `stage_done` gate | 기존 `top_score`, `threshold`, `passed` |
 | `stage_done` hybrid | `score_min`, `score_max`, `doc_ids`(상위 5), `scores`(상위 5), `building_filter_applied`, `invalid_doc_hits`(null) |
 | `complaint_turn` | `asked_field`, `ask_repeat_count`, `draft_filled`(필드 이름), `missing_fields`, `urgency_level`, `image_count`, `images_analyzed`, `summary_chars`, `ocr_chars` |
@@ -45,6 +51,8 @@ count(
 `cost_usd`는 입력·출력 단가가 둘 다 있을 때 `input/1e6*입력단가 + output/1e6*출력단가`다. 캐시 토큰은 빼지 않는다. `image_analysis`만 `VLM_PRICE_INPUT_PER_1M`·`VLM_PRICE_OUTPUT_PER_1M`을 쓰고, 다른 purpose는 `LLM_PRICE_INPUT_PER_1M`·`LLM_PRICE_OUTPUT_PER_1M`을 쓴다. 한 쌍 중 하나만 있거나 비어 있으면 null이고 `zipsai_llm_cost_usd_total`은 올리지 않는다. RunPod는 GPU 시간 과금이라 단가를 비운다. 비용은 RunPod 청구액으로 본다. OpenRouter처럼 토큰 과금일 때만 단가를 넣는다. `cost_usd_total`은 그 요청 안에서 계산된 `llm_call` 비용의 합이다.
 
 임베딩 대기는 #126 이후 락이 아니라 우선순위 큐다. 로그 필드는 `queue_wait_ms`다. 메트릭 `zipsai_embed_queue_wait_seconds`에 그 대기 시간을 넣고, `zipsai_embed_queue_length`에 그 요청의 `queue_len`을 넣는다.
+
+문서 색인·답변 반영·답변 삭제는 끝날 때까지 기다린 뒤 HTTP 200 본문으로 항목별 결과를 돌려준다. SQS 통지는 없다. 같은 문서를 처리 중이면 429 `IN_PROGRESS`(`Retry-After: 30`), 동시 처리 상한(`INDEXING_MAX_CONCURRENCY`, 기본 2)을 넘으면 503 `BUSY`(`Retry-After: 10`)다. 잠금과 상한은 프로세스 안이라 워커 1개 기준이다. 목록은 Loki `| json`이 배열을 버리므로 쉼표 문자열로 남긴다. 문서 색인 실측은 20.7초, 45.2초였다. 백엔드 읽기 타임아웃은 지금 60초이고 180초로 늘려 달라고 요청한 상태다. 답변 100건은 임베딩만 약 2분이다. `BATCH_SIZE`는 2라 호출이 50번이면 60초에 닿을 수 있다.
 
 ## 메트릭
 
@@ -74,6 +82,8 @@ TTFT 경계(초): 0.25, 0.5, 1, 1.5, 2, 2.5, 3, 5, 10.
 | `zipsai_fallbacks_total` | `reason` |
 | `zipsai_complaint_ask_repeats_total` | `field` |
 | `zipsai_index_jobs_total` | `outcome`, `failed_stage` |
+| `zipsai_indexing_in_flight` | 없음. 접수된 색인·답변 작업 수 |
+| `zipsai_indexing_results_total` | `kind`(`document_index`, `document_cleanup`, `comment_upsert`, `comment_delete`), `status`, `reason_code`. 성공은 `none`, 표에 없는 코드는 `other` |
 | `zipsai_parse_tables_total` | `result` |
 | `zipsai_embed_requests_total` | `outcome` |
 | `zipsai_embed_duration_seconds` | `outcome` |
