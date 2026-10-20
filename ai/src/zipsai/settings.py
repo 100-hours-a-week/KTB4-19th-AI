@@ -42,8 +42,6 @@ COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
 # 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
 LOCATION_PLACEHOLDER: Final = "미상"
-# 처리 결과를 BE에 알리는 SQS 큐. 비어 있으면 통지를 보내지 않는다.
-NOTIFICATION_QUEUE_URL: Final = os.getenv("NOTIFICATION_QUEUE_URL") or None
 
 # LLM_MODEL과 달리 없어도 기동은 된다. 민원 이미지 분석만 이 값을 쓴다.
 # compose가 빈 문자열로 넘길 수 있다. getenv의 기본값은 "키가 아예 없을 때"만

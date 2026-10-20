@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # converse 근거 표기에 쓴다. 입주민에게 comment id를 보여줄 수는 없다.
 COMMENT_TITLE = "관리자 답변"
 
-# 단계 이름은 로그의 failed_stage와 같고, BE 통지의 reason_code로 옮겨 간다.
+# 단계 이름은 로그의 failed_stage와 같고, 응답 reason_code로 옮겨 간다.
 _STAGE_REASON = {
     "mask": "MASK_FAILED",
     "embed": "EMBEDDING_FAILED",
