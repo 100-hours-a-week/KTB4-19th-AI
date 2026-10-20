@@ -6,7 +6,7 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 
 ## 남기지 않는 것
 
-입주민 원문, 답변, 프롬프트, 문서·청크·OCR 본문, 사진 요약, 민원 위치·증상 문자열, API 키, 비밀번호, presigned URL. 포매터는 `sk-`, `Bearer`, 32자 이상 hex, 슬래시 없는 40자 이상 base64, 전화번호, 차량번호, 쿼리가 붙은 URL, 띄어쓴 한글 문장을 `[REDACTED]`로 바꾼다. 띄어쓴 한글 문장은 가려지니 에러 메시지는 영어로 쓴다. 원인은 `error_code`, `error_type`, `stage`로 남긴다. 민감 키의 문자열·목록·객체는 통째로 가리고, 숫자·bool·null은 남긴다. `texts`는 개수다. 한 글자라도 가리면 `redacted=true`.
+입주민 원문, 답변, 프롬프트, 문서·청크·OCR 본문, 사진 요약, 민원 위치·증상 문자열, API 키, 비밀번호, presigned URL. 포매터는 `sk-`, `Bearer`, 32자 이상 hex, 슬래시 없는 40자 이상 base64, 전화번호, 차량번호, 쿼리가 붙은 URL, 띄어쓴 한글 문장을 `[REDACTED]`로 바꾼다. `doc_title`과 `file_key_path`는 문장·hex 패턴을 건너뛰고 `sk-`, `Bearer`, `api_key=`, presigned 쿼리만 가린다. 띄어쓴 한글 문장은 가려지니 에러 메시지는 영어로 쓴다. 원인은 `error_code`, `error_type`, `stage`로 남긴다. 민감 키의 문자열·목록·객체는 통째로 가리고, 숫자·bool·null은 남긴다. `texts`는 개수다. 한 글자라도 가리면 `redacted=true`.
 
 ## 이벤트
 
@@ -52,7 +52,7 @@ count(
 
 임베딩 대기는 #126 이후 락이 아니라 우선순위 큐다. 로그 필드는 `queue_wait_ms`다. 메트릭 `zipsai_embed_queue_wait_seconds`에 그 대기 시간을 넣고, `zipsai_embed_queue_length`에 그 요청의 `queue_len`을 넣는다.
 
-문서 색인·답변 반영·답변 삭제는 끝날 때까지 기다린 뒤 HTTP 200 본문으로 항목별 결과를 돌려준다. SQS 통지는 없다. 같은 문서를 처리 중이면 429 `IN_PROGRESS`(`Retry-After: 30`), 동시 처리 상한(`INDEXING_MAX_CONCURRENCY`, 기본 2)을 넘으면 503 `BUSY`(`Retry-After: 10`)다. 잠금과 상한은 프로세스 안이라 워커 1개 기준이다. 목록은 Loki `| json`이 배열을 버리므로 쉼표 문자열로 남긴다. 문서 색인 실측은 20.7초, 45.2초였다. 백엔드 읽기 타임아웃은 지금 60초이고 180초로 늘려 달라고 요청한 상태다. 답변 100건은 임베딩만 약 2분이다. `BATCH_SIZE`는 2라 호출이 50번이면 60초에 닿을 수 있다.
+문서 색인·답변 반영·답변 삭제는 끝날 때까지 기다린 뒤 HTTP 200 본문으로 항목별 결과를 돌려준다. SQS 통지는 없다. 같은 문서를 처리 중이면 429 `IN_PROGRESS`(`Retry-After: 30`), 동시 처리 상한(`INDEXING_MAX_CONCURRENCY`, 기본 2)을 넘으면 503 `BUSY`(`Retry-After: 10`)다. 잠금과 상한은 프로세스 안이라 워커 1개 기준이다. 목록은 Loki `| json`이 배열을 버리므로 쉼표 문자열로 남긴다. 문서 색인 실측은 20.7초, 45.2초였다. 백엔드 읽기 타임아웃은 지금 60초이고 180초로 늘려 달라고 요청한 상태다. 답변 100건의 임베딩만 약 2분이라는 값은 실측이 아니라 추정이다. `BATCH_SIZE`는 2라 호출이 50번이면 60초에 닿을 수 있다.
 
 ## 메트릭
 
