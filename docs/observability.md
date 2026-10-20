@@ -23,7 +23,7 @@ AI(`ai-api`)와 임베딩은 stderr로 JSON 한 줄을 낸다. 파일 핸들러�
 | `comment_accepted` | `kind`(`upsert`/`delete`), `items`, `building_ids`, `complaint_detail_ids`(정수만, 쉼표) |
 | `comment_item_done` | 답변 한 건. `kind`, `status`, `reason_code`, `retryable`, `duration_ms`, `comment_chars`, `symptom_chars`, `validation_fields`, `complaint_type`, `issue_type`, `has_location`, `has_occurred_time`. 본문·위치·증상 문자열은 없다 |
 | `comment_done` | `kind`, `items`, `succeeded`, `failed`, `skipped`, `total_ms`, `http_status`, `indexing_in_flight`, `embed_batches`, `embed_ms` |
-| `indexing_rejected` | 429 `IN_PROGRESS` 또는 503 `BUSY`. `route`, `error_code`, `doc_id`, `building_id`, `items`, `indexing_in_flight`(거절된 요청은 빠짐), `retry_after_s` |
+| `indexing_rejected` | 429 `IN_PROGRESS` 또는 503 `BUSY`. 거절된 요청의 유일한 줄. `job_id`, `route`, `error_code`, `doc_id`, `building_id`, `items`, `indexing_in_flight`(거절된 요청은 빠짐), `retry_after_s`. `job_accepted`·`comment_accepted`는 접수가 된 뒤에만 남는다 |
 | `stage_done` gate | 기존 `top_score`, `threshold`, `passed` |
 | `stage_done` hybrid | `score_min`, `score_max`, `doc_ids`(상위 5), `scores`(상위 5), `building_filter_applied`, `invalid_doc_hits`(null) |
 | `complaint_turn` | `asked_field`, `ask_repeat_count`, `draft_filled`(필드 이름), `missing_fields`, `urgency_level`, `image_count`, `images_analyzed`, `summary_chars`, `ocr_chars` |

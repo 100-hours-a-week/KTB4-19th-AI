@@ -9,9 +9,11 @@ from zipsai.api import indexing
 from zipsai.api.indexing import JobOutcome
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.indexing import admission
+from zipsai.indexing.admission import acquire, release
 from zipsai.indexing.admission import reset as reset_admission
 from zipsai.main import app
 from zipsai.metrics import INDEXING_RESULTS
+from zipsai.observability import _ContextFilter
 
 # 자동 fixture가 대체하기 전의 원본. 실제 실행 경로를 보는 테스트가 쓴다.
 REAL_RUN_JOB = indexing._run_job
@@ -519,6 +521,11 @@ def test_same_doc_id_returns_429_until_the_job_finishes(
     )
     assert rejected.route == "jobs"
     assert rejected.error_code == "IN_PROGRESS"
+    assert rejected.job_id
+    assert not any(
+        record.getMessage() == "job_accepted" and record.job_id == rejected.job_id
+        for record in caplog.records
+    )
     assert rejected.doc_id == "notice-001"
     assert rejected.building_id == 101
     assert rejected.items is None
@@ -565,6 +572,75 @@ def test_exception_releases_the_document_lock(monkeypatch: pytest.MonkeyPatch) -
         assert status_code != 429
 
 
+def _indexing_lines(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record for record in caplog.records if record.name == "zipsai.api.indexing"
+    ]
+
+
+def test_in_progress_request_logs_only_indexing_rejected(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    acquire("doc:notice-001")
+    try:
+        status_code, _body = post("/api/v3/ai/indexing/jobs", valid_payload())
+
+        assert status_code == 429
+        lines = _indexing_lines(caplog)
+        assert [record.getMessage() for record in lines] == ["indexing_rejected"]
+        assert lines[0].job_id
+        assert lines[0].error_code == "IN_PROGRESS"
+    finally:
+        release("doc:notice-001")
+
+
+def test_busy_request_logs_only_indexing_rejected(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
+    reset_admission()
+    acquire("doc:held")
+    try:
+        status_code, _body = post(
+            "/api/v3/ai/indexing/jobs",
+            valid_payload() | {"doc_id": "notice-002", "trace_id": "trace-002"},
+        )
+
+        assert status_code == 503
+        lines = _indexing_lines(caplog)
+        assert [record.getMessage() for record in lines] == ["indexing_rejected"]
+        assert lines[0].job_id
+        assert lines[0].error_code == "BUSY"
+    finally:
+        release("doc:held")
+
+
+def test_success_logs_job_accepted_with_job_done(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
+    context_filter = _ContextFilter()
+    logger = logging.getLogger("zipsai.api.indexing")
+    logger.addFilter(context_filter)
+    try:
+        _install_pipeline(monkeypatch)
+
+        status_code, _body = post("/api/v3/ai/indexing/jobs", valid_payload())
+
+        assert status_code == 200
+        accepted = next(
+            record for record in caplog.records if record.getMessage() == "job_accepted"
+        )
+        done = next(
+            record for record in caplog.records if record.getMessage() == "job_done"
+        )
+        assert accepted.job_id == done.job_id
+    finally:
+        logger.removeFilter(context_filter)
+
+
 def test_over_capacity_returns_503(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -592,6 +668,11 @@ def test_over_capacity_returns_503(
         if record.getMessage() == "indexing_rejected"
     )
     assert rejected.error_code == "BUSY"
+    assert rejected.job_id
+    assert not any(
+        record.getMessage() == "job_accepted" and record.job_id == rejected.job_id
+        for record in caplog.records
+    )
     assert rejected.doc_id == "notice-002"
     assert rejected.indexing_in_flight == 1
     assert rejected.retry_after_s == 10

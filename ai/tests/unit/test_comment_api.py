@@ -11,6 +11,7 @@ from zipsai.contracts.notification import ItemResult, ResultStatus
 from zipsai.indexing import admission
 from zipsai.indexing.admission import acquire, in_flight, release
 from zipsai.indexing.admission import reset as reset_admission
+from zipsai.observability import _ContextFilter
 from zipsai.settings import COMMENT_API_PREFIX
 
 
@@ -289,7 +290,8 @@ def test_setup_failure_keeps_validation_skips(monkeypatch):
     assert results[1]["complaint_detail_id"] == 9004
 
 
-def test_over_capacity_returns_503(scheduled, monkeypatch):
+def test_over_capacity_returns_503(scheduled, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="zipsai.api.comment")
     monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
     reset_admission()
     acquire("doc:held")
@@ -301,8 +303,36 @@ def test_over_capacity_returns_503(scheduled, monkeypatch):
         assert post.headers["retry-after"] == "10"
         assert scheduled == []
         assert in_flight() == 1
+        lines = [
+            record for record in caplog.records if record.name == "zipsai.api.comment"
+        ]
+        assert [record.getMessage() for record in lines] == ["indexing_rejected"]
+        assert lines[0].job_id
+        assert lines[0].error_code == "BUSY"
     finally:
         release("doc:held")
+
+
+def test_success_logs_comment_accepted_with_comment_done(scheduled, caplog):
+    caplog.set_level(logging.INFO, logger="zipsai.api.comment")
+    context_filter = _ContextFilter()
+    logger = logging.getLogger("zipsai.api.comment")
+    logger.addFilter(context_filter)
+    try:
+        status, _body = post(f"{COMMENT_API_PREFIX}/comment", _request())
+
+        assert status == 200
+        accepted = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "comment_accepted"
+        )
+        done = next(
+            record for record in caplog.records if record.getMessage() == "comment_done"
+        )
+        assert accepted.job_id == done.job_id
+    finally:
+        logger.removeFilter(context_filter)
 
 
 def test_comment_done_includes_embed_stats(scheduled, caplog):

@@ -225,6 +225,12 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
     # 색인 계약에는 turn_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
     started = perf_counter()
     job_id = str(uuid4())
+    key = document_key(payload)
+    try:
+        acquire(key)
+    except Rejected as rejected:
+        return _rejected(payload, rejected, job_id)
+    # 거절된 요청은 indexing_rejected만 남긴다. 접수 로그는 들어간 요청만 job_done과 짝이 된다.
     file_key_path, file_key_ext = _file_key_parts(payload.file_key)
     logger.info(
         "job_accepted",
@@ -248,11 +254,6 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
             else len(payload.valid_doc_ids),
         },
     )
-    key = document_key(payload)
-    try:
-        acquire(key)
-    except Rejected as rejected:
-        return _rejected(payload, rejected)
     try:
         outcome = _run_job(payload, job_id)
     finally:
@@ -307,11 +308,14 @@ def _log_index_result(
     )
 
 
-def _rejected(payload: IndexingJobRequest, rejected: Rejected) -> JSONResponse:
+def _rejected(
+    payload: IndexingJobRequest, rejected: Rejected, job_id: str
+) -> JSONResponse:
     logger.info(
         "indexing_rejected",
         extra={
             "trace_id": payload.trace_id,
+            "job_id": job_id,
             "route": "jobs",
             "error_code": rejected.error_code,
             "doc_id": payload.doc_id,

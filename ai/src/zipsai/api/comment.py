@@ -52,19 +52,6 @@ def delete(payload: CommentBatch) -> JSONResponse:
 def _handle(kind: Kind, payload: CommentBatch) -> JSONResponse:
     started = perf_counter()
     job_id = str(uuid4())
-    logger.info(
-        "comment_accepted",
-        extra={
-            "job_id": job_id,
-            "trace_id": payload.trace_id,
-            "kind": kind,
-            "items": len(payload.items),
-            "building_ids": _joined_ids(payload.items, "building_id", unique=True),
-            "complaint_detail_ids": _joined_ids(
-                payload.items, "complaint_detail_id", unique=False
-            ),
-        },
-    )
     model = CommentItem if kind == "upsert" else CommentDeleteItem
     slots = [_slot(raw, model) for raw in payload.items]
     try:
@@ -74,6 +61,7 @@ def _handle(kind: Kind, payload: CommentBatch) -> JSONResponse:
             "indexing_rejected",
             extra={
                 "trace_id": payload.trace_id,
+                "job_id": job_id,
                 "route": "comment" if kind == "upsert" else "comment_delete",
                 "error_code": rejected.error_code,
                 "doc_id": None,
@@ -89,6 +77,20 @@ def _handle(kind: Kind, payload: CommentBatch) -> JSONResponse:
             headers={"Retry-After": str(rejected.retry_after)},
         )
     try:
+        # 거절된 요청은 indexing_rejected만 남긴다. 접수 로그는 들어간 요청만 comment_done과 짝이 된다.
+        logger.info(
+            "comment_accepted",
+            extra={
+                "job_id": job_id,
+                "trace_id": payload.trace_id,
+                "kind": kind,
+                "items": len(payload.items),
+                "building_ids": _joined_ids(payload.items, "building_id", unique=True),
+                "complaint_detail_ids": _joined_ids(
+                    payload.items, "complaint_detail_id", unique=False
+                ),
+            },
+        )
         with bind(job_id=job_id, trace_id=payload.trace_id):
             results, stats = _execute(kind, payload.trace_id, slots)
             durations = _durations(slots, stats)
