@@ -92,6 +92,10 @@ INDEX_JOBS = Counter(
     "Indexing jobs",
     ["outcome", "failed_stage"],
 )
+INDEXING_IN_FLIGHT = Gauge(
+    "zipsai_indexing_in_flight",
+    "Document and comment indexing jobs being handled",
+)
 TABLES = Counter("zipsai_parse_tables_total", "Document tables", ["result"])
 
 

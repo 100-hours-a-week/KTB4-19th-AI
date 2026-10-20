@@ -7,6 +7,7 @@ import pytest
 from zipsai.api import indexing
 from zipsai.api.indexing import JobOutcome
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
+from zipsai.indexing import admission
 from zipsai.indexing.admission import reset as reset_admission
 from zipsai.main import app
 
@@ -418,3 +419,26 @@ def test_exception_releases_the_document_lock(monkeypatch: pytest.MonkeyPatch) -
         except RuntimeError:
             continue
         assert status_code != 429
+
+
+def test_over_capacity_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
+    reset_admission()
+    started, let_go = _hold_job(monkeypatch)
+    holder = threading.Thread(
+        target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
+    )
+    holder.start()
+    assert started.wait(2)
+    assert admission.in_flight() == 1
+
+    other = valid_payload() | {"doc_id": "notice-002", "trace_id": "trace-002"}
+    status_code, body = post("/api/v3/ai/indexing/jobs", other)
+
+    assert status_code == 503
+    assert post.headers["retry-after"] == "10"
+    assert json.loads(body) == {"trace_id": "trace-002", "error_code": "BUSY"}
+    assert admission.in_flight() == 1
+    let_go.set()
+    holder.join(2)
+    assert admission.in_flight() == 0
