@@ -63,3 +63,10 @@ class CommentDeleteItem(_Versioned):
 class CommentDeleteRequest(BaseModel):
     trace_id: NonBlank
     items: Annotated[list[CommentDeleteItem], Field(min_length=1, max_length=MAX_ITEMS)]
+
+
+class CommentBatch(BaseModel):
+    """trace_id와 건수만 검사한다. 항목 오류는 200 본문에서 건별로 돌려준다."""
+
+    trace_id: NonBlank
+    items: Annotated[list[Any], Field(min_length=1, max_length=MAX_ITEMS)]
