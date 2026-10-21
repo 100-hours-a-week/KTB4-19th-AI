@@ -4,7 +4,7 @@ from typing import Literal
 
 import httpx
 
-from zipsai.errors import EmbeddingError
+from zipsai.errors import EmbeddingError, EmbeddingRequestInvalidError
 from zipsai.settings import EMBEDDING_API_URL
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,8 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # embedding 서비스의 MAX_BATCH_SIZE(상한)보다 작으면 되므로 낮추는 건 그쪽 변경이
 # 필요 없다. 올릴 때는 embedding/src/embedding/api/embed.py도 같이 올린다.
 BATCH_SIZE = 2
+# embedding/src/embedding/api/embed.py의 MAX_TEXT_CHARS와 같은 값이다.
+MAX_TEXT_CHARS = 8000
 # 일시 장애만 한 번 더 시도한다. embedding 컨테이너 재시작이 주 대상이라
 # 5초면 대개 되살아난다. 모자라면 다음 배치 실행이 다시 집어간다.
 ATTEMPTS = 2
@@ -29,9 +31,10 @@ def _status_code(exc: httpx.HTTPError) -> int | None:
 
 
 def _is_transient(exc: httpx.HTTPError) -> bool:
-    # 4xx는 같은 요청을 다시 보내도 같은 답이 온다. 연결 실패와 5xx만 다시 시도한다.
+    # 408·429만 4xx 중에서 다시 시도한다. 나머지는 같은 요청이면 같은 거절이다.
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
+        status = exc.response.status_code
+        return status >= 500 or status in (408, 429)
     return True
 
 
@@ -83,12 +86,12 @@ class HttpEncoder:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPError as exc:
-                if not _is_transient(exc):
-                    # 응답 본문에는 입력 문장이 들어 있을 수 있어 상태만 남긴다.
-                    raise EmbeddingError(
-                        "Embedding request failed: "
-                        f"{type(exc).__name__} status={_status_code(exc)}"
-                    ) from exc
+                if isinstance(exc, httpx.HTTPStatusError) and not _is_transient(exc):
+                    # 길이 초과는 embed_chunks가 먼저 거절한다.
+                    # 여기까지 온 4xx는 한도 계약이 어긋난 것이고, 본문에는 입력이 섞여 있다.
+                    raise EmbeddingRequestInvalidError(
+                        exc.response.status_code
+                    ) from None
                 last = exc
                 # 다음 시도가 성공하면 이 실패는 어디에도 남지 않는다.
                 logger.warning(

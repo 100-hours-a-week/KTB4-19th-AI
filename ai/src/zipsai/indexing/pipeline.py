@@ -8,23 +8,25 @@ from time import perf_counter
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
-from zipsai.errors import EmptyDocumentError, error_code
+from zipsai.errors import (
+    ChunkTooLongError,
+    EmbeddingRequestInvalidError,
+    EmptyDocumentError,
+    error_code,
+)
 from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
 from zipsai.indexing.parse import parse_document
 from zipsai.indexing.upsert import upsert_document
-from zipsai.integrations.embedding_client import BATCH_SIZE
+from zipsai.integrations.embedding_client import BATCH_SIZE, MAX_TEXT_CHARS
 from zipsai.metrics import observe_index_job, observe_tables
 from zipsai.observability import collect_timings, elapsed_ms, is_cold, stage
 
 logger = logging.getLogger(__name__)
 
 Download = Callable[[str, Path], Path]
-
-# embedding 서비스가 거부하는 길이. 이 값을 넘는 청크가 있으면 embed가 422로 확정 실패한다.
-MAX_TEXT_CHARS = 8000
 
 # 실패한 단계 → 응답 reason_code. 단계 이름은 로그의 failed_stage와 같다.
 _STAGE_REASON = {
@@ -146,11 +148,15 @@ def run_indexing_job(
             )
             observe_index_job("fail", failed_stage)
             if on_fail is not None:
-                on_fail(
-                    "EMPTY_DOCUMENT"
-                    if isinstance(error, EmptyDocumentError)
-                    else _STAGE_REASON.get(failed_stage, "INDEX_FAILED")
-                )
+                if isinstance(error, EmptyDocumentError):
+                    reason = "EMPTY_DOCUMENT"
+                elif isinstance(error, ChunkTooLongError):
+                    reason = "CHUNK_TOO_LONG"
+                elif isinstance(error, EmbeddingRequestInvalidError):
+                    reason = "EMBEDDING_REQUEST_INVALID"
+                else:
+                    reason = _STAGE_REASON.get(failed_stage, "INDEX_FAILED")
+                on_fail(reason)
             if on_stats is not None:
                 on_stats(page_count, chunk_count, point_count)
             return JobStatus.FAILED

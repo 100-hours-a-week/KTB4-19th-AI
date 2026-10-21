@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from zipsai.errors import EmbeddingError
+from zipsai.errors import ChunkTooLongError, EmbeddingError
 from zipsai.indexing.chunk import Chunk
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS
 from zipsai.settings import EMBEDDING_DIM
 
 EncodeOutput = tuple[list[list[float]], list[dict[str, float]]]
@@ -27,6 +28,12 @@ def embed_chunks(
     selected = [chunk for chunk in chunks if chunk.text.strip()]
     if not selected:
         return []
+
+    # 빈 청크는 서버로 가지 않으므로 번호는 전송 목록 기준이다.
+    for index, chunk in enumerate(selected):
+        length = len(chunk.text)
+        if length > MAX_TEXT_CHARS:
+            raise ChunkTooLongError(index, length, MAX_TEXT_CHARS)
 
     dense, sparse = encoder.encode([chunk.text for chunk in selected], trace_id)
     if len(dense) != len(selected) or len(sparse) != len(selected):

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,8 +15,10 @@ import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import ConverseRequest, ImageAnalysis, Route
 from zipsai.errors import (
+    ChunkTooLongError,
     ComplaintExtractionError,
     EmbeddingError,
+    EmbeddingRequestInvalidError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -112,6 +115,44 @@ def test_converse_invokes_graph_and_returns_ai_contract(monkeypatch):
     }
     assert graph.received_state is not None
     assert graph.received_state["complaint_state"] is None
+
+
+def test_converse_times_out_returns_request_timeout(monkeypatch):
+    class _SlowGraph:
+        def invoke(self, state: dict[str, object]) -> dict[str, object]:
+            time.sleep(0.2)
+            return state
+
+    monkeypatch.setattr(converse_module, "build_graph", lambda: _SlowGraph(), raising=False)
+    monkeypatch.setattr(converse_module, "CONVERSE_TIMEOUT_SECONDS", 0.05)
+
+    response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
+
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "REQUEST_TIMEOUT"
+
+
+def test_converse_stream_times_out_emits_error_and_done(monkeypatch):
+    class _SlowStreamGraph:
+        async def astream(self, state: dict[str, object], *, stream_mode: list[str]):
+            await asyncio.sleep(0.2)
+            yield "values", {
+                **state,
+                "route": Route.CLARIFY,
+                "complaint_state": None,
+                "reply": "늦은 응답",
+            }
+
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: _SlowStreamGraph()
+    )
+    monkeypatch.setattr(converse_module, "CONVERSE_TIMEOUT_SECONDS", 0.05)
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    assert response.status_code == 200
+    assert '"type": "error"' in response.text
+    assert response.text.endswith('data: {"type": "done"}\n\n')
 
 
 def test_converse_stream_returns_sse_status_reply_and_done(monkeypatch):
@@ -484,6 +525,26 @@ def test_request_done_metric_drops_unknown_outcomes():
                 "retryable": True,
             },
             id="embedding-down",
+        ),
+        pytest.param(
+            ChunkTooLongError(0, 8001, 8000),
+            503,
+            {
+                "code": "CHUNK_TOO_LONG",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="chunk-too-long",
+        ),
+        pytest.param(
+            EmbeddingRequestInvalidError(422),
+            503,
+            {
+                "code": "EMBEDDING_REQUEST_INVALID",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="embedding-request-invalid",
         ),
         pytest.param(
             VectorStoreError("Vector store query failed"),

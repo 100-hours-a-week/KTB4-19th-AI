@@ -189,7 +189,7 @@ def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
     )
     calls: list[tuple[str, str, type]] = []
 
-    def classify_text(system_prompt, user_prompt, response_format):
+    def classify_text(system_prompt, user_prompt, response_format, *, purpose=None):
         calls.append((system_prompt, user_prompt, response_format))
         return type("ParsedRoute", (), {"route": Route.KNOWLEDGE})()
 

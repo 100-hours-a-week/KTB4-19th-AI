@@ -84,6 +84,7 @@ class LlmCall:
     streaming: bool
     started: float
     structured: bool
+    provider: str = "legacy"
     image_count: int = 0
     attempt: int = 1
     retry_reason: str | None = None
@@ -139,6 +140,7 @@ class LlmCall:
                     "purpose": self.purpose,
                     "outcome": outcome,
                     "provider_host": provider_host(self.base_url),
+                    "provider": self.provider,
                     "model": self.model,
                     "attempt": self.attempt,
                     "streaming": self.streaming,
@@ -179,10 +181,12 @@ def start_llm_call(
     image_count: int = 0,
     attempt: int = 1,
     retry_reason: str | None = None,
+    provider: str = "legacy",
 ) -> LlmCall:
     return LlmCall(
         purpose=purpose or current_stage() or "unknown",
         model=model,
+        provider=provider,
         base_url=base_url,
         streaming=streaming,
         started=time.perf_counter(),
@@ -204,9 +208,11 @@ def generate_text(
     retry_reason: str | None = None,
 ) -> str:
     settings = get_settings()
+    model = settings.llm_model
     call = start_llm_call(
         purpose=purpose,
-        model=settings.llm_model,
+        model=model,
+        provider=settings.provider,
         base_url=settings.llm_base_url,
         streaming=False,
         structured=response_format is not None,
@@ -224,7 +230,7 @@ def generate_text(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
         )
         response = client.chat.completions.create(
-            model=settings.llm_model,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -295,9 +301,11 @@ async def generate_text_stream(
     attempt: int = 1,
 ) -> AsyncIterator[str]:
     settings = get_settings()
+    model = settings.llm_model
     call = start_llm_call(
         purpose=purpose,
-        model=settings.llm_model,
+        model=model,
+        provider=settings.provider,
         base_url=settings.llm_base_url,
         streaming=True,
         structured=False,
@@ -312,7 +320,7 @@ async def generate_text_stream(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
         )
         stream = await client.chat.completions.create(
-            model=settings.llm_model,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -382,11 +390,12 @@ def generate_structured[T: BaseModel](
     attempt: int = 1,
     retry_reason: str | None = None,
 ) -> T | None:
-    settings = get_settings()
+    settings = get_settings("openrouter" if purpose == "urgency" else None)
     chosen = model if model is not None else settings.llm_model
     call = start_llm_call(
         purpose=purpose,
         model=chosen,
+        provider=settings.provider,
         base_url=settings.llm_base_url,
         streaming=False,
         structured=True,

@@ -42,11 +42,13 @@ COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
 # 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
 LOCATION_PLACEHOLDER: Final = "미상"
+# /converse 한 턴 전체 상한. 개별 LLM 호출(LLM_TIMEOUT_SECONDS)이 여러 번
+# 연쇄될 수 있어 따로 둔다. ponytail: 상한 초과 시 응답은 끊지만, 스레드/비동기
+# 작업 자체를 강제 종료하진 않는다(Python은 실행 중 스레드를 취소할 수 없음).
+CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "115"))
 
-# LLM_MODEL과 달리 없어도 기동은 된다. 민원 이미지 분석만 이 값을 쓴다.
-# compose가 빈 문자열로 넘길 수 있다. getenv의 기본값은 "키가 아예 없을 때"만
-# 쓰이므로 빈 문자열이 그대로 모델명이 된다. or로 막는다.
-VLM_MODEL: Final = os.getenv("VLM_MODEL") or "z-ai/glm-5.3-flash"
+# 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
+ACTIVE_MODEL_PROVIDER: Final = "openrouter"
 LLM_JUDGE_MODEL: Final = os.getenv("LLM_JUDGE_MODEL") or None
 
 # 평가 전용. 채점 사진은 공개 URL이 없어 data URL로 넣는다. 운영 compose는
@@ -86,11 +88,12 @@ class Settings:
     llm_model: str
     llm_timeout_seconds: float
     llm_judge_model: str | None = None
-    vlm_model: str = VLM_MODEL
+    vlm_model: str = ""
     llm_price_input_per_1m: float | None = None
     llm_price_output_per_1m: float | None = None
     vlm_price_input_per_1m: float | None = None
     vlm_price_output_per_1m: float | None = None
+    provider: str = ACTIVE_MODEL_PROVIDER
 
 
 def call_cost_usd(
@@ -113,21 +116,59 @@ def call_cost_usd(
 
 
 @lru_cache
-def get_settings() -> Settings:
-    # OPENROUTER_API_KEY는 LLM_API_KEY로 넘어오기 전 이름
-    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise LlmUnavailableError("LLM_API_KEY is not configured")
-
-    model = os.getenv("LLM_MODEL")
-    if not model:
-        raise LlmUnavailableError("LLM_MODEL is not configured")
+def get_settings(provider_override: str | None = None) -> Settings:
+    profiles = {
+        "openrouter": (
+            os.getenv("OPENROUTER_API_KEY"),
+            os.getenv("OPENROUTER_BASE_URL"),
+            os.getenv("OPENROUTER_LLM_MODEL"),
+            os.getenv("OPENROUTER_VLM_MODEL"),
+            "OPENROUTER_LLM_MODEL",
+            "OPENROUTER_VLM_MODEL",
+        ),
+        "serverless": (
+            os.getenv("SERVERLESS_API_KEY"),
+            os.getenv("SERVERLESS_BASE_URL"),
+            os.getenv("SERVERLESS_MODEL"),
+            os.getenv("SERVERLESS_MODEL"),
+            "SERVERLESS_MODEL",
+            "SERVERLESS_MODEL",
+        ),
+        "pod": (
+            os.getenv("POD_API_KEY"),
+            os.getenv("POD_BASE_URL"),
+            os.getenv("POD_MODEL"),
+            os.getenv("POD_MODEL"),
+            "POD_MODEL",
+            "POD_MODEL",
+        ),
+    }
+    provider = provider_override or ACTIVE_MODEL_PROVIDER
+    if provider not in profiles:
+        raise LlmUnavailableError(
+            "ACTIVE_MODEL_PROVIDER must be openrouter, serverless, or pod"
+        )
+    api_key, base_url, llm_model, vlm_model, llm_model_env, vlm_model_env = profiles[
+        provider
+    ]
+    for name, value in (
+        (f"{provider.upper()}_API_KEY", api_key),
+        (f"{provider.upper()}_BASE_URL", base_url),
+        (llm_model_env, llm_model),
+        (vlm_model_env, vlm_model),
+    ):
+        if not value:
+            raise LlmUnavailableError(f"{name} is not configured")
+    if not base_url.startswith("https://"):
+        raise LlmUnavailableError("Provider base URLs must use HTTPS")
 
     return Settings(
         llm_api_key=api_key,
-        llm_base_url=os.getenv("LLM_BASE_URL"),
-        llm_model=model,
+        llm_base_url=base_url,
+        llm_model=llm_model,
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+        vlm_model=vlm_model,
+        provider=provider,
         llm_judge_model=LLM_JUDGE_MODEL,
         llm_price_input_per_1m=_optional_price("LLM_PRICE_INPUT_PER_1M"),
         llm_price_output_per_1m=_optional_price("LLM_PRICE_OUTPUT_PER_1M"),

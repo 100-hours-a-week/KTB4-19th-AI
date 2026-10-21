@@ -9,6 +9,8 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "zipsai"
 def test_known_codes_match_the_table():
     assert retryable_for(None) is False
     assert retryable_for("EMBEDDING_FAILED") is True
+    assert retryable_for("CHUNK_TOO_LONG") is False
+    assert retryable_for("EMBEDDING_REQUEST_INVALID") is False
     assert retryable_for("PARSE_FAILED") is False
     assert retryable_for("STALE_UPDATE") is False
 

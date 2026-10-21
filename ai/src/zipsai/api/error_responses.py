@@ -49,8 +49,18 @@ _AGENT_ERROR_MAPPING: dict[type[Exception], tuple[int, str]] = {
 }
 
 
+def _mapped_agent_error(error: Exception) -> tuple[int, str]:
+    # 서브클래스는 자기 항목이 없으면 부모의 상태·문장을 쓴다.
+    # 본문 code는 error_code()가 ERROR_CODES에서 고른다.
+    for cls in type(error).__mro__:
+        mapped = _AGENT_ERROR_MAPPING.get(cls)
+        if mapped is not None:
+            return mapped
+    raise KeyError(type(error))
+
+
 def agent_error_response(error: Exception, turn_id: str, trace_id: str) -> JSONResponse:
-    status_code, detail = _AGENT_ERROR_MAPPING[type(error)]
+    status_code, detail = _mapped_agent_error(error)
     code = error_code(error)
     # 예외를 JSON으로 바꾸고 로그를 남기지 않으면 무엇이 터졌는지가 영영 사라진다.
     logger.warning(

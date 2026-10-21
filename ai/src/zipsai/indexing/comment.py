@@ -13,6 +13,7 @@ from zipsai.contracts.comment import (
     CommentRequest,
 )
 from zipsai.contracts.notification import ItemResult, ResultStatus
+from zipsai.errors import ChunkTooLongError, EmbeddingRequestInvalidError
 from zipsai.indexing.chunk import Chunk
 from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
@@ -342,7 +343,12 @@ def _tombstone(
 
 
 def _failed(error: Exception, base: dict) -> ItemResult:
-    reason = _STAGE_REASON.get(getattr(error, "stage", None), "VECTOR_STORE_FAILED")
+    if isinstance(error, ChunkTooLongError):
+        reason = "CHUNK_TOO_LONG"
+    elif isinstance(error, EmbeddingRequestInvalidError):
+        reason = "EMBEDDING_REQUEST_INVALID"
+    else:
+        reason = _STAGE_REASON.get(getattr(error, "stage", None), "VECTOR_STORE_FAILED")
     # 마스킹 실패는 재시도해도 같은 본문이면 다시 실패한다. 답변만 skipped로 둔다.
     status = ResultStatus.SKIPPED if reason == "MASK_FAILED" else ResultStatus.FAILED
     return ItemResult(status=status, reason_code=reason, **base)

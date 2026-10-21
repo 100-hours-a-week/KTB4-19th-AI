@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 from urllib.parse import urlparse
 
-from zipsai.errors import error_code
+from zipsai.errors import ChunkTooLongError, error_code
 from zipsai.tracing import trace_step
 
 # 백엔드·embedding 로그와 같은 스키마로 조회하기 위한 공통 필드. 설정으로 뺄 값이
@@ -399,18 +399,20 @@ def stage(name: str, logger: logging.Logger, **fields: Any):
     except Exception as error:
         code = error_code(error)
         duration_ms = _record(name, started)
-        logger.exception(
-            "stage_done",
-            extra={
-                "stage": name,
-                "duration_ms": duration_ms,
-                "outcome": "fail",
-                "error_code": code,
-                "error_type": type(error).__name__,
-                "error": str(error),
-                **extra,
-            },
-        )
+        logged = {
+            "stage": name,
+            "duration_ms": duration_ms,
+            "outcome": "fail",
+            "error_code": code,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            **extra,
+        }
+        if isinstance(error, ChunkTooLongError):
+            logged["chunk_index"] = error.index
+            logged["chunk_chars"] = error.length
+            logged["max_text_chars"] = error.limit
+        logger.exception("stage_done", extra=logged)
         # 작업 전체 요약 한 줄에 어느 단계에서 죽었는지를 담기 위해 올려 보낸다.
         error.stage = name
         _observe_stage(name, "fail", duration_ms / 1000, code)
