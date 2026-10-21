@@ -15,16 +15,13 @@ from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
 from zipsai.indexing.parse import parse_document
 from zipsai.indexing.upsert import upsert_document
-from zipsai.integrations.embedding_client import BATCH_SIZE
+from zipsai.integrations.embedding_client import BATCH_SIZE, MAX_TEXT_CHARS
 from zipsai.metrics import observe_index_job, observe_tables
 from zipsai.observability import collect_timings, elapsed_ms, is_cold, stage
 
 logger = logging.getLogger(__name__)
 
 Download = Callable[[str, Path], Path]
-
-# embedding 서비스가 거부하는 길이. 이 값을 넘는 청크가 있으면 embed가 422로 확정 실패한다.
-MAX_TEXT_CHARS = 8000
 
 # 실패한 단계 → 응답 reason_code. 단계 이름은 로그의 failed_stage와 같다.
 _STAGE_REASON = {

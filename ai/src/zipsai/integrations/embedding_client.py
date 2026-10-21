@@ -15,6 +15,8 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # embedding 서비스의 MAX_BATCH_SIZE(상한)보다 작으면 되므로 낮추는 건 그쪽 변경이
 # 필요 없다. 올릴 때는 embedding/src/embedding/api/embed.py도 같이 올린다.
 BATCH_SIZE = 2
+# embedding/src/embedding/api/embed.py의 MAX_TEXT_CHARS와 같은 값이다.
+MAX_TEXT_CHARS = 8000
 # 일시 장애만 한 번 더 시도한다. embedding 컨테이너 재시작이 주 대상이라
 # 5초면 대개 되살아난다. 모자라면 다음 배치 실행이 다시 집어간다.
 ATTEMPTS = 2

@@ -1,12 +1,21 @@
 import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
 
-from zipsai.errors import EmbeddingError, EmbeddingRequestInvalidError
+from zipsai.errors import (
+    ChunkTooLongError,
+    EmbeddingError,
+    EmbeddingRequestInvalidError,
+)
+from zipsai.indexing.chunk import Chunk
+from zipsai.indexing.embed import embed_chunks
 from zipsai.integrations.embedding_client import (
     ATTEMPTS,
     BATCH_SIZE,
+    MAX_TEXT_CHARS,
     HttpEncoder,
 )
 from zipsai.knowledge import retrieve
@@ -278,3 +287,37 @@ def test_encode_retries_a_connection_failure() -> None:
 
     assert type(caught.value) is EmbeddingError
     assert len(attempts) == ATTEMPTS
+
+
+def test_overlong_chunk_is_rejected_before_http() -> None:
+    calls = 0
+    long_text = "가" * (MAX_TEXT_CHARS + 1)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    chunks = [Chunk("짧은 청크", 1, None), Chunk(long_text, 2, None)]
+    with pytest.raises(ChunkTooLongError) as caught:
+        embed_chunks(chunks, encoder_returning(handler), "trace-001")
+
+    assert calls == 0
+    assert caught.value.index == 1
+    assert caught.value.length == len(long_text)
+    assert caught.value.limit == MAX_TEXT_CHARS
+    assert long_text not in str(caught.value)
+
+
+def test_text_limit_matches_embedding_server() -> None:
+    source = (
+        Path(__file__).resolve().parents[3] / "embedding/src/embedding/api/embed.py"
+    )
+    match = re.search(
+        r"^MAX_TEXT_CHARS\s*=\s*(\d+)\s*$",
+        source.read_text(),
+        re.MULTILINE,
+    )
+
+    assert match is not None
+    assert MAX_TEXT_CHARS == int(match.group(1))
