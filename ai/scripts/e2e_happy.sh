@@ -78,16 +78,16 @@ curl -s --max-time 30 -o /dev/null -X POST \
   -H 'Content-Type: application/json' \
   -d "{\"filter\":{\"must\":[{\"key\":\"doc_id\",\"match\":{\"value\":\"$DOC_ID\"}}]}}"
 
-code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
+code=$(curl -s --max-time "$INDEX_TIMEOUT" -o /dev/null -w '%{http_code}' \
   -X POST "$API/api/v3/ai/indexing/jobs" -H 'Content-Type: application/json' \
   -d "{\"building_id\":$BUILDING_ID,\"doc_id\":\"$DOC_ID\",\"title\":\"e2e 테스트 문서\",\"file_key\":\"$FILE_KEY\"}")
-if [ "$code" = "202" ]; then
-  ok "색인 작업 수락 (202)"
+if [ "$code" = "200" ]; then
+  ok "색인 작업 완료 (200)"
 else
-  ng "색인 작업 수락 — HTTP $code"
+  ng "색인 작업 완료 — HTTP $code"
 fi
 
-# 202는 접수만 뜻한다. 청크가 실제로 Qdrant에 들어갈 때까지 기다린다.
+# 200은 작업이 끝났다는 뜻이다. 청크가 Qdrant에 들어갔는지 확인한다.
 echo "  색인 완료 대기 (최대 ${INDEX_TIMEOUT}초, docling OCR은 느리다)..."
 deadline=$((SECONDS + INDEX_TIMEOUT))
 count=0

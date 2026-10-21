@@ -72,6 +72,31 @@ def test_scrub_text_matches_the_shared_table(
     assert scrub_text(raw) == (expected, redacted)
 
 
+def test_title_and_file_key_keep_sentences_and_hex_but_hide_secrets() -> None:
+    title = "관리 규약 2026년 개정"
+    path = "s3://zipsai-files/buildings/101/0123456789abcdef0123456789abcdef.pdf"
+    kept = _line("job_accepted", doc_title=title, file_key_path=path)
+
+    assert kept["doc_title"] == title
+    assert kept["file_key_path"] == path
+    assert "redacted" not in kept
+    assert scrub_text(title) == ("[REDACTED]", True)
+    assert "[REDACTED]" in scrub_text(path)[0]
+
+    hidden = _line(
+        "job_accepted",
+        doc_title="관리 규약 Bearer abc123",
+        file_key_path=(
+            "s3://zipsai-files/buildings/101/Bearer abc123.pdf"
+            "?X-Amz-Signature=secrettoken"
+        ),
+    )
+    assert hidden["doc_title"] == "관리 규약 [REDACTED]"
+    assert "Bearer" not in hidden["file_key_path"]
+    assert "X-Amz-Signature" not in hidden["file_key_path"]
+    assert hidden["redacted"] is True
+
+
 def test_formatter_keeps_a_numeric_count_on_a_sensitive_key() -> None:
     payload = _line("stage_done", texts=3, text=["화장실 천장에서 물이 새요"])
 
