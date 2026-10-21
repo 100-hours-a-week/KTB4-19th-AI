@@ -50,6 +50,7 @@ def classify_and_analyze(
     images: list[ImageAttachment], *, system_prompt: str, user_prompt: str
 ) -> tuple[Route, ImageAnalysis, str | None]:
     settings = get_settings()
+    model = settings.vlm_model if images else settings.llm_model
     content: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
     content.extend(
         {"type": "image_url", "image_url": {"url": image.url}}
@@ -58,7 +59,8 @@ def classify_and_analyze(
     )
     call = start_llm_call(
         purpose="image_analysis" if images else "intent",
-        model=settings.vlm_model,
+        model=model,
+        provider=settings.provider,
         base_url=settings.llm_base_url,
         streaming=False,
         structured=True,
@@ -73,7 +75,7 @@ def classify_and_analyze(
         response = _get_client(
             settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
         ).chat.completions.parse(
-            model=settings.vlm_model,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content},

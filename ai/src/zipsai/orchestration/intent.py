@@ -77,6 +77,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
                     "Current route: "
                     f"{request.current_route.value if request.current_route else 'none'}",
                     _RouteOnly,
+                    purpose="intent_fallback",
                 )
                 route = fallback.route if fallback else Route.CLARIFY
             else:
