@@ -45,7 +45,7 @@ LOCATION_PLACEHOLDER: Final = "미상"
 # /converse 한 턴 전체 상한. 개별 LLM 호출(LLM_TIMEOUT_SECONDS)이 여러 번
 # 연쇄될 수 있어 따로 둔다. ponytail: 상한 초과 시 응답은 끊지만, 스레드/비동기
 # 작업 자체를 강제 종료하진 않는다(Python은 실행 중 스레드를 취소할 수 없음).
-CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "120"))
+CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "115"))
 
 # 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
 ACTIVE_MODEL_PROVIDER: Final = "openrouter"
