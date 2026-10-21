@@ -186,7 +186,6 @@ jobs:
               if role == "ai-api":
                   for key in ["QDRANT_URL", "EMBEDDING_API_URL", "S3_BUCKET",
                               "OPENROUTER_BASE_URL", "OPENROUTER_LLM_MODEL", "OPENROUTER_VLM_MODEL",
-                              "OPENROUTER_URGENCY_MODEL",
                               "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_BASE_URL", "POD_MODEL"]:
                       if not values.get(key):
                           raise ValueError("Required AI configuration is missing")
@@ -340,7 +339,6 @@ jobs:
                       ("OPENROUTER_BASE_URL", "openrouter-base-url"),
                       ("OPENROUTER_LLM_MODEL", "openrouter-llm-model"),
                       ("OPENROUTER_VLM_MODEL", "openrouter-vlm-model"),
-                      ("OPENROUTER_URGENCY_MODEL", "openrouter-urgency-model"),
                       ("SERVERLESS_BASE_URL", "serverless-base-url"),
                       ("SERVERLESS_MODEL", "serverless-model"),
                       ("POD_BASE_URL", "pod-base-url"),

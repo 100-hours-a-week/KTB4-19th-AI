@@ -35,7 +35,7 @@ from zipsai.observability import (
     track_in_flight,
 )
 from zipsai.orchestration.graph import build_graph
-from zipsai.settings import get_settings
+from zipsai.settings import CONVERSE_TIMEOUT_SECONDS, get_settings
 from zipsai.tracing import trace_turn
 
 logger = logging.getLogger(__name__)
@@ -54,11 +54,12 @@ AGENT_ERRORS = (
 
 
 @router.post("/converse", response_model=ConverseResponse)
-def converse(
+async def converse(
     request: ConverseRequest, http_request: Request
 ) -> ConverseResponse | JSONResponse:
     http_request.state.turn_id = request.turn_id
     http_request.state.trace_id = request.trace_id
+    started_at = perf_counter()
     with (
         bind(
             turn_id=request.turn_id,
@@ -77,7 +78,28 @@ def converse(
         collect_timings() as timings,
         trace_turn(request) as trace,
     ):
-        response = _handle(request, in_flight=in_flight, timings=timings)
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_handle, request, in_flight=in_flight, timings=timings),
+                timeout=CONVERSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            _request_done(
+                started_at,
+                timings,
+                {"in_flight": in_flight},
+                outcome="fail",
+                status_code=504,
+                error_code="REQUEST_TIMEOUT",
+            )
+            response = error_response(
+                status_code=504,
+                code="REQUEST_TIMEOUT",
+                detail="AI did not respond within the time budget",
+                turn_id=request.turn_id,
+                trace_id=request.trace_id,
+                retryable=True,
+            )
         if trace is not None:
             trace.update(
                 output={
@@ -180,10 +202,21 @@ async def _stream_converse(request: ConverseRequest):
                 }
             )
             settings = get_settings()
-            async for mode, event in build_graph(streaming=True).astream(
-                state,
-                stream_mode=["custom", "values"],
-            ):
+            deadline = started_at + CONVERSE_TIMEOUT_SECONDS
+            agen = aiter(
+                build_graph(streaming=True).astream(
+                    state,
+                    stream_mode=["custom", "values"],
+                )
+            )
+            while True:
+                remaining = deadline - perf_counter()
+                if remaining <= 0:
+                    raise TimeoutError("converse stream exceeded CONVERSE_TIMEOUT_SECONDS")
+                try:
+                    mode, event = await asyncio.wait_for(anext(agen), timeout=remaining)
+                except StopAsyncIteration:
+                    break
                 if mode == "custom":
                     if isinstance(event, str):
                         streamed_reply = True
@@ -233,6 +266,29 @@ async def _stream_converse(request: ConverseRequest):
                     error_type=type(error).__name__,
                 )
             raise
+        except TimeoutError as error:
+            logger.warning("stream_request_timeout")
+            if trace is not None:
+                trace.update(output={"outcome": "fail", "error_type": "RequestTimeout"})
+            _stream_request_done(
+                started_at,
+                timings,
+                in_flight,
+                outcome="fail",
+                intent_route=state.get("route") or request.current_route,
+                model=None if settings is None else settings.llm_model,
+                error_code="REQUEST_TIMEOUT",
+                error_type="RequestTimeout",
+            )
+            logged = True
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": "응답 생성 시간이 초과됐습니다.",
+                }
+            )
+            yield _sse({"type": "done"})
+            return
         except Exception as error:
             # 스트림이 시작된 뒤에는 HTTP 상태 코드를 바꿀 수 없으므로,
             # 예상하지 못한 예외도 SSE 오류 이벤트로 알리고 정상 종료한다.

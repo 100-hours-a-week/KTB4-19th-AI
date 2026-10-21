@@ -254,7 +254,7 @@ def test_assess_urgency_verifies_image_quote_against_named_attachment(
     assert result.dimensions["severity"]["status"] == "supported"
 
 
-def test_assess_urgency_returns_null_result_when_llm_times_out(
+def test_assess_urgency_returns_retry_signal_when_llm_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ):
     def _raise(**_: object):
@@ -264,16 +264,17 @@ def test_assess_urgency_returns_null_result_when_llm_times_out(
 
     result = assess_urgency(ComplaintDraft(symptom="아무 문제나"), None)
 
-    assert result.score is None
+    # -1: LLM 호출 자체가 실패함(재시도 대상). None("근거 없음")과 구분해야 한다.
+    assert result.score == -1
     assert result.is_urgent is None
 
 
-def test_assess_urgency_returns_null_result_when_llm_returns_none(
+def test_assess_urgency_returns_retry_signal_when_llm_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(urgency_llm_module, "generate_structured", lambda **_: None)
 
     result = assess_urgency(ComplaintDraft(symptom="아무 문제나"), None)
 
-    assert result.score is None
+    assert result.score == -1
     assert result.is_urgent is None

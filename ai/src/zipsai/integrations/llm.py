@@ -391,12 +391,7 @@ def generate_structured[T: BaseModel](
     retry_reason: str | None = None,
 ) -> T | None:
     settings = get_settings("openrouter" if purpose == "urgency" else None)
-    if purpose == "urgency":
-        chosen = settings.urgency_model
-        if not chosen:
-            raise LlmUnavailableError("OPENROUTER_URGENCY_MODEL is not configured")
-    else:
-        chosen = model if model is not None else settings.llm_model
+    chosen = model if model is not None else settings.llm_model
     call = start_llm_call(
         purpose=purpose,
         model=chosen,
