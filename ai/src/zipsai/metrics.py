@@ -4,6 +4,8 @@ import os
 
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
+from zipsai.indexing.reasons import RETRYABLE
+
 SERVICE = "ai-api"
 
 BUILD_INFO = Gauge(
@@ -92,6 +94,15 @@ INDEX_JOBS = Counter(
     "Indexing jobs",
     ["outcome", "failed_stage"],
 )
+INDEXING_IN_FLIGHT = Gauge(
+    "zipsai_indexing_in_flight",
+    "Document and comment indexing jobs being handled",
+)
+INDEXING_RESULTS = Counter(
+    "zipsai_indexing_results_total",
+    "Indexing results by kind, status, and reason",
+    ["kind", "status", "reason_code"],
+)
 TABLES = Counter("zipsai_parse_tables_total", "Document tables", ["result"])
 
 
@@ -171,6 +182,17 @@ def observe_ask_repeat(field: str) -> None:
 
 def observe_index_job(outcome: str, failed_stage: str | None) -> None:
     INDEX_JOBS.labels(outcome=outcome, failed_stage=failed_stage or "none").inc()
+
+
+def record_indexing_result(kind: str, status: str, reason_code: str | None) -> None:
+    # 성공은 라벨이 비면 시계열이 갈라진다. 표에 없는 코드는 other로 모아 카디널리티를 막는다.
+    if reason_code is None:
+        label = "none"
+    elif reason_code in RETRYABLE:
+        label = reason_code
+    else:
+        label = "other"
+    INDEXING_RESULTS.labels(kind=kind, status=status, reason_code=label).inc()
 
 
 def observe_tables(*, parsed: int, failed: int | None) -> None:

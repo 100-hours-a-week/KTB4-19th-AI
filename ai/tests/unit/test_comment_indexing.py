@@ -5,12 +5,15 @@ from qdrant_client import QdrantClient
 
 from zipsai.contracts.comment import CommentDeleteRequest, CommentRequest
 from zipsai.contracts.notification import ResultStatus
+from zipsai.errors import EmbeddingError, EmbeddingRequestInvalidError
 from zipsai.indexing.comment import (
     comment_point_id,
     delete_comments,
     upsert_comments,
 )
+from zipsai.indexing.reasons import retryable_for
 from zipsai.indexing.upsert import delete_missing_documents
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS
 from zipsai.integrations.qdrant import ensure_collection
 from zipsai.settings import EMBEDDING_DIM, QDRANT_COLLECTION
 
@@ -19,12 +22,15 @@ T0 = datetime(2026, 10, 15, 0, 0, 12, tzinfo=KST)
 
 
 class FakeEncoder:
-    def __init__(self, fail: bool = False):
+    def __init__(self, fail: bool = False, error: Exception | None = None):
         self.fail = fail
+        self.error = error
         self.calls = 0
 
     def encode(self, texts, trace_id):
         self.calls += 1
+        if self.error is not None:
+            raise self.error
         if self.fail:
             raise RuntimeError("down")
         return [[0.5] * EMBEDDING_DIM for _ in texts], [{"7": 0.5} for _ in texts]
@@ -341,3 +347,166 @@ def test_stored_comment_is_found_by_the_same_question(client):
     found = search_chunks(vector, 101, client=client)
 
     assert [p.payload["complaint_detail_id"] for p in found] == [9001]
+
+
+def test_embeddings_are_sent_in_batches(client):
+    from math import ceil
+
+    from zipsai.integrations.embedding_client import BATCH_SIZE
+
+    encoder = FakeEncoder()
+    stats: dict = {}
+    items = [item(detail_id=9000 + index) for index in range(100)]
+
+    results = upsert_comments(
+        request(*items), encoder=encoder, client=client, stats=stats
+    )
+
+    assert encoder.calls == ceil(100 / BATCH_SIZE)
+    assert stats["embed_batches"] == ceil(100 / BATCH_SIZE)
+    assert stats["embed_ms"] >= 0
+    assert len(stats["item_ms"]) == 100
+    assert [result.status for result in results] == [ResultStatus.SUCCEEDED] * 100
+
+
+def test_one_embed_batch_failure_leaves_the_others(client):
+    class FlakyEncoder(FakeEncoder):
+        def encode(self, texts, trace_id):
+            if self.calls == 1:
+                self.calls += 1
+                raise RuntimeError("down")
+            return super().encode(texts, trace_id)
+
+    results = run(
+        client,
+        *[item(detail_id=9001 + index) for index in range(6)],
+        encoder=FlakyEncoder(),
+    )
+
+    assert [(result.status, result.reason_code) for result in results] == [
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.FAILED, "EMBEDDING_FAILED"),
+        (ResultStatus.FAILED, "EMBEDDING_FAILED"),
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.SUCCEEDED, None),
+    ]
+    assert stored(client, 9001) is not None
+    assert stored(client, 9003) is None
+    assert stored(client, 9005) is not None
+
+
+def test_one_upsert_batch_failure_leaves_the_others(client):
+    original = client.upsert
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("qdrant")
+        return original(*args, **kwargs)
+
+    client.upsert = flaky
+
+    results = run(client, *[item(detail_id=9001 + index) for index in range(6)])
+
+    assert [(result.status, result.reason_code) for result in results] == [
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.FAILED, "VECTOR_STORE_FAILED"),
+        (ResultStatus.FAILED, "VECTOR_STORE_FAILED"),
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.SUCCEEDED, None),
+    ]
+
+
+def test_short_comment_is_left_out_of_the_embed_batch(client):
+    encoder = FakeEncoder()
+
+    results = run(
+        client,
+        item(9001),
+        item(9002, comment="짧음"),
+        item(9003),
+        encoder=encoder,
+    )
+
+    assert encoder.calls == 1
+    assert [(result.status, result.reason_code) for result in results] == [
+        (ResultStatus.SUCCEEDED, None),
+        (ResultStatus.SKIPPED, "COMMENT_TOO_SHORT"),
+        (ResultStatus.SUCCEEDED, None),
+    ]
+
+
+def test_mask_failure_is_skipped(client, monkeypatch):
+    def boom(_pages):
+        raise RuntimeError("mask")
+
+    monkeypatch.setattr("zipsai.indexing.comment.apply_masking", boom)
+
+    [result] = run(client, item())
+
+    assert (result.status, result.reason_code) == (ResultStatus.SKIPPED, "MASK_FAILED")
+
+
+def test_delete_stats_have_no_embed(client):
+    stats: dict = {}
+    body = {
+        "trace_id": "t",
+        "items": [
+            {
+                "building_id": 101,
+                "complaint_detail_id": 9001,
+                "updated_at": T0.isoformat(),
+            }
+        ],
+    }
+
+    delete_comments(
+        CommentDeleteRequest.model_validate(body), client=client, stats=stats
+    )
+
+    assert stats["embed_batches"] == 0
+    assert stats["embed_ms"] == 0
+    assert len(stats["item_ms"]) == 1
+
+
+def test_overlong_comment_is_not_retryable(client):
+    encoder = FakeEncoder()
+    long_comment = "가" * (MAX_TEXT_CHARS + 1)
+
+    [result] = run(client, item(comment=long_comment), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "CHUNK_TOO_LONG",
+    )
+    assert retryable_for(result.reason_code) is False
+    assert encoder.calls == 0
+
+
+def test_rejected_comment_embed_is_not_retryable(client):
+    encoder = FakeEncoder(error=EmbeddingRequestInvalidError(400))
+
+    [result] = run(client, item(), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "EMBEDDING_REQUEST_INVALID",
+    )
+    assert retryable_for(result.reason_code) is False
+    assert encoder.calls == 1
+
+
+def test_comment_embedding_outage_stays_retryable(client):
+    encoder = FakeEncoder(error=EmbeddingError("down"))
+
+    [result] = run(client, item(), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "EMBEDDING_FAILED",
+    )
+    assert retryable_for(result.reason_code) is True
+    assert encoder.calls == 1

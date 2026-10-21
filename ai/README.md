@@ -15,8 +15,8 @@ recorded, while prompt text, replies, and image URLs are removed before export.
 The root records only message presence, image count, history length, status,
 route, and `turn_id`.
 
-Each accepted `/indexing/jobs` background job creates one trace with its setup,
-indexing, and reconciliation stages. Its trace records only job status and counts;
+Each `/indexing/jobs` request returns HTTP 200 with the indexing result and
+creates one trace with its setup, indexing, and reconciliation stages. Its trace records only job status and counts;
 document titles, file keys, and content are excluded.
 
 On macOS, if OTLP export reports a certificate verification error, set

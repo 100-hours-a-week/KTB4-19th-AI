@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -5,10 +6,18 @@ import pytest
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
-from zipsai.errors import DocumentFetchError
+from zipsai.errors import (
+    DocumentFetchError,
+    EmbeddingError,
+    EmbeddingRequestInvalidError,
+)
 from zipsai.indexing import pipeline
+from zipsai.indexing.chunk import Chunk
 from zipsai.indexing.pipeline import run_indexing_job
+from zipsai.indexing.reasons import retryable_for
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS
 from zipsai.integrations.qdrant import create_client, ensure_collection
+from zipsai.observability import JsonFormatter
 from zipsai.settings import EMBEDDING_DIM, QDRANT_COLLECTION
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "two-pages.pdf"
@@ -138,14 +147,17 @@ def test_download_failure_marks_job_failed(qdrant: QdrantClient) -> None:
     def failing_download(file_key: str, _: Path) -> Path:
         raise DocumentFetchError(f"Failed to fetch '{file_key}'")
 
+    reasons: list[str] = []
     result = run_indexing_job(
         make_request(),
         download=failing_download,
         encoder=FakeEncoder(),
         client=qdrant,
+        on_fail=reasons.append,
     )
 
     assert result is JobStatus.FAILED
+    assert reasons == ["FILE_DOWNLOAD_FAILED"]
     assert stored_points(qdrant) == 0
 
 
@@ -178,3 +190,113 @@ def test_empty_document_fails_the_job_and_keeps_existing_vectors(
     assert result is JobStatus.FAILED
     # 실패로 끝나도 기존 문서는 남아야 한다. upsert가 delete보다 먼저 거절한다.
     assert stored_points(qdrant) == before
+
+
+class _RaisingEncoder:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls = 0
+
+    def encode(
+        self, texts: list[str], trace_id: str
+    ) -> tuple[list[list[float]], list[dict[str, float]]]:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return [[0.0] * EMBEDDING_DIM for _ in texts], [{} for _ in texts]
+
+
+def _stub_chunks(text: str):
+    def chunk(_pages: list[dict[str, Any]]) -> list[Chunk]:
+        return [Chunk(text, 1, None)]
+
+    return chunk
+
+
+def test_overlong_chunk_is_not_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant: QdrantClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    long_text = "가" * (MAX_TEXT_CHARS + 1)
+    encoder = _RaisingEncoder()
+    monkeypatch.setattr(
+        pipeline, "parse_document", stub_parse([{"page": 1, "text": "본문"}])
+    )
+    monkeypatch.setattr(pipeline, "chunk_pages", _stub_chunks(long_text))
+    reasons: list[str] = []
+
+    with caplog.at_level(logging.ERROR, logger="zipsai.indexing.pipeline"):
+        result = run_indexing_job(
+            make_request(),
+            download=stub_download,
+            encoder=encoder,
+            client=qdrant,
+            on_fail=reasons.append,
+        )
+
+    assert result is JobStatus.FAILED
+    assert reasons == ["CHUNK_TOO_LONG"]
+    assert retryable_for(reasons[0]) is False
+    assert encoder.calls == 0
+    embed_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stage_done" and record.stage == "embed"
+    ]
+    assert embed_logs
+    record = embed_logs[-1]
+    assert record.error_code == "CHUNK_TOO_LONG"
+    assert record.chunk_index == 0
+    assert record.chunk_chars == len(long_text)
+    assert record.max_text_chars == MAX_TEXT_CHARS
+    assert long_text not in record.error
+    assert long_text not in JsonFormatter().format(record)
+
+
+def test_rejected_embed_is_not_retryable(
+    monkeypatch: pytest.MonkeyPatch, qdrant: QdrantClient
+) -> None:
+    encoder = _RaisingEncoder(EmbeddingRequestInvalidError(422))
+    monkeypatch.setattr(
+        pipeline, "parse_document", stub_parse([{"page": 1, "text": "본문"}])
+    )
+    monkeypatch.setattr(pipeline, "chunk_pages", _stub_chunks("짧은 청크"))
+    reasons: list[str] = []
+
+    result = run_indexing_job(
+        make_request(),
+        download=stub_download,
+        encoder=encoder,
+        client=qdrant,
+        on_fail=reasons.append,
+    )
+
+    assert result is JobStatus.FAILED
+    assert reasons == ["EMBEDDING_REQUEST_INVALID"]
+    assert retryable_for(reasons[0]) is False
+    assert encoder.calls == 1
+
+
+def test_embedding_outage_stays_retryable(
+    monkeypatch: pytest.MonkeyPatch, qdrant: QdrantClient
+) -> None:
+    encoder = _RaisingEncoder(EmbeddingError("down"))
+    monkeypatch.setattr(
+        pipeline, "parse_document", stub_parse([{"page": 1, "text": "본문"}])
+    )
+    monkeypatch.setattr(pipeline, "chunk_pages", _stub_chunks("짧은 청크"))
+    reasons: list[str] = []
+
+    result = run_indexing_job(
+        make_request(),
+        download=stub_download,
+        encoder=encoder,
+        client=qdrant,
+        on_fail=reasons.append,
+    )
+
+    assert result is JobStatus.FAILED
+    assert reasons == ["EMBEDDING_FAILED"]
+    assert retryable_for(reasons[0]) is True
+    assert encoder.calls == 1

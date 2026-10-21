@@ -1,5 +1,7 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime
+from time import perf_counter
 from uuid import NAMESPACE_OID, uuid5
 
 from qdrant_client import QdrantClient, models
@@ -11,16 +13,18 @@ from zipsai.contracts.comment import (
     CommentRequest,
 )
 from zipsai.contracts.notification import ItemResult, ResultStatus
+from zipsai.errors import ChunkTooLongError, EmbeddingRequestInvalidError
 from zipsai.indexing.chunk import Chunk
 from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
+from zipsai.integrations.embedding_client import BATCH_SIZE
 from zipsai.integrations.qdrant import (
     COMMENT_SOURCE_TYPE,
     DENSE_VECTOR,
     SPARSE_VECTOR,
     to_sparse_vector,
 )
-from zipsai.observability import stage
+from zipsai.observability import elapsed_ms, stage
 from zipsai.settings import COMMENT_MIN_CHARS, LOCATION_PLACEHOLDER, QDRANT_COLLECTION
 
 logger = logging.getLogger(__name__)
@@ -28,7 +32,7 @@ logger = logging.getLogger(__name__)
 # converse 근거 표기에 쓴다. 입주민에게 comment id를 보여줄 수는 없다.
 COMMENT_TITLE = "관리자 답변"
 
-# 단계 이름은 로그의 failed_stage와 같고, BE 통지의 reason_code로 옮겨 간다.
+# 단계 이름은 로그의 failed_stage와 같고, 응답 reason_code로 옮겨 간다.
 _STAGE_REASON = {
     "mask": "MASK_FAILED",
     "embed": "EMBEDDING_FAILED",
@@ -43,18 +47,93 @@ def comment_point_id(building_id: int, complaint_detail_id: int) -> str:
     return str(uuid5(NAMESPACE_OID, f"{building_id}:{complaint_detail_id}"))
 
 
+@dataclass
+class _Pending:
+    index: int
+    item: CommentItem
+    base: dict
+    point_id: str
+    comment: str
+    text: str
+    location: str | None
+    masked: bool
+    pre_ms: int
+
+
 def upsert_comments(
     request: CommentRequest,
     *,
     encoder: Encoder,
     client: QdrantClient,
     collection: str = QDRANT_COLLECTION,
+    stats: dict[str, object] | None = None,
 ) -> list[ItemResult]:
-    """항목마다 독립으로 처리한다. 한 건이 실패해도 나머지는 계속 간다."""
-    return [
-        _upsert_one(item, request.trace_id, encoder, client, collection)
-        for item in request.items
-    ]
+    """조회·마스킹을 먼저 끝내고, 임베딩할 항목만 묶어 보낸다.
+
+    한 건이 실패해도 나머지는 계속 간다. 결과 순서는 요청 순서와 같다.
+    """
+    results: list[ItemResult | None] = [None] * len(request.items)
+    item_ms = [0] * len(request.items)
+    pending: list[_Pending] = []
+
+    for index, item in enumerate(request.items):
+        started = perf_counter()
+        base = {
+            "complaint_detail_id": item.complaint_detail_id,
+            "updated_at": item.updated_at_raw,
+        }
+        point_id = comment_point_id(item.building_id, item.complaint_detail_id)
+        try:
+            with stage("lookup", logger):
+                stored = _stored_updated_at(client, collection, point_id)
+            # 툼스톤의 삭제 시각도 기준이 된다. 삭제 뒤 늦게 온 옛 요청은 여기서 걸린다.
+            stale = _stale_result(stored, item.updated_at, base)
+            if stale is not None:
+                results[index] = stale
+                item_ms[index] = elapsed_ms(started)
+                continue
+
+            with stage("mask", logger):
+                comment, text, location, masked = _masked_text(item)
+
+            if len(comment) < COMMENT_MIN_CHARS:
+                # 새 내용이 쓸모없으면 옛 답변도 같이 내려야 낡은 답이 계속 나가지 않는다.
+                # 지우지 않고 툼스톤으로 바꿔야 이 시각보다 옛 요청이 되살아나지 않는다.
+                with stage("tombstone", logger):
+                    _tombstone(client, collection, point_id, item.building_id, item)
+                results[index] = ItemResult(
+                    status=ResultStatus.SKIPPED,
+                    reason_code="COMMENT_TOO_SHORT",
+                    **base,
+                )
+                item_ms[index] = elapsed_ms(started)
+                continue
+        except Exception as error:  # noqa: BLE001 — 항목 하나의 실패가 나머지를 막지 않는다
+            results[index] = _failed(error, base)
+            item_ms[index] = elapsed_ms(started)
+            continue
+        pending.append(
+            _Pending(
+                index,
+                item,
+                base,
+                point_id,
+                comment,
+                text,
+                location,
+                masked,
+                elapsed_ms(started),
+            )
+        )
+
+    embed_batches, embed_ms = _embed_pending(
+        pending, results, item_ms, request.trace_id, encoder, client, collection
+    )
+    if stats is not None:
+        stats["embed_batches"] = embed_batches
+        stats["embed_ms"] = embed_ms
+        stats["item_ms"] = item_ms
+    return [result for result in results if result is not None]
 
 
 def delete_comments(
@@ -62,9 +141,12 @@ def delete_comments(
     *,
     client: QdrantClient,
     collection: str = QDRANT_COLLECTION,
+    stats: dict[str, object] | None = None,
 ) -> list[ItemResult]:
     results = []
+    item_ms: list[int] = []
     for item in request.items:
+        started = perf_counter()
         base = {
             "complaint_detail_id": item.complaint_detail_id,
             "updated_at": item.updated_at_raw,
@@ -86,62 +168,82 @@ def delete_comments(
         else:
             # 없던 댓글을 지워도 성공이다. 툼스톤이 남아 이후 옛 요청을 막는다.
             results.append(ItemResult(status=ResultStatus.SUCCEEDED, **base))
+        finally:
+            item_ms.append(elapsed_ms(started))
+    if stats is not None:
+        stats["embed_batches"] = 0
+        stats["embed_ms"] = 0
+        stats["item_ms"] = item_ms
     return results
 
 
-def _upsert_one(
-    item: CommentItem,
+def _embed_pending(
+    pending: list[_Pending],
+    results: list[ItemResult | None],
+    item_ms: list[int],
     trace_id: str,
     encoder: Encoder,
     client: QdrantClient,
     collection: str,
-) -> ItemResult:
-    base = {
-        "complaint_detail_id": item.complaint_detail_id,
-        "updated_at": item.updated_at_raw,
-    }
-    point_id = comment_point_id(item.building_id, item.complaint_detail_id)
-    try:
-        with stage("lookup", logger):
-            stored = _stored_updated_at(client, collection, point_id)
-        # 툼스톤의 삭제 시각도 기준이 된다. 삭제 뒤 늦게 온 옛 요청은 여기서 걸린다.
-        stale = _stale_result(stored, item.updated_at, base)
-        if stale is not None:
-            return stale
-
-        with stage("mask", logger):
-            comment, text, location, masked = _masked_text(item)
-
-        if len(comment) < COMMENT_MIN_CHARS:
-            # 새 내용이 쓸모없으면 옛 답변도 같이 내려야 낡은 답이 계속 나가지 않는다.
-            # 지우지 않고 툼스톤으로 바꿔야 이 시각보다 옛 요청이 되살아나지 않는다.
-            with stage("tombstone", logger):
-                _tombstone(client, collection, point_id, item.building_id, item)
-            return ItemResult(
-                status=ResultStatus.SKIPPED, reason_code="COMMENT_TOO_SHORT", **base
+) -> tuple[int, int]:
+    # HttpEncoder.encode는 내부 묶음 하나가 죽으면 그 호출 전체를 버린다.
+    # BATCH_SIZE씩 끊어 호출해야 죽은 묶음만 실패로 남고 다음 묶음은 계속 간다.
+    embed_batches = 0
+    embed_ms = 0
+    for start in range(0, len(pending), BATCH_SIZE):
+        group = pending[start : start + BATCH_SIZE]
+        embed_batches += 1
+        batch_started = perf_counter()
+        try:
+            with stage("embed", logger):
+                embedded = embed_chunks(
+                    [Chunk(entry.text, 1, None) for entry in group],
+                    encoder,
+                    trace_id,
+                )
+        except Exception as error:  # noqa: BLE001 — 이 묶음만 실패하고 다음 묶음은 계속
+            batch_ms = elapsed_ms(batch_started)
+            embed_ms += batch_ms
+            for entry in group:
+                results[entry.index] = _failed(error, entry.base)
+                item_ms[entry.index] = entry.pre_ms + batch_ms
+            continue
+        batch_ms = elapsed_ms(batch_started)
+        embed_ms += batch_ms
+        for entry in group:
+            item_ms[entry.index] = entry.pre_ms + batch_ms
+        try:
+            with stage("upsert", logger):
+                client.upsert(
+                    collection_name=collection,
+                    points=[
+                        models.PointStruct(
+                            id=entry.point_id,
+                            vector={
+                                DENSE_VECTOR: vector.dense,
+                                SPARSE_VECTOR: to_sparse_vector(vector.sparse),
+                            },
+                            payload=_payload(
+                                entry.item,
+                                entry.comment,
+                                entry.text,
+                                entry.location,
+                                entry.masked,
+                            ),
+                        )
+                        for entry, vector in zip(group, embedded, strict=True)
+                    ],
+                    wait=True,
+                )
+        except Exception as error:  # noqa: BLE001 — 이 묶음의 저장만 실패한다
+            for entry in group:
+                results[entry.index] = _failed(error, entry.base)
+            continue
+        for entry in group:
+            results[entry.index] = ItemResult(
+                status=ResultStatus.SUCCEEDED, **entry.base
             )
-
-        with stage("embed", logger):
-            embedded = embed_chunks([Chunk(text, 1, None)], encoder, trace_id)[0]
-
-        with stage("upsert", logger):
-            client.upsert(
-                collection_name=collection,
-                points=[
-                    models.PointStruct(
-                        id=point_id,
-                        vector={
-                            DENSE_VECTOR: embedded.dense,
-                            SPARSE_VECTOR: to_sparse_vector(embedded.sparse),
-                        },
-                        payload=_payload(item, comment, text, location, masked),
-                    )
-                ],
-                wait=True,
-            )
-    except Exception as error:  # noqa: BLE001 — 항목 하나의 실패가 나머지를 막지 않는다
-        return _failed(error, base)
-    return ItemResult(status=ResultStatus.SUCCEEDED, **base)
+    return embed_batches, embed_ms
 
 
 def _masked_text(item: CommentItem) -> tuple[str, str, str | None, bool]:
@@ -241,5 +343,12 @@ def _tombstone(
 
 
 def _failed(error: Exception, base: dict) -> ItemResult:
-    reason = _STAGE_REASON.get(getattr(error, "stage", None), "VECTOR_STORE_FAILED")
-    return ItemResult(status=ResultStatus.FAILED, reason_code=reason, **base)
+    if isinstance(error, ChunkTooLongError):
+        reason = "CHUNK_TOO_LONG"
+    elif isinstance(error, EmbeddingRequestInvalidError):
+        reason = "EMBEDDING_REQUEST_INVALID"
+    else:
+        reason = _STAGE_REASON.get(getattr(error, "stage", None), "VECTOR_STORE_FAILED")
+    # 마스킹 실패는 재시도해도 같은 본문이면 다시 실패한다. 답변만 skipped로 둔다.
+    status = ResultStatus.SKIPPED if reason == "MASK_FAILED" else ResultStatus.FAILED
+    return ItemResult(status=status, reason_code=reason, **base)
