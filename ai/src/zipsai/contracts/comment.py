@@ -24,7 +24,7 @@ class _Versioned(BaseModel):
     # 오프셋이 없으면 어느 쪽이 더 최신인지 비교가 틀어진다. 오프셋 없는 값은 거절한다.
     # 요청을 보낸 시각이 아니라 BE에 기록된 수정·삭제 시각이다. 재전송도 같은 값이어야 한다.
     updated_at: AwareDatetime
-    # 통지에 요청 원문을 그대로 돌려주려고 둔다. 파싱한 값을 다시 직렬화하면
+    # 응답에 요청 원문을 그대로 돌려주려고 둔다. 파싱한 값을 다시 직렬화하면
     # 밀리초 자릿수가 달라져 BE가 문자열로 건을 찾지 못한다.
     updated_at_raw: str = Field(default="", exclude=True)
 
@@ -63,3 +63,10 @@ class CommentDeleteItem(_Versioned):
 class CommentDeleteRequest(BaseModel):
     trace_id: NonBlank
     items: Annotated[list[CommentDeleteItem], Field(min_length=1, max_length=MAX_ITEMS)]
+
+
+class CommentBatch(BaseModel):
+    """trace_id와 건수만 검사한다. 항목 오류는 200 본문에서 건별로 돌려준다."""
+
+    trace_id: NonBlank
+    items: Annotated[list[Any], Field(min_length=1, max_length=MAX_ITEMS)]

@@ -138,14 +138,17 @@ def test_download_failure_marks_job_failed(qdrant: QdrantClient) -> None:
     def failing_download(file_key: str, _: Path) -> Path:
         raise DocumentFetchError(f"Failed to fetch '{file_key}'")
 
+    reasons: list[str] = []
     result = run_indexing_job(
         make_request(),
         download=failing_download,
         encoder=FakeEncoder(),
         client=qdrant,
+        on_fail=reasons.append,
     )
 
     assert result is JobStatus.FAILED
+    assert reasons == ["FILE_DOWNLOAD_FAILED"]
     assert stored_points(qdrant) == 0
 
 

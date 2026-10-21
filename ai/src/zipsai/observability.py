@@ -57,18 +57,30 @@ _SENSITIVE_KEYS: Final = frozenset(
     }
 )
 
-_SECRET_PATTERNS: Final = (
+# 제목과 S3 경로는 띄어쓴 한글·파일명 hex가 정상 값이다.
+# 이 키만 문장·hex 패턴을 건너뛰고 아래 비밀 패턴만 적용한다.
+_SECRET_ONLY_KEYS: Final = frozenset({"doc_title", "file_key_path"})
+
+# sk-, Bearer, api_key=, presigned 쿼리.
+_CREDENTIAL_PATTERNS: Final = (
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
     re.compile(r"Bearer\s+\S+", re.IGNORECASE),
     re.compile(
         r"(?i)(api[-_]?key|authorization|secret)([\"'\s:=]+)[^\s\"']{6,}"
     ),
+    re.compile(r"X-Amz-[A-Za-z0-9\-_]+=[^&\s]+"),
+)
+
+_SECRET_PATTERNS: Final = (
+    _CREDENTIAL_PATTERNS[0],
+    _CREDENTIAL_PATTERNS[1],
+    _CREDENTIAL_PATTERNS[2],
     re.compile(r"\b[0-9a-fA-F]{32,}\b"),
     # 슬래시는 빼 둔다. 넣으면 트레이스백의 파일 경로가 통째로 지워진다.
     re.compile(r"\b[A-Za-z0-9+]{40,}={0,2}\b"),
     re.compile(r"01[016789]-?\d{3,4}-?\d{4}"),
     re.compile(r"\d{2,3}[가-힣]\d{4}"),
-    re.compile(r"X-Amz-[A-Za-z0-9\-_]+=[^&\s]+"),
+    _CREDENTIAL_PATTERNS[3],
     # 띄어쓴 한글은 입주민 문장이다. 분류 이름(한 단어)은 남겨 둔다.
     re.compile(r"[가-힣]{2,}(?:\s+[가-힣0-9A-Za-z]{1,})+"),
 )
@@ -132,22 +144,24 @@ def _scrub_url(url: str) -> str:
     return url
 
 
-def scrub_text(value: str) -> tuple[str, bool]:
-    """키·토큰·전화·문장처럼 보이면 지운다. 지웠으면 True."""
+def _mask(text: str, patterns: tuple[re.Pattern[str], ...]) -> tuple[str, bool]:
     redacted = False
-    text = value
 
     def mark(match: re.Match[str]) -> str:
         nonlocal redacted
         redacted = True
         return _REDACTED
 
-    text = _URL_PATTERN.sub(lambda match: _scrub_url(match.group(0)), text)
-    if text != value:
-        redacted = True
-    for pattern in _SECRET_PATTERNS:
+    for pattern in patterns:
         text = pattern.sub(mark, text)
     return text, redacted
+
+
+def scrub_text(value: str) -> tuple[str, bool]:
+    """키·토큰·전화·문장처럼 보이면 지운다. 지웠으면 True."""
+    text = _URL_PATTERN.sub(lambda match: _scrub_url(match.group(0)), value)
+    masked, pattern_hit = _mask(text, _SECRET_PATTERNS)
+    return masked, text != value or pattern_hit
 
 
 def scrub_value(key: str, value: Any) -> tuple[Any, bool]:
@@ -155,6 +169,8 @@ def scrub_value(key: str, value: Any) -> tuple[Any, bool]:
     if key in _SENSITIVE_KEYS and isinstance(value, (str, list, dict)):
         return _REDACTED, True
     if isinstance(value, str):
+        if key in _SECRET_ONLY_KEYS:
+            return _mask(value, _CREDENTIAL_PATTERNS)
         return scrub_text(value)
     if isinstance(value, dict):
         redacted = False
