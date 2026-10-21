@@ -94,7 +94,6 @@ class Settings:
     vlm_price_input_per_1m: float | None = None
     vlm_price_output_per_1m: float | None = None
     provider: str = ACTIVE_MODEL_PROVIDER
-    urgency_model: str | None = None
 
 
 def call_cost_usd(
@@ -175,7 +174,4 @@ def get_settings(provider_override: str | None = None) -> Settings:
         llm_price_output_per_1m=_optional_price("LLM_PRICE_OUTPUT_PER_1M"),
         vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
         vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
-        urgency_model=(
-            os.getenv("OPENROUTER_URGENCY_MODEL") if provider == "openrouter" else None
-        ),
     )

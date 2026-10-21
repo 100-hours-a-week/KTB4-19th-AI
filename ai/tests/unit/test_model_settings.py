@@ -15,7 +15,6 @@ from zipsai.settings import get_settings
             {
                 "OPENROUTER_LLM_MODEL": "openrouter-llm",
                 "OPENROUTER_VLM_MODEL": "openrouter-vlm",
-                "OPENROUTER_URGENCY_MODEL": "openai/gpt-6-luna",
             },
             ("openrouter-llm", "openrouter-vlm"),
         ),
@@ -51,8 +50,6 @@ def test_get_settings_uses_code_selected_provider_profile(
     assert settings.llm_api_key == "provider-secret"
     assert settings.llm_base_url == "https://provider.example/v1"
     assert (settings.llm_model, settings.vlm_model) == expected_models
-    if provider == "openrouter":
-        assert settings.urgency_model == "openai/gpt-6-luna"
     get_settings.cache_clear()
 
 
@@ -75,7 +72,6 @@ def test_get_settings_can_select_openrouter_for_urgency_only(monkeypatch):
         "OPENROUTER_BASE_URL": "https://openrouter.example/v1",
         "OPENROUTER_LLM_MODEL": "openrouter-default",
         "OPENROUTER_VLM_MODEL": "openrouter-vlm",
-        "OPENROUTER_URGENCY_MODEL": "openai/gpt-6-luna",
     }.items():
         monkeypatch.setenv(name, value)
     get_settings.cache_clear()
@@ -83,7 +79,7 @@ def test_get_settings_can_select_openrouter_for_urgency_only(monkeypatch):
     settings = get_settings("openrouter")
 
     assert settings.provider == "openrouter"
-    assert settings.urgency_model == "openai/gpt-6-luna"
+    assert settings.llm_model == "openrouter-default"
     get_settings.cache_clear()
 
 
