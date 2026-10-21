@@ -110,9 +110,10 @@ class UrgencyResult:
     dimensions: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
-def _numeric_value(dimension: DimensionJudgment) -> int:
+def _numeric_value(name: DimensionName, dimension: DimensionJudgment) -> int:
+    """unknown은 그 축의 최소 유효값으로 다룬다 — 0은 "확인된 안전"과 혼동된다."""
     if dimension.status == "unknown":
-        return 0
+        return _MIN_SUPPORTED_VALUE[name]
     assert dimension.value is not None
     return dimension.value
 
@@ -141,19 +142,23 @@ def score_urgency(evidence: UrgencyEvidence, config: ScoringConfig) -> UrgencyRe
             dimensions=_dimension_summary(evidence),
         )
 
-    severity_value = _numeric_value(evidence.severity)
-    imminence_value = _numeric_value(evidence.imminence)
-    scope_value = _numeric_value(evidence.scope)
+    severity_value = _numeric_value("severity", evidence.severity)
+    imminence_value = _numeric_value("imminence", evidence.imminence)
+    scope_value = _numeric_value("scope", evidence.scope)
 
     score = round(
         config.severity_weight * severity_value / 4
         + config.imminence_weight * imminence_value / 4
         + config.scope_weight * scope_value / 2
     )
-    is_urgent = evidence.imminence.status != "explicitly_absent" and (
-        score >= config.urgent_threshold
-        or (evidence.severity.status == "supported" and evidence.severity.value == 4)
+    severity_override = (
+        evidence.severity.status == "supported" and evidence.severity.value == 4
     )
+    score_based = (
+        evidence.imminence.status != "explicitly_absent"
+        and score >= config.urgent_threshold
+    )
+    is_urgent = severity_override or score_based
     return UrgencyResult(
         score=score,
         is_urgent=is_urgent,
@@ -190,7 +195,8 @@ _UNKNOWN_DIMENSION = DimensionJudgment(status="unknown")
 
 
 def _unscored_result() -> UrgencyResult:
-    # shortcut: -1 signals assessment failure for retry; replace when API adds a result-code field.
+    # -1은 "LLM 호출 자체가 실패했다(재시도 대상)"는 신호다. score_urgency()가
+    # 근거 부족으로 반환하는 None("정상 응답했지만 근거 없음")과 구분해야 한다.
     return UrgencyResult(score=-1, is_urgent=None, urgency_version=URGENCY_VERSION)
 
 
