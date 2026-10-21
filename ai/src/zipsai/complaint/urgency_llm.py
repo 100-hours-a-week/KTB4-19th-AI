@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 DimensionName = Literal["severity", "imminence", "scope"]
 DimensionStatus = Literal["supported", "explicitly_absent", "unknown"]
-EvidenceSource = Literal["symptom", "image"]
+EvidenceSource = Literal["symptom", "location", "image"]
 
 _MAX_VALUE: dict[DimensionName, int] = {
     "severity": 4,
@@ -55,6 +55,8 @@ def _validate_dimension(name: DimensionName, dimension: DimensionJudgment) -> No
         raise ValueError(f"{name}: {dimension.status} status must carry a quote")
     if dimension.source is None:
         raise ValueError(f"{name}: {dimension.status} status must carry a source")
+    if dimension.source == "location" and name != "scope":
+        raise ValueError(f"{name}: location can only support scope")
     if dimension.source == "image" and dimension.attachment_id is None:
         raise ValueError(f"{name}: source=image must carry an attachment_id")
 
@@ -89,13 +91,13 @@ class ScoringConfig:
     version: str
 
 
-URGENCY_VERSION = "urgency-llm-v1-phase0"
+URGENCY_VERSION = "urgency-llm-v3"
 
 DEFAULT_SCORING_CONFIG = ScoringConfig(
     severity_weight=50,
     imminence_weight=30,
     scope_weight=20,
-    urgent_threshold=60,
+    urgent_threshold=50,
     version=URGENCY_VERSION,
 )
 
@@ -108,9 +110,9 @@ class UrgencyResult:
     dimensions: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
-def _numeric_value(dimension: DimensionJudgment, *, unknown_value: int) -> int:
+def _numeric_value(dimension: DimensionJudgment) -> int:
     if dimension.status == "unknown":
-        return unknown_value
+        return 0
     assert dimension.value is not None
     return dimension.value
 
@@ -127,10 +129,11 @@ def _dimension_summary(evidence: UrgencyEvidence) -> dict[str, dict[str, object]
 
 
 def score_urgency(evidence: UrgencyEvidence, config: ScoringConfig) -> UrgencyResult:
-    """합산 공식이 임박성 낮은 S=4를 과소평가하는 걸 막으려고 severity==4면 점수와
-    무관하게 is_urgent를 강제한다 — 2026-10-17 재설계 문서의 override 규칙."""
-    dimensions = (evidence.severity, evidence.imminence, evidence.scope)
-    if all(dimension.status == "unknown" for dimension in dimensions):
+    """근거가 하나도 없으면 0점으로 오해시키지 않고 미판정(null)로 둔다."""
+    if all(
+        dimension.status == "unknown"
+        for dimension in (evidence.severity, evidence.imminence, evidence.scope)
+    ):
         return UrgencyResult(
             score=None,
             is_urgent=None,
@@ -138,17 +141,18 @@ def score_urgency(evidence: UrgencyEvidence, config: ScoringConfig) -> UrgencyRe
             dimensions=_dimension_summary(evidence),
         )
 
-    severity_value = _numeric_value(evidence.severity, unknown_value=1)
-    imminence_value = _numeric_value(evidence.imminence, unknown_value=1)
-    scope_value = _numeric_value(evidence.scope, unknown_value=0)
+    severity_value = _numeric_value(evidence.severity)
+    imminence_value = _numeric_value(evidence.imminence)
+    scope_value = _numeric_value(evidence.scope)
 
     score = round(
         config.severity_weight * severity_value / 4
         + config.imminence_weight * imminence_value / 4
         + config.scope_weight * scope_value / 2
     )
-    is_urgent = score >= config.urgent_threshold or (
-        evidence.severity.status == "supported" and evidence.severity.value == 4
+    is_urgent = evidence.imminence.status != "explicitly_absent" and (
+        score >= config.urgent_threshold
+        or (evidence.severity.status == "supported" and evidence.severity.value == 4)
     )
     return UrgencyResult(
         score=score,
@@ -186,7 +190,8 @@ _UNKNOWN_DIMENSION = DimensionJudgment(status="unknown")
 
 
 def _unscored_result() -> UrgencyResult:
-    return UrgencyResult(score=None, is_urgent=None, urgency_version=URGENCY_VERSION)
+    # shortcut: -1 signals assessment failure for retry; replace when API adds a result-code field.
+    return UrgencyResult(score=-1, is_urgent=None, urgency_version=URGENCY_VERSION)
 
 
 def _format_image_evidence(image_analysis: ImageAnalysis | None) -> str:
@@ -217,7 +222,10 @@ def _image_summary(
 
 
 def _verify_dimension(
-    dimension: DimensionJudgment, symptom: str, image_analysis: ImageAnalysis | None
+    dimension: DimensionJudgment,
+    symptom: str,
+    location: str,
+    image_analysis: ImageAnalysis | None,
 ) -> DimensionJudgment:
     if dimension.status == "unknown":
         return dimension
@@ -225,6 +233,8 @@ def _verify_dimension(
         return _UNKNOWN_DIMENSION
     if dimension.source == "symptom":
         source_text = symptom
+    elif dimension.source == "location":
+        source_text = location
     elif dimension.source == "image":
         source_text = _image_summary(image_analysis, dimension.attachment_id)
     else:
@@ -235,19 +245,26 @@ def _verify_dimension(
 
 
 def _verify_evidence(
-    evidence: UrgencyEvidence, symptom: str, image_analysis: ImageAnalysis | None
+    evidence: UrgencyEvidence,
+    symptom: str,
+    location: str,
+    image_analysis: ImageAnalysis | None,
 ) -> UrgencyEvidence:
     return UrgencyEvidence(
-        severity=_verify_dimension(evidence.severity, symptom, image_analysis),
-        imminence=_verify_dimension(evidence.imminence, symptom, image_analysis),
-        scope=_verify_dimension(evidence.scope, symptom, image_analysis),
+        severity=_verify_dimension(
+            evidence.severity, symptom, location, image_analysis
+        ),
+        imminence=_verify_dimension(
+            evidence.imminence, symptom, location, image_analysis
+        ),
+        scope=_verify_dimension(evidence.scope, symptom, location, image_analysis),
     )
 
 
 def assess_urgency(
     draft: ComplaintDraft, image_analysis: ImageAnalysis | None
 ) -> UrgencyResult:
-    """완료 카드 시점에만 호출한다. 실패해도 예외를 던지지 않고 null 결과로 흡수한다 —
+    """완료 카드 시점에 호출하며, 실패는 -1로 표시해 재시도 가능하게 한다 —
     긴급도는 참고 정보일 뿐 접수 흐름을 막으면 안 된다(2026-10-17 설계 "실패·안전 동작")."""
     symptom = draft.symptom or ""
     system_message, user_message = URGENCY_ASSESSMENT_PROMPT.format_messages(
@@ -279,5 +296,7 @@ def assess_urgency(
         )
         return _unscored_result()
 
-    verified = _verify_evidence(evidence, symptom, image_analysis)
+    verified = _verify_evidence(
+        evidence, symptom, draft.location or "", image_analysis
+    )
     return score_urgency(verified, DEFAULT_SCORING_CONFIG)

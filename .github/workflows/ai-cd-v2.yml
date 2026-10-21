@@ -138,7 +138,7 @@ jobs:
           import time
           import uuid
           
-          SECRET_KEYS = {"LLM_API_KEY", "OPENROUTER_API_KEY", "QDRANT_API_KEY",
+          SECRET_KEYS = {"OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "QDRANT_API_KEY",
                          "QDRANT_ADMIN_API_KEY", "QDRANT_READ_ONLY_API_KEY", "LANGFUSE_SECRET_KEY",
                          "QDRANT__SERVICE__API_KEY", "QDRANT__SERVICE__READ_ONLY_API_KEY",
                          "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
@@ -185,11 +185,17 @@ jobs:
               role = config["service"]
               if role == "ai-api":
                   for key in ["QDRANT_URL", "EMBEDDING_API_URL", "S3_BUCKET",
-                              "LLM_BASE_URL", "LLM_MODEL", "VLM_MODEL", "LLM_API_KEY"]:
+                              "OPENROUTER_BASE_URL", "OPENROUTER_LLM_MODEL", "OPENROUTER_VLM_MODEL",
+                              "OPENROUTER_URGENCY_MODEL",
+                              "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_BASE_URL", "POD_MODEL"]:
                       if not values.get(key):
                           raise ValueError("Required AI configuration is missing")
-                  if not values["LLM_BASE_URL"].startswith("https://"):
-                      raise ValueError("External inference requires HTTPS")
+                  for key in ["OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY"]:
+                      if not values.get(key):
+                          raise ValueError("All provider API keys are required")
+                  for key in ["OPENROUTER_BASE_URL", "SERVERLESS_BASE_URL", "POD_BASE_URL"]:
+                      if not values[key].startswith("https://"):
+                          raise ValueError("Provider base URLs must use HTTPS")
                   if not values.get("QDRANT_ADMIN_API_KEY"):
                       raise ValueError("Qdrant admin key is required")
               if role == "qdrant":
@@ -330,9 +336,25 @@ jobs:
                   tags.get("Environment") != environment or tags.get("Project") != "zipsai"):
                   raise ValueError("Refusing a non-matching V2 AI instance")
               if service == "ai-api":
-                  for key, suffix in [("LLM_BASE_URL", "llm-base-url"), ("VLM_MODEL", "vlm-model")]:
+                  for key, suffix in [
+                      ("OPENROUTER_BASE_URL", "openrouter-base-url"),
+                      ("OPENROUTER_LLM_MODEL", "openrouter-llm-model"),
+                      ("OPENROUTER_VLM_MODEL", "openrouter-vlm-model"),
+                      ("OPENROUTER_URGENCY_MODEL", "openrouter-urgency-model"),
+                      ("SERVERLESS_BASE_URL", "serverless-base-url"),
+                      ("SERVERLESS_MODEL", "serverless-model"),
+                      ("POD_BASE_URL", "pod-base-url"),
+                      ("POD_MODEL", "pod-model"),
+                  ]:
                       if host["runtime_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
-                          raise ValueError("Apply the new AI parameter mappings before deployment")
+                          raise ValueError("Apply all AI provider parameter mappings before deployment")
+                  for key, suffix in [
+                      ("OPENROUTER_API_KEY", "openrouter-api-key"),
+                      ("SERVERLESS_API_KEY", "serverless-api-key"),
+                      ("POD_API_KEY", "pod-api-key"),
+                  ]:
+                      if host["secret_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
+                          raise ValueError("Apply all AI provider secret mappings before deployment")
               if environment == "prod" and service in {"ai-api", "embedding"}:
                   expected = "/zipsai/prod/ai/v2/langfuse/"
                   for key, suffix in [("LANGFUSE_BASE_URL", "base-url"), ("LANGFUSE_PUBLIC_KEY", "public-key")]:
