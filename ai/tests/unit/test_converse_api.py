@@ -15,8 +15,10 @@ import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import ConverseRequest, ImageAnalysis, Route
 from zipsai.errors import (
+    ChunkTooLongError,
     ComplaintExtractionError,
     EmbeddingError,
+    EmbeddingRequestInvalidError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -523,6 +525,26 @@ def test_request_done_metric_drops_unknown_outcomes():
                 "retryable": True,
             },
             id="embedding-down",
+        ),
+        pytest.param(
+            ChunkTooLongError(0, 8001, 8000),
+            503,
+            {
+                "code": "CHUNK_TOO_LONG",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="chunk-too-long",
+        ),
+        pytest.param(
+            EmbeddingRequestInvalidError(422),
+            503,
+            {
+                "code": "EMBEDDING_REQUEST_INVALID",
+                "detail": "Embedding service is unavailable",
+                "retryable": True,
+            },
+            id="embedding-request-invalid",
         ),
         pytest.param(
             VectorStoreError("Vector store query failed"),

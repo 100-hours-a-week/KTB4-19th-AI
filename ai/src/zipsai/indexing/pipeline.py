@@ -8,7 +8,12 @@ from time import perf_counter
 from qdrant_client import QdrantClient
 
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
-from zipsai.errors import EmptyDocumentError, error_code
+from zipsai.errors import (
+    ChunkTooLongError,
+    EmbeddingRequestInvalidError,
+    EmptyDocumentError,
+    error_code,
+)
 from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, embed_chunks
@@ -143,11 +148,15 @@ def run_indexing_job(
             )
             observe_index_job("fail", failed_stage)
             if on_fail is not None:
-                on_fail(
-                    "EMPTY_DOCUMENT"
-                    if isinstance(error, EmptyDocumentError)
-                    else _STAGE_REASON.get(failed_stage, "INDEX_FAILED")
-                )
+                if isinstance(error, EmptyDocumentError):
+                    reason = "EMPTY_DOCUMENT"
+                elif isinstance(error, ChunkTooLongError):
+                    reason = "CHUNK_TOO_LONG"
+                elif isinstance(error, EmbeddingRequestInvalidError):
+                    reason = "EMBEDDING_REQUEST_INVALID"
+                else:
+                    reason = _STAGE_REASON.get(failed_stage, "INDEX_FAILED")
+                on_fail(reason)
             if on_stats is not None:
                 on_stats(page_count, chunk_count, point_count)
             return JobStatus.FAILED

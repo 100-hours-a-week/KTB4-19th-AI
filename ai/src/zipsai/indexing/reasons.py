@@ -20,11 +20,14 @@ RETRYABLE: dict[str, bool] = {
     "STALE_UPDATE": False,
     "CLEAN_FAILED": False,
     "CHUNK_FAILED": False,
+    "CHUNK_TOO_LONG": False,
+    "EMBEDDING_REQUEST_INVALID": False,
 }
 
 # 소스에 적힌 reason_code 리터럴. 환경 변수 이름이나 다른 오류 코드는 빠진다.
 _LITERAL = re.compile(
-    r'"(?:(?:[A-Z]+_)+(?:FAILED|UPDATE)|EMPTY_DOCUMENT|COMMENT_TOO_SHORT)"'
+    r'"(?:(?:[A-Z]+_)+(?:FAILED|UPDATE)|EMPTY_DOCUMENT|COMMENT_TOO_SHORT'
+    r'|CHUNK_TOO_LONG|EMBEDDING_REQUEST_INVALID)"'
 )
 
 
