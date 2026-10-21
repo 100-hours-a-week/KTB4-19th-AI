@@ -42,6 +42,10 @@ COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
 # 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
 LOCATION_PLACEHOLDER: Final = "미상"
+# /converse 한 턴 전체 상한. 개별 LLM 호출(LLM_TIMEOUT_SECONDS)이 여러 번
+# 연쇄될 수 있어 따로 둔다. ponytail: 상한 초과 시 응답은 끊지만, 스레드/비동기
+# 작업 자체를 강제 종료하진 않는다(Python은 실행 중 스레드를 취소할 수 없음).
+CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "120"))
 
 # 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
 ACTIVE_MODEL_PROVIDER: Final = "openrouter"
