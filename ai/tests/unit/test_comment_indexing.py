@@ -5,12 +5,15 @@ from qdrant_client import QdrantClient
 
 from zipsai.contracts.comment import CommentDeleteRequest, CommentRequest
 from zipsai.contracts.notification import ResultStatus
+from zipsai.errors import EmbeddingError, EmbeddingRequestInvalidError
 from zipsai.indexing.comment import (
     comment_point_id,
     delete_comments,
     upsert_comments,
 )
+from zipsai.indexing.reasons import retryable_for
 from zipsai.indexing.upsert import delete_missing_documents
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS
 from zipsai.integrations.qdrant import ensure_collection
 from zipsai.settings import EMBEDDING_DIM, QDRANT_COLLECTION
 
@@ -19,12 +22,15 @@ T0 = datetime(2026, 10, 15, 0, 0, 12, tzinfo=KST)
 
 
 class FakeEncoder:
-    def __init__(self, fail: bool = False):
+    def __init__(self, fail: bool = False, error: Exception | None = None):
         self.fail = fail
+        self.error = error
         self.calls = 0
 
     def encode(self, texts, trace_id):
         self.calls += 1
+        if self.error is not None:
+            raise self.error
         if self.fail:
             raise RuntimeError("down")
         return [[0.5] * EMBEDDING_DIM for _ in texts], [{"7": 0.5} for _ in texts]
@@ -464,3 +470,43 @@ def test_delete_stats_have_no_embed(client):
     assert stats["embed_batches"] == 0
     assert stats["embed_ms"] == 0
     assert len(stats["item_ms"]) == 1
+
+
+def test_overlong_comment_is_not_retryable(client):
+    encoder = FakeEncoder()
+    long_comment = "가" * (MAX_TEXT_CHARS + 1)
+
+    [result] = run(client, item(comment=long_comment), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "CHUNK_TOO_LONG",
+    )
+    assert retryable_for(result.reason_code) is False
+    assert encoder.calls == 0
+
+
+def test_rejected_comment_embed_is_not_retryable(client):
+    encoder = FakeEncoder(error=EmbeddingRequestInvalidError(400))
+
+    [result] = run(client, item(), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "EMBEDDING_REQUEST_INVALID",
+    )
+    assert retryable_for(result.reason_code) is False
+    assert encoder.calls == 1
+
+
+def test_comment_embedding_outage_stays_retryable(client):
+    encoder = FakeEncoder(error=EmbeddingError("down"))
+
+    [result] = run(client, item(), encoder=encoder)
+
+    assert (result.status, result.reason_code) == (
+        ResultStatus.FAILED,
+        "EMBEDDING_FAILED",
+    )
+    assert retryable_for(result.reason_code) is True
+    assert encoder.calls == 1

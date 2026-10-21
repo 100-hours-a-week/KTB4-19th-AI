@@ -4,7 +4,7 @@ import logging
 import pytest
 
 from zipsai import observability
-from zipsai.errors import LlmTimeoutError
+from zipsai.errors import ChunkTooLongError, LlmTimeoutError
 from zipsai.observability import (
     SERVICE_NAME,
     JsonFormatter,
@@ -91,6 +91,27 @@ def test_mapped_failure_carries_the_shared_error_code(
         raise LlmTimeoutError("too slow")
 
     assert _records(caplog)[0].error_code == "MODEL_TIMEOUT"
+
+
+def test_overlong_chunk_log_keeps_the_length_and_drops_the_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    long_text = "가" * 8001
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(ChunkTooLongError),
+        stage("embed", logger),
+    ):
+        raise ChunkTooLongError(1, len(long_text), 8000)
+
+    record = _records(caplog)[0]
+    assert record.outcome == "fail"
+    assert record.error_code == "CHUNK_TOO_LONG"
+    assert record.chunk_index == 1
+    assert record.chunk_chars == 8001
+    assert record.max_text_chars == 8000
+    assert long_text not in record.error
+    assert long_text not in (record.exc_text or "")
 
 
 def test_skipped_stage_is_distinguishable_from_a_missing_one(

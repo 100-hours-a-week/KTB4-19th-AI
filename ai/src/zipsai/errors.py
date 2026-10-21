@@ -6,6 +6,23 @@ class EmbeddingError(ValueError):
     pass
 
 
+class ChunkTooLongError(EmbeddingError):
+    """청크가 임베딩 서버 글자 수 한도를 넘는다. 문서 문제라 재시도하지 않는다."""
+
+    def __init__(self, index: int, length: int, limit: int) -> None:
+        self.index = index
+        self.length = length
+        self.limit = limit
+        super().__init__(f"chunk {index} has {length} characters, limit is {limit}")
+
+
+class EmbeddingRequestInvalidError(EmbeddingError):
+    """임베딩 서버가 요청 자체를 거절했다. 계약이 어긋난 것이라 재시도하지 않는다."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"status={status_code}")
+
+
 class DocumentFetchError(ValueError):
     pass
 
@@ -61,6 +78,8 @@ ERROR_CODES: dict[type[Exception], str] = {
     LlmUnavailableError: "DEPENDENCY_NOT_READY",
     IntentClassificationError: "MODEL_UPSTREAM_ERROR",
     ComplaintExtractionError: "MODEL_UPSTREAM_ERROR",
+    ChunkTooLongError: "CHUNK_TOO_LONG",
+    EmbeddingRequestInvalidError: "EMBEDDING_REQUEST_INVALID",
     EmbeddingError: "DEPENDENCY_NOT_READY",
     VectorStoreError: "DEPENDENCY_NOT_READY",
 }

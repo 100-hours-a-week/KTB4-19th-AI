@@ -1,12 +1,21 @@
 import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
 
-from zipsai.errors import EmbeddingError
+from zipsai.errors import (
+    ChunkTooLongError,
+    EmbeddingError,
+    EmbeddingRequestInvalidError,
+)
+from zipsai.indexing.chunk import Chunk
+from zipsai.indexing.embed import embed_chunks
 from zipsai.integrations.embedding_client import (
     ATTEMPTS,
     BATCH_SIZE,
+    MAX_TEXT_CHARS,
     HttpEncoder,
 )
 from zipsai.knowledge import retrieve
@@ -116,11 +125,12 @@ def test_client_error_does_not_keep_the_response_body() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(422, text=sentence)
 
-    with pytest.raises(EmbeddingError) as caught:
+    with pytest.raises(EmbeddingRequestInvalidError) as caught:
         encoder_returning(handler).encode(["텍스트"], "trace-001")
 
     assert sentence not in str(caught.value)
-    assert "status=422" in str(caught.value)
+    assert str(caught.value) == "status=422"
+    assert caught.value.__cause__ is None
 
 
 def test_encode_raises_typed_error_on_server_error() -> None:
@@ -224,23 +234,90 @@ def test_encode_gives_up_after_the_retry() -> None:
         attempts.append(1)
         return httpx.Response(503, json={"detail": "Model is still loading"})
 
-    with pytest.raises(EmbeddingError):
+    with pytest.raises(EmbeddingError) as caught:
         encoder_returning(handler).encode(["청크"], "trace-001")
 
+    assert type(caught.value) is EmbeddingError
     assert len(attempts) == ATTEMPTS
 
 
-def test_encode_does_not_retry_a_rejected_request() -> None:
-    # 422는 같은 요청을 다시 보내도 같은 거절이 온다.
+@pytest.mark.parametrize("status_code", [400, 422])
+def test_encode_does_not_retry_a_rejected_request(status_code: int) -> None:
+    # 4xx는 같은 요청을 다시 보내도 같은 거절이 온다. 408·429는 여기 없다.
+    attempts: list[int] = []
+    sentence = "texts must hold at most 32 items"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(status_code, json={"detail": sentence})
+
+    with pytest.raises(EmbeddingRequestInvalidError) as caught:
+        encoder_returning(handler).encode(["청크"], "trace-001")
+
+    assert str(caught.value) == f"status={status_code}"
+    assert sentence not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert len(attempts) == 1
+
+
+@pytest.mark.parametrize("status_code", [408, 429])
+def test_encode_retries_a_transient_client_status(status_code: int) -> None:
     attempts: list[int] = []
 
     def handler(_: httpx.Request) -> httpx.Response:
         attempts.append(1)
-        return httpx.Response(422, json={"detail": "texts must hold at most 32 items"})
+        return httpx.Response(status_code, text="slow down")
 
-    with pytest.raises(EmbeddingError, match="status=422") as caught:
+    with pytest.raises(EmbeddingError) as caught:
         encoder_returning(handler).encode(["청크"], "trace-001")
 
-    assert "at most 32 items" not in str(caught.value)
+    assert type(caught.value) is EmbeddingError
+    assert len(attempts) == ATTEMPTS
 
-    assert len(attempts) == 1
+
+def test_encode_retries_a_connection_failure() -> None:
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        raise httpx.ConnectError("connection refused", request=request)
+
+    with pytest.raises(EmbeddingError) as caught:
+        encoder_returning(handler).encode(["청크"], "trace-001")
+
+    assert type(caught.value) is EmbeddingError
+    assert len(attempts) == ATTEMPTS
+
+
+def test_overlong_chunk_is_rejected_before_http() -> None:
+    calls = 0
+    long_text = "가" * (MAX_TEXT_CHARS + 1)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"dense": [[0.1]], "sparse": [{}]})
+
+    chunks = [Chunk("짧은 청크", 1, None), Chunk(long_text, 2, None)]
+    with pytest.raises(ChunkTooLongError) as caught:
+        embed_chunks(chunks, encoder_returning(handler), "trace-001")
+
+    assert calls == 0
+    assert caught.value.index == 1
+    assert caught.value.length == len(long_text)
+    assert caught.value.limit == MAX_TEXT_CHARS
+    assert long_text not in str(caught.value)
+
+
+def test_text_limit_matches_embedding_server() -> None:
+    source = (
+        Path(__file__).resolve().parents[3] / "embedding/src/embedding/api/embed.py"
+    )
+    match = re.search(
+        r"^MAX_TEXT_CHARS\s*=\s*(\d+)\s*$",
+        source.read_text(),
+        re.MULTILINE,
+    )
+
+    assert match is not None
+    assert MAX_TEXT_CHARS == int(match.group(1))
