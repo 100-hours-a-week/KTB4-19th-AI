@@ -16,6 +16,7 @@ COPY ai/src/zipsai/__init__.py ./src/zipsai/__init__.py
 COPY ai/src/zipsai/errors.py ./src/zipsai/errors.py
 COPY ai/src/zipsai/indexing/__init__.py ./src/zipsai/indexing/__init__.py
 COPY ai/src/zipsai/indexing/parse.py ./src/zipsai/indexing/parse.py
+COPY ai/src/zipsai/indexing/pdf_text.py ./src/zipsai/indexing/pdf_text.py
 RUN PYTHONPATH=/app/src /app/.venv/bin/python scripts/prefetch_models.py
 RUN /app/.venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 COPY ai/src ./src
