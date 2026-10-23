@@ -17,6 +17,7 @@ dependencies = [
     "langgraph>=1.2.11",
     "openai>=3.14.0",
     "prometheus-client>=0.26.0",
+    "pdfplumber>=0.11.10",
     "pydantic>=2.13.5,<3",
     "qdrant-client==1.19.0",
     "tiktoken>=0.14.0",
@@ -45,6 +46,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.7",
+    "transformers>=4.40",
 ]
 
 [tool.ruff]

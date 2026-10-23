@@ -82,6 +82,9 @@ def run_indexing_job(
                     step["table_fail_reasons"] = getattr(pages, "table_fail_reasons", None)
                     step["images_found"] = getattr(pages, "images_found", None)
                     step["parser_status"] = getattr(pages, "parser_status", None)
+                    step["parser"] = getattr(pages, "parser", None)
+                    step["fallback_reason"] = getattr(pages, "fallback_reason", None)
+                    step["text_layer"] = getattr(pages, "text_layer", None)
                     step["ocr_used"] = getattr(pages, "ocr_used", None)
                     step["failed_pages"] = getattr(pages, "failed_pages", None)
                     observe_tables(

@@ -228,3 +228,6 @@ __marimo__/
 
 # macOS Finder metadata
 .DS_Store
+
+# 표 파서 비교 측정. 스크립트와 결과는 커밋하지 않는다.
+evals/table/

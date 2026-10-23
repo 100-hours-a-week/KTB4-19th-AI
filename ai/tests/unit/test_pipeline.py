@@ -13,6 +13,7 @@ from zipsai.errors import (
 )
 from zipsai.indexing import pipeline
 from zipsai.indexing.chunk import Chunk
+from zipsai.indexing.parse import ParsedPages
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.reasons import retryable_for
 from zipsai.integrations.embedding_client import MAX_TEXT_CHARS
@@ -66,6 +67,36 @@ def qdrant() -> QdrantClient:
     client = create_client(":memory:")
     ensure_collection(client)
     return client
+
+
+def test_parse_log_records_parser_route(
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant: QdrantClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pages = ParsedPages([{"page": 1, "text": "본문"}])
+    pages.parser = "pdfplumber"
+    pages.fallback_reason = None
+    pages.text_layer = "ok"
+    monkeypatch.setattr(pipeline, "parse_document", lambda _source: pages)
+
+    with caplog.at_level(logging.INFO, logger="zipsai.indexing.pipeline"):
+        result = run_indexing_job(
+            make_request(),
+            download=stub_download,
+            encoder=FakeEncoder(),
+            client=qdrant,
+        )
+
+    assert result is JobStatus.SUCCEEDED
+    parse_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stage_done" and getattr(record, "stage", None) == "parse"
+    ]
+    assert parse_logs[-1].parser == "pdfplumber"
+    assert parse_logs[-1].text_layer == "ok"
+    assert parse_logs[-1].fallback_reason is None
 
 
 def test_success_path_upserts_chunks_and_marks_succeeded(qdrant: QdrantClient) -> None:
