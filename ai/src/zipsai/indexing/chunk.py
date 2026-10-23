@@ -7,7 +7,7 @@ CHUNK_SIZE = 400
 CHUNK_OVERLAP = 50
 # 표는 이 글자 수까지만 묶는다. 512토큰인지는 테스트가 확인한다.
 TABLE_CHUNK_CHARS = 400
-TABLE_CHUNK_FORMAT = "markdown"
+TABLE_CHUNK_FORMAT = "fields"
 
 _SEP = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
 _DASHES = str.maketrans({"–": "-", "—": "-", "―": "-", "−": "-"})
