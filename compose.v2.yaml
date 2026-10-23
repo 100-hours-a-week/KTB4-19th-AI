@@ -5,11 +5,10 @@ services:
     restart: unless-stopped
     env_file: [runtime.env]
     logging:
-      driver: awslogs
+      driver: json-file
       options:
-        awslogs-region: ${AWS_REGION:?}
-        awslogs-group: ${LOG_GROUP:?}
-        awslogs-stream: ai-api
+        max-size: "10m"
+        max-file: "3"
         mode: non-blocking
         max-buffer-size: 4m
     ports: ["8000:8000"]
@@ -27,11 +26,10 @@ services:
     restart: unless-stopped
     env_file: [runtime.env]
     logging:
-      driver: awslogs
+      driver: json-file
       options:
-        awslogs-region: ${AWS_REGION:?}
-        awslogs-group: ${LOG_GROUP:?}
-        awslogs-stream: embedding
+        max-size: "10m"
+        max-file: "3"
         mode: non-blocking
         max-buffer-size: 4m
     ports: ["8000:8000"]
@@ -48,11 +46,10 @@ services:
     restart: unless-stopped
     env_file: [runtime.env]
     logging:
-      driver: awslogs
+      driver: json-file
       options:
-        awslogs-region: ${AWS_REGION:?}
-        awslogs-group: ${LOG_GROUP:?}
-        awslogs-stream: qdrant
+        max-size: "10m"
+        max-file: "3"
         mode: non-blocking
         max-buffer-size: 4m
     ports: ["6333:6333"]
