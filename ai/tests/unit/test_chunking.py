@@ -77,14 +77,22 @@ def test_splits_long_unstructured_document_on_sentences_with_overlap() -> None:
     )
 
 
-def test_keeps_consecutive_table_lines_atomic_even_when_oversized() -> None:
+def test_splits_an_oversized_table_by_rows_without_overlap() -> None:
     table = "\n".join(f"| {i} | {'값' * 30} |" for i in range(20))
 
     chunks = chunk_pages([{"page": 1, "text": table}])
 
-    assert len(chunks) == 1
-    assert chunks[0].text == table
-    assert len(chunks[0].text) > 400
+    assert len(chunks) > 1
+    rows = [line for chunk in chunks for line in chunk.text.splitlines() if line.strip()]
+    assert rows == table.splitlines()
+    for chunk in chunks:
+        piece_rows = [line for line in chunk.text.splitlines() if line.strip()]
+        if len(piece_rows) > 1:
+            assert len(chunk.text) <= 400
+    assert all(
+        not current.text.startswith(previous.text[-50:])
+        for previous, current in pairwise(chunks)
+    )
 
 
 def test_maps_content_on_second_page_and_keeps_placeholders() -> None:
