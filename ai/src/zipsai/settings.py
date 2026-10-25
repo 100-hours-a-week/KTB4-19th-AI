@@ -48,7 +48,7 @@ LOCATION_PLACEHOLDER: Final = "미상"
 CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "115"))
 
 # 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
-ACTIVE_MODEL_PROVIDER: Final = "openrouter"
+ACTIVE_MODEL_PROVIDER: Final = "serverless"
 LLM_JUDGE_MODEL: Final = os.getenv("LLM_JUDGE_MODEL") or None
 
 # 평가 전용. 채점 사진은 공개 URL이 없어 data URL로 넣는다. 운영 compose는

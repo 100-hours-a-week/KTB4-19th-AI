@@ -390,7 +390,7 @@ def generate_structured[T: BaseModel](
     attempt: int = 1,
     retry_reason: str | None = None,
 ) -> T | None:
-    settings = get_settings("openrouter" if purpose == "urgency" else None)
+    settings = get_settings()
     chosen = model if model is not None else settings.llm_model
     call = start_llm_call(
         purpose=purpose,
