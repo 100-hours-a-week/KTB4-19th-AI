@@ -48,6 +48,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      POD_API_KEY: ${POD_API_KEY:-}
+      POD_BASE_URL: ${POD_BASE_URL:-}
+      POD_MODEL: ${POD_MODEL:-}
       LLM_MODEL: ${LLM_MODEL:-}
       # 비어 있으면 settings.py의 DEFAULT_VLM_MODEL로 떨어진다.
       VLM_MODEL: ${VLM_MODEL:-}
