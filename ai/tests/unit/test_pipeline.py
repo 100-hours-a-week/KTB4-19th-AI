@@ -13,6 +13,7 @@ from zipsai.errors import (
 )
 from zipsai.indexing import pipeline
 from zipsai.indexing.chunk import Chunk
+from zipsai.indexing.embed import count_embed_texts
 from zipsai.indexing.parse import ParsedPages
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.reasons import retryable_for
@@ -97,6 +98,40 @@ def test_parse_log_records_parser_route(
     assert parse_logs[-1].parser == "pdfplumber"
     assert parse_logs[-1].text_layer == "ok"
     assert parse_logs[-1].fallback_reason is None
+
+
+def test_embed_stage_counts_duplicate_texts(
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant: QdrantClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    chunks = [
+        Chunk("같은", 1, None),
+        Chunk("같은", 1, None),
+        Chunk("같은", 1, None),
+        Chunk("다른1", 1, None),
+        Chunk("다른2", 1, None),
+    ]
+    assert count_embed_texts(chunks) == (5, 3)
+    monkeypatch.setattr(pipeline, "parse_document", lambda _source: [{"page": 1, "text": "본문"}])
+    monkeypatch.setattr(pipeline, "chunk_pages", lambda _pages: chunks)
+
+    with caplog.at_level(logging.INFO, logger="zipsai.indexing.pipeline"):
+        result = run_indexing_job(
+            make_request(),
+            download=stub_download,
+            encoder=FakeEncoder(),
+            client=qdrant,
+        )
+
+    assert result is JobStatus.SUCCEEDED
+    embed_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stage_done" and getattr(record, "stage", None) == "embed"
+    ]
+    assert embed_logs[-1].unique_texts == 3
+    assert embed_logs[-1].duplicate_texts == 2
 
 
 def test_success_path_upserts_chunks_and_marks_succeeded(qdrant: QdrantClient) -> None:

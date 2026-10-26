@@ -22,6 +22,12 @@ class EmbeddedChunk:
     sparse: dict[str, float]
 
 
+def count_embed_texts(chunks: list[Chunk]) -> tuple[int, int]:
+    """공백만인 청크를 뺀 전체 개수와 서로 다른 글 개수. embed_chunks와 같은 기준이다."""
+    texts = [chunk.text for chunk in chunks if chunk.text.strip()]
+    return len(texts), len(set(texts))
+
+
 def embed_chunks(
     chunks: list[Chunk], encoder: Encoder, trace_id: str
 ) -> list[EmbeddedChunk]:

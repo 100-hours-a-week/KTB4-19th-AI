@@ -16,11 +16,11 @@ from zipsai.errors import (
 )
 from zipsai.indexing.chunk import chunk_pages
 from zipsai.indexing.clean import apply_cleaning
-from zipsai.indexing.embed import Encoder, embed_chunks
+from zipsai.indexing.embed import Encoder, count_embed_texts, embed_chunks
 from zipsai.indexing.mask import apply_masking
 from zipsai.indexing.parse import parse_document
 from zipsai.indexing.upsert import upsert_document
-from zipsai.integrations.embedding_client import BATCH_SIZE, MAX_TEXT_CHARS
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS, client_batch_size
 from zipsai.metrics import observe_index_job, observe_tables
 from zipsai.observability import collect_timings, elapsed_ms, is_cold, stage
 
@@ -118,7 +118,12 @@ def run_indexing_job(
 
                 with stage("embed", logger, cold=cold) as step:
                     step["texts"] = len(chunks)
-                    embed_batches = -(-len(chunks) // BATCH_SIZE) if chunks else 0
+                    text_count, unique_texts = count_embed_texts(chunks)
+                    step["unique_texts"] = unique_texts
+                    step["duplicate_texts"] = text_count - unique_texts
+                    embed_batches = (
+                        -(-len(chunks) // client_batch_size()) if chunks else 0
+                    )
                     step["batches"] = embed_batches
                     step["total_chars"] = sum(len(chunk.text) for chunk in chunks)
                     embedded = embed_chunks(chunks, encoder, request.trace_id)
