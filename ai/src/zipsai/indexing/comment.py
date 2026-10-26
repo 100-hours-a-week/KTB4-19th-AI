@@ -17,7 +17,7 @@ from zipsai.errors import ChunkTooLongError, EmbeddingRequestInvalidError
 from zipsai.indexing.chunk import Chunk
 from zipsai.indexing.embed import Encoder, embed_chunks
 from zipsai.indexing.mask import apply_masking
-from zipsai.integrations.embedding_client import BATCH_SIZE
+from zipsai.integrations.embedding_client import client_batch_size
 from zipsai.integrations.qdrant import (
     COMMENT_SOURCE_TYPE,
     DENSE_VECTOR,
@@ -190,8 +190,9 @@ def _embed_pending(
     # BATCH_SIZE씩 끊어 호출해야 죽은 묶음만 실패로 남고 다음 묶음은 계속 간다.
     embed_batches = 0
     embed_ms = 0
-    for start in range(0, len(pending), BATCH_SIZE):
-        group = pending[start : start + BATCH_SIZE]
+    batch_size = client_batch_size()
+    for start in range(0, len(pending), batch_size):
+        group = pending[start : start + batch_size]
         embed_batches += 1
         batch_started = perf_counter()
         try:

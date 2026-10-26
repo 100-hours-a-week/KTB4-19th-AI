@@ -105,6 +105,33 @@ def test_joins_headers_that_differ_only_by_dash_and_spaces() -> None:
     assert "비고 -" not in text
 
 
+def test_drops_caption_only_chunk_when_table_already_has_that_label() -> None:
+    text = f"합성 표\n{HEADER}\n{SEPARATOR}\n{_row(1)}"
+
+    chunks = chunk_pages([{"page": 1, "text": text}])
+
+    assert chunks
+    assert all(chunk.text.strip() != "합성 표" for chunk in chunks)
+    assert all(chunk.text.startswith("합성 표\n") for chunk in chunks)
+
+
+def test_keeps_prose_between_caption_and_table() -> None:
+    text = "합성 표\n이 표는 요금이다.\n| 항목 | 요금 |\n| --- | --- |\n| 세탁 | 1000 |"
+
+    chunks = chunk_pages([{"page": 1, "text": text}])
+
+    assert [chunk.text for chunk in chunks] == [
+        "합성 표\n이 표는 요금이다.\n",
+        "이 표는 요금이다.\n항목: 세탁 / 요금: 1000",
+    ]
+
+
+def test_keeps_a_short_article_line_without_a_table() -> None:
+    chunks = chunk_pages([{"page": 1, "text": "제1조(목적)"}])
+
+    assert [chunk.text for chunk in chunks] == ["제1조(목적)"]
+
+
 def test_packed_table_stays_within_512_bge_m3_tokens() -> None:
     source = Path(chunk_pages.__code__.co_filename).read_text(encoding="utf-8")
     assert "transformers" not in source

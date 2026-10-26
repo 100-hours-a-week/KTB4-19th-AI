@@ -12,6 +12,7 @@ from zipsai.contracts.sync_response import DocumentResult
 from zipsai.indexing import admission
 from zipsai.indexing.admission import acquire, release
 from zipsai.indexing.admission import reset as reset_admission
+from zipsai.indexing.registry import reset_registry
 from zipsai.observability import JsonFormatter
 from zipsai.settings import COMMENT_API_PREFIX
 
@@ -45,6 +46,7 @@ def _comment(**overrides):
 @pytest.fixture
 def _quiet_backends(monkeypatch: pytest.MonkeyPatch):
     reset_admission()
+    reset_registry()
 
     def fake_job(payload, _job_id):
         return JobOutcome(
@@ -81,6 +83,7 @@ def _quiet_backends(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(comment_api, "_dependencies", lambda: (object(), object()))
     yield
     reset_admission()
+    reset_registry()
 
 
 def test_result_logs_omit_source_text(

@@ -31,6 +31,10 @@ class EmptyDocumentError(ValueError):
     pass
 
 
+class JobCancelled(Exception):
+    """색인 작업이 교체·삭제로 취소됐다. 실패 기록이 아니다."""
+
+
 class VectorStoreError(RuntimeError):
     """Raised when the vector store cannot serve a request."""
 
