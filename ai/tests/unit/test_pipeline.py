@@ -10,6 +10,7 @@ from zipsai.errors import (
     DocumentFetchError,
     EmbeddingError,
     EmbeddingRequestInvalidError,
+    JobCancelled,
 )
 from zipsai.indexing import pipeline
 from zipsai.indexing.chunk import Chunk
@@ -366,3 +367,45 @@ def test_embedding_outage_stays_retryable(
     assert reasons == ["EMBEDDING_FAILED"]
     assert retryable_for(reasons[0]) is True
     assert encoder.calls == 1
+
+
+def test_cancel_between_batches_skips_upsert(
+    monkeypatch: pytest.MonkeyPatch, qdrant: QdrantClient
+) -> None:
+    monkeypatch.setattr("zipsai.indexing.embed.client_batch_size", lambda: 1)
+    monkeypatch.setattr(
+        pipeline, "parse_document", stub_parse([{"page": 1, "text": "본문"}])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "chunk_pages",
+        lambda _pages: [Chunk(text, 1, None) for text in ("하나", "둘", "셋")],
+    )
+    calls: list[list[str]] = []
+
+    class Encoder:
+        def encode(self, texts: list[str], trace_id: str):
+            calls.append(list(texts))
+            dense = [[0.0] * EMBEDDING_DIM for _ in texts]
+            return dense, [{} for _ in texts]
+
+    upserts: list[int] = []
+
+    def forbid(*_args, **_kwargs):
+        upserts.append(1)
+        raise AssertionError("upsert")
+
+    monkeypatch.setattr(pipeline, "upsert_document", forbid)
+
+    with pytest.raises(JobCancelled):
+        run_indexing_job(
+            make_request(),
+            download=stub_download,
+            encoder=Encoder(),
+            client=qdrant,
+            should_cancel=lambda: len(calls) >= 1,
+        )
+
+    assert calls == [["하나"]]
+    assert upserts == []
+    assert stored_points(qdrant) == 0

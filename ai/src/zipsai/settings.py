@@ -38,8 +38,19 @@ AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
 QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
 # 마스킹 뒤 답변이 10자보다 짧으면 "처리 완료"같은 의미 없는 답으로 보고 색인하지 않는다.
 COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
-# 문서 색인과 답변 반영·삭제가 함께 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.
+# 답변 반영·삭제가 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.
+# 문서 색인은 이 값을 쓰지 않고 작업 스레드 하나와 대기열로 받는다.
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
+INDEXING_QUEUE_LIMIT: Final = int(os.getenv("INDEXING_QUEUE_LIMIT", "5"))
+INDEXING_FIRST_WAIT_SECONDS: Final = float(
+    os.getenv("INDEXING_FIRST_WAIT_SECONDS", "30")
+)
+INDEXING_RETRY_AFTER_SECONDS: Final = int(
+    os.getenv("INDEXING_RETRY_AFTER_SECONDS", "30")
+)
+INDEXING_RECORD_TTL_SECONDS: Final = float(
+    os.getenv("INDEXING_RECORD_TTL_SECONDS", "3600")
+)
 # 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
 LOCATION_PLACEHOLDER: Final = "미상"
 # /converse 한 턴 전체 상한. 개별 LLM 호출(LLM_TIMEOUT_SECONDS)이 여러 번

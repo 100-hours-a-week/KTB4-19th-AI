@@ -12,6 +12,7 @@ from zipsai.errors import (
     ChunkTooLongError,
     EmbeddingRequestInvalidError,
     EmptyDocumentError,
+    JobCancelled,
     error_code,
 )
 from zipsai.indexing.chunk import chunk_pages
@@ -48,6 +49,8 @@ def run_indexing_job(
     client: QdrantClient,
     on_fail: Callable[[str], None] | None = None,
     on_stats: Callable[[int | None, int | None, int | None], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> JobStatus:
     doc_id = request.doc_id
     # 첫 작업은 docling이 OCR·레이아웃 모델을 올리느라 수십 초가 더 걸린다.
@@ -116,6 +119,7 @@ def run_indexing_job(
                         1 for length in lengths if length > MAX_TEXT_CHARS
                     )
 
+                cancelled = False
                 with stage("embed", logger, cold=cold) as step:
                     step["texts"] = len(chunks)
                     text_count, unique_texts = count_embed_texts(chunks)
@@ -126,7 +130,20 @@ def run_indexing_job(
                     )
                     step["batches"] = embed_batches
                     step["total_chars"] = sum(len(chunk.text) for chunk in chunks)
-                    embedded = embed_chunks(chunks, encoder, request.trace_id)
+                    try:
+                        embedded = embed_chunks(
+                            chunks,
+                            encoder,
+                            request.trace_id,
+                            should_cancel=should_cancel,
+                            on_progress=on_progress,
+                        )
+                    except JobCancelled:
+                        # 단계 로그는 실패로 남기지 않는다. 저장 전에 빠진다.
+                        cancelled = True
+                        embedded = []
+                if cancelled or (should_cancel is not None and should_cancel()):
+                    raise JobCancelled()
 
                 with stage("upsert", logger) as step:
                     stored = upsert_document(
@@ -134,6 +151,24 @@ def run_indexing_job(
                     )
                     point_count = stored
                     step["points"] = stored
+        except JobCancelled:
+            logger.info(
+                "index_done",
+                extra={
+                    "outcome": "cancelled",
+                    "total_ms": elapsed_ms(started),
+                    "failed_stage": None,
+                    "error_code": None,
+                    "error_type": None,
+                    "doc_bytes": doc_bytes,
+                    "pages": page_count,
+                    "chunks": chunk_count,
+                    "embed_batches": embed_batches,
+                    "stage_ms": dict(timings),
+                },
+            )
+            observe_index_job("cancelled", None)
+            raise
         except Exception as error:
             # 배경 실행이라 예외를 삼키면 아무 기록도 남지 않는다.
             # 스택은 단계 로그가 이미 남겼다. 여기서 또 실으면 같은 줄이 두 번 쌓인다.
