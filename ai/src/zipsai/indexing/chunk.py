@@ -481,9 +481,10 @@ def chunk_pages(pages: list[dict[str, int | str]]) -> list[Chunk]:
             first_capacity = (
                 CHUNK_SIZE if section_chunk_count == 0 else CHUNK_SIZE - CHUNK_OVERLAP
             )
-            for item in _group_ranges(
+            items = _group_ranges(
                 text, lines, group_start, group_end, first_capacity, section
-            ):
+            )
+            for index, item in enumerate(items):
                 if item[0] == "piece":
                     _, piece, pos = item
                     if not str(piece).strip():
@@ -506,13 +507,20 @@ def chunk_pages(pages: list[dict[str, int | str]]) -> list[Chunk]:
                 overlap = (
                     "" if section_chunk_count == 0 else previous_text[-CHUNK_OVERLAP:]
                 )
+                chunk_text = overlap + base_text
+                caption = None
+                if index + 1 < len(items) and items[index + 1][0] == "piece":
+                    caption = _caption_before(lines, items[index + 1][2])
+                # 글자 수로 지우지 않는다. 바로 뒤 표 라벨과 같은 제목만 뺀다.
+                if caption and chunk_text.strip() == caption:
+                    continue
                 chunks.append(
                     Chunk(
-                        text=overlap + base_text,
+                        text=chunk_text,
                         page=_page_for(text, page_map, base_start, base_end),
                         section=section,
                     )
                 )
-                previous_text = chunks[-1].text
+                previous_text = chunk_text
                 section_chunk_count += 1
     return chunks

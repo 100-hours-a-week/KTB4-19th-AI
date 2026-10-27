@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
 from zipsai.contracts.notification import ResultStatus
 from zipsai.contracts.sync_response import DocumentResult, SyncBody
+from zipsai.errors import JobCancelled
 from zipsai.indexing.admission import (
     Rejected,
     acquire,
@@ -21,6 +22,7 @@ from zipsai.indexing.admission import (
 )
 from zipsai.indexing.pipeline import run_indexing_job
 from zipsai.indexing.reasons import retryable_for
+from zipsai.indexing.registry import current_hooks, get_registry
 from zipsai.indexing.upsert import delete_missing_documents
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import create_client, ensure_collection
@@ -124,14 +126,23 @@ def _run_job(payload: IndexingJobRequest, job_id: str) -> JobOutcome:
         # 색인이 먼저다. 정리가 앞서면 이번에 넣을 문서가 잠깐 검색에서 빠진다.
         if payload.has_document:
             reasons: list[str] = []
-            result = run_indexing_job(
-                payload,
-                download=download,
-                encoder=encoder,
-                client=client,
-                on_fail=reasons.append,
-                on_stats=capture,
-            )
+            hooks = current_hooks()
+            try:
+                result = run_indexing_job(
+                    payload,
+                    download=download,
+                    encoder=encoder,
+                    client=client,
+                    on_fail=reasons.append,
+                    on_stats=capture,
+                    should_cancel=None if hooks is None else hooks.should_cancel,
+                    on_progress=None if hooks is None else hooks.on_progress,
+                )
+            except JobCancelled:
+                if trace is not None:
+                    trace.update(output={"outcome": "cancelled"})
+                logger.info("job_done", extra=_job_fields(started, "cancelled"))
+                raise
             if result is JobStatus.SUCCEEDED:
                 results.append(
                     _document_result(
@@ -225,13 +236,95 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
     # 색인 계약에는 turn_id가 없다. 단계 로그를 한 작업으로 묶으려면 여기서 발급해야 한다.
     started = perf_counter()
     job_id = str(uuid4())
+    if payload.valid_doc_ids is not None:
+        get_registry().cancel_absent(payload.building_id, set(payload.valid_doc_ids))
+    if not payload.has_document:
+        return _cleanup_only(payload, job_id, started)
+    return _document_job(payload, job_id, started)
+
+
+def _cleanup_only(
+    payload: IndexingJobRequest, job_id: str, started: float
+) -> JSONResponse:
     key = document_key(payload)
     try:
         acquire(key)
     except Rejected as rejected:
         return _rejected(payload, rejected, job_id)
+    _log_accepted(payload, job_id)
+    try:
+        outcome = _run_job(payload, job_id)
+    finally:
+        release(key)
+    _log_index_result(payload, job_id, outcome, started)
+    for item in outcome.results:
+        record_indexing_result(item.kind, item.status.value, item.reason_code)
+    body = SyncBody(trace_id=payload.trace_id, results=outcome.results).to_body()
+    return JSONResponse(status_code=200, content=body)
+
+
+def _document_job(
+    payload: IndexingJobRequest, job_id: str, started: float
+) -> JSONResponse:
+    del started
+    registry = get_registry()
+    decision = registry.admit(payload, job_id)
+    if decision.action == "reject":
+        progress = {"done": 0, "total": 0}
+        if decision.record is not None:
+            progress = decision.record.progress()
+        return _rejected_progress(
+            payload,
+            job_id,
+            status_code=decision.status_code,
+            error_code=decision.error_code or "IN_PROGRESS",
+            retry_after=decision.retry_after,
+            progress=progress,
+        )
+    if decision.action == "replay":
+        _log_record_hit(payload, decision.record)
+        return JSONResponse(status_code=200, content=decision.body)
+    record = decision.record
+    assert record is not None
+    _log_accepted(payload, job_id, queue_len=record.queue_len_at_accept)
+    registry.notify()
+    from zipsai import settings
+
+    registry.wait(record, float(settings.INDEXING_FIRST_WAIT_SECONDS))
+    if record.state in ("done", "failed") and record.body is not None:
+        return JSONResponse(status_code=200, content=record.body)
+    if record.state == "cancelled":
+        # 기다리는 동안 교체·삭제됐다. 실패로 저장하지 않으므로 같은 키는 다시 받을 수 있다.
+        body = SyncBody(
+            trace_id=payload.trace_id,
+            results=[
+                _document_result(
+                    "document_index",
+                    ResultStatus.FAILED,
+                    None,
+                    payload.doc_id,
+                )
+            ],
+        ).to_body()
+        return JSONResponse(status_code=200, content=body)
+    code = "IN_PROGRESS" if record.state == "running" else "QUEUED"
+    return _rejected_progress(
+        payload,
+        job_id,
+        status_code=429,
+        error_code=code,
+        retry_after=int(settings.INDEXING_RETRY_AFTER_SECONDS),
+        progress=record.progress(),
+    )
+
+
+def _log_accepted(
+    payload: IndexingJobRequest, job_id: str, queue_len: int | None = None
+) -> None:
     # 거절된 요청은 indexing_rejected만 남긴다. 접수 로그는 들어간 요청만 job_done과 짝이 된다.
     file_key_path, file_key_ext = _file_key_parts(payload.file_key)
+    if queue_len is None:
+        queue_len = get_registry().queue_len()
     logger.info(
         "job_accepted",
         extra={
@@ -252,17 +345,25 @@ def create_job(payload: IndexingJobRequest) -> JSONResponse:
             "valid_doc_count": None
             if payload.valid_doc_ids is None
             else len(payload.valid_doc_ids),
+            "queue_len": queue_len,
         },
     )
-    try:
-        outcome = _run_job(payload, job_id)
-    finally:
-        release(key)
-    _log_index_result(payload, job_id, outcome, started)
-    for item in outcome.results:
-        record_indexing_result(item.kind, item.status.value, item.reason_code)
-    body = SyncBody(trace_id=payload.trace_id, results=outcome.results).to_body()
-    return JSONResponse(status_code=200, content=body)
+
+
+def _log_record_hit(payload: IndexingJobRequest, record) -> None:
+    file_key_path, file_key_ext = _file_key_parts(payload.file_key)
+    logger.info(
+        "job_record_hit",
+        extra={
+            "job_id": None if record is None else record.job_id,
+            "trace_id": payload.trace_id,
+            "doc_id": payload.doc_id,
+            "building_id": payload.building_id,
+            "file_key_path": file_key_path,
+            "file_key_ext": file_key_ext,
+            "record_state": None if record is None else record.state,
+        },
+    )
 
 
 def _file_key_parts(file_key: str | None) -> tuple[str | None, str | None]:
@@ -308,6 +409,45 @@ def _log_index_result(
     )
 
 
+def _rejected_progress(
+    payload: IndexingJobRequest,
+    job_id: str,
+    *,
+    status_code: int,
+    error_code: str,
+    retry_after: int,
+    progress: dict[str, int],
+) -> JSONResponse:
+    logger.info(
+        "indexing_rejected",
+        extra={
+            "trace_id": payload.trace_id,
+            "job_id": job_id,
+            "route": "jobs",
+            "error_code": error_code,
+            "status": error_code,
+            "progress": progress,
+            "queue_len": get_registry().queue_len(),
+            "doc_id": payload.doc_id,
+            "building_id": payload.building_id,
+            "items": None,
+            "indexing_in_flight": in_flight(),
+            "retry_after_s": retry_after,
+        },
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "trace_id": payload.trace_id,
+            "error_code": error_code,
+            "status": error_code,
+            "doc_id": payload.doc_id,
+            "progress": progress,
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def _rejected(
     payload: IndexingJobRequest, rejected: Rejected, job_id: str
 ) -> JSONResponse:
@@ -322,6 +462,7 @@ def _rejected(
             "building_id": payload.building_id,
             "items": None,
             "indexing_in_flight": in_flight(),
+            "queue_len": get_registry().queue_len(),
             "retry_after_s": rejected.retry_after,
         },
     )

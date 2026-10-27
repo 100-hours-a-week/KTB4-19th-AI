@@ -98,11 +98,18 @@ class BgeM3Encoder:
         with self._cond:
             return len(self._heap)
 
+    @property
+    def max_index_batch(self) -> int:
+        return self._max_index_batch
+
     def load(self) -> None:
+        # 환경변수가 없으면 스레드를 건드리지 않는다. 잘못된 값이면 모델을 올리기 전에 죽는다.
+        configure_torch_threads()
         # CPU 전용 컨테이너라 fp16을 쓰지 않는다.
         from FlagEmbedding import BGEM3FlagModel
 
         self._model = BGEM3FlagModel(self.model_id, use_fp16=False)
+        logger.info("embed_runtime", extra=thread_snapshot())
 
     def start(self) -> None:
         with self._cond:
@@ -300,6 +307,40 @@ class BgeM3Encoder:
                     infer_s=infer_s,
                 )
             )
+
+
+def configure_torch_threads() -> None:
+    """EMBEDDING_TORCH_THREADS가 있으면 모델 로드 전에 torch 스레드 수를 고정한다."""
+    raw = os.getenv("EMBEDDING_TORCH_THREADS")
+    if raw is None or raw.strip() == "":
+        return
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"EMBEDDING_TORCH_THREADS는 1 이상의 정수여야 합니다. 받은 값: {raw!r}"
+        ) from exc
+    if value < 1:
+        raise RuntimeError(
+            f"EMBEDDING_TORCH_THREADS는 1 이상의 정수여야 합니다. 받은 값: {value}"
+        )
+    import torch
+
+    torch.set_num_threads(value)
+
+
+def thread_snapshot(torch_module: Any | None = None) -> dict[str, int | None]:
+    """모델을 올린 직후 로그에 넣을 스레드·코어·색인 묶음 크기."""
+    torch = torch_module
+    if torch is None:
+        import torch as torch_module
+
+        torch = torch_module
+    return {
+        "torch_threads": int(torch.get_num_threads()),
+        "cpu_count": os.cpu_count(),
+        "max_index_batch": encoder.max_index_batch,
+    }
 
 
 # 라우터와 기동 코드가 같은 인스턴스를 본다.

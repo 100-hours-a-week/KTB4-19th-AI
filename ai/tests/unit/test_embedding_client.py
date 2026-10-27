@@ -17,6 +17,7 @@ from zipsai.integrations.embedding_client import (
     BATCH_SIZE,
     MAX_TEXT_CHARS,
     HttpEncoder,
+    client_batch_size,
 )
 from zipsai.knowledge import retrieve
 
@@ -321,3 +322,37 @@ def test_text_limit_matches_embedding_server() -> None:
 
     assert match is not None
     assert MAX_TEXT_CHARS == int(match.group(1))
+
+
+def test_client_batch_size_defaults_to_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EMBEDDING_CLIENT_BATCH_SIZE", raising=False)
+
+    assert client_batch_size() == 2
+
+
+def test_client_batch_size_follows_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_CLIENT_BATCH_SIZE", "4")
+    seen: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        texts = json.loads(request.read())["texts"]
+        seen.append(len(texts))
+        return httpx.Response(
+            200,
+            json={"dense": [[0.1] for _ in texts], "sparse": [{} for _ in texts]},
+        )
+
+    encoder_returning(handler).encode([f"청크 {index}" for index in range(10)], "trace-001")
+
+    assert client_batch_size() == 4
+    assert seen == [4, 4, 2]
+
+
+@pytest.mark.parametrize("raw", ["0", "33", "-1", "둘"])
+def test_client_batch_size_rejects_values_outside_1_to_32(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("EMBEDDING_CLIENT_BATCH_SIZE", raw)
+
+    with pytest.raises(RuntimeError, match="EMBEDDING_CLIENT_BATCH_SIZE"):
+        client_batch_size()
