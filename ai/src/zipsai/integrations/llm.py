@@ -36,6 +36,28 @@ _REQUIRE_STRUCTURED_OUTPUTS = {"provider": {"require_parameters": True}}
 _SECRET_HOST = re.compile(r"(^sk-|[A-Fa-f0-9]{32})")
 
 
+HEALTH_WAIT_SECONDS = 30.0
+HEALTH_POLL_INTERVAL_SECONDS = 3.0
+
+
+def wait_for_serverless_health(base_url: str, deadline_seconds: float) -> bool:
+    """vLLM의 /health가 200을 줄 때까지 기다린다."""
+    import urllib.error
+    import urllib.request
+
+    health_url = base_url.rstrip("/").removesuffix("/v1") + "/health"
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=5) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        time.sleep(HEALTH_POLL_INTERVAL_SECONDS)
+    return False
+
+
 def provider_host(base_url: str | None) -> str | None:
     """base_url의 호스트만 남긴다. 경로의 엔드포인트 아이디는 싣지 않는다."""
     if not base_url:
@@ -506,20 +528,41 @@ def strip_json_code_fence(content: str) -> str:
     return stripped
 
 
+# Modal 서버리스가 콜드스타트 중엔 503을 즉시 반환한다(요청이 느린 게 아니라 거절당함).
+# 몇 번만 더 재시도해도 "콜드스타트냐 아니냐"는 거의 판가름나므로, 여기선 적게만 돌리고
+# 나머지 예산은 vlm.py의 wait_for_serverless_health(가벼운 /health 폴링)에 맡긴다.
+_COLD_START_MAX_RETRIES = 2
+
+
 @lru_cache
 def _get_client(api_key: str, base_url: str | None, timeout_seconds: float) -> OpenAI:
     if get_tracing_client():
         from langfuse.openai import OpenAI as TracedOpenAI
 
-        return TracedOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
-    return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+        return TracedOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout_seconds,
+            max_retries=_COLD_START_MAX_RETRIES,
+        )
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout_seconds,
+        max_retries=_COLD_START_MAX_RETRIES,
+    )
 
 
 @lru_cache
 def _get_async_client(
     api_key: str, base_url: str | None, timeout_seconds: float
 ) -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout_seconds,
+        max_retries=_COLD_START_MAX_RETRIES,
+    )
 
 
 def _retry_after(error: RateLimitError) -> int | None:

@@ -23,10 +23,12 @@ from zipsai.errors import (
 )
 from zipsai.integrations.llm import (
     _REQUIRE_STRUCTURED_OUTPUTS,
+    HEALTH_WAIT_SECONDS,
     _get_client,
     _reason,
     _retry_after,
     start_llm_call,
+    wait_for_serverless_health,
 )
 from zipsai.settings import get_settings
 from zipsai.tracing import get_tracing_client
@@ -71,10 +73,12 @@ def classify_and_analyze(
     err_code: str | None = None
     finish_reason: str | None = None
     structured_ok: bool | None = True
-    try:
-        response = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.parse(
+    client = _get_client(
+        settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
+    )
+
+    def _call():
+        return client.chat.completions.parse(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -84,6 +88,22 @@ def classify_and_analyze(
             response_format=_ModelIntentAndImages,
             extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
         )
+
+    try:
+        try:
+            response = _call()
+        except APIStatusError as error:
+            # 재시도가 전부 끝난 뒤에도 503이면, 콜드스타트 중일 수 있다. 무거운 요청을
+            # 더 반복하는 대신 가벼운 /health로만 깨어날 때까지 기다려 한 번만 더 부른다.
+            if (
+                error.status_code < 500
+                or settings.provider != "serverless"
+                or not settings.llm_base_url
+            ):
+                raise
+            if not wait_for_serverless_health(settings.llm_base_url, HEALTH_WAIT_SECONDS):
+                raise
+            response = _call()
         call.usage = getattr(response, "usage", None)
         if not response.choices or response.choices[0].message.parsed is None:
             outcome = "fail"
