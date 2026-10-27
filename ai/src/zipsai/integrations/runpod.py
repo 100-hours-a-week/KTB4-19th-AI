@@ -46,6 +46,9 @@ class RunPodPodLocator:
     def is_ready(self) -> bool:
         return self._base_url is not None
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     def _pick(self, pods: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
         matched = [
             pod
@@ -55,7 +58,9 @@ class RunPodPodLocator:
         ]
         # startedAt은 stop→start마다 갱신돼 옛 Pod가 최신으로 뒤집힌다. createdAt은 불변이다.
         # RFC3339 문자열이라 사전식 비교가 시간순과 같다.
-        return max(matched, key=lambda pod: str(pod.get("createdAt") or ""), default=None)
+        return max(
+            matched, key=lambda pod: str(pod.get("createdAt") or ""), default=None
+        )
 
     async def _list_pods(self) -> list[Mapping[str, Any]]:
         response = await self._client.get(

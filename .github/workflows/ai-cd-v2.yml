@@ -138,7 +138,7 @@ jobs:
           import time
           import uuid
           
-          SECRET_KEYS = {"OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "QDRANT_API_KEY",
+          SECRET_KEYS = {"OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "RUNPOD_API_KEY", "QDRANT_API_KEY",
                          "QDRANT_ADMIN_API_KEY", "QDRANT_READ_ONLY_API_KEY", "LANGFUSE_SECRET_KEY",
                          "QDRANT__SERVICE__API_KEY", "QDRANT__SERVICE__READ_ONLY_API_KEY",
                          "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
@@ -186,14 +186,14 @@ jobs:
               if role == "ai-api":
                   for key in ["QDRANT_URL", "EMBEDDING_API_URL", "S3_BUCKET",
                               "OPENROUTER_BASE_URL", "OPENROUTER_LLM_MODEL", "OPENROUTER_VLM_MODEL",
-                              "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_BASE_URL", "POD_MODEL"]:
+                              "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_MODEL", "RUNPOD_POD_NAME_PREFIX"]:
                       if not values.get(key):
                           raise ValueError("Required AI configuration is missing")
-                  for key in ["OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY"]:
+                  for key in ["OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "RUNPOD_API_KEY"]:
                       if not values.get(key):
                           raise ValueError("All provider API keys are required")
                   for key in ["OPENROUTER_BASE_URL", "SERVERLESS_BASE_URL", "POD_BASE_URL"]:
-                      if not values[key].startswith("https://"):
+                      if values.get(key) and not values[key].startswith("https://"):
                           raise ValueError("Provider base URLs must use HTTPS")
                   if not values.get("QDRANT_ADMIN_API_KEY"):
                       raise ValueError("Qdrant admin key is required")
@@ -390,15 +390,18 @@ jobs:
                       ("OPENROUTER_VLM_MODEL", "openrouter-vlm-model"),
                       ("SERVERLESS_BASE_URL", "serverless-base-url"),
                       ("SERVERLESS_MODEL", "serverless-model"),
-                      ("POD_BASE_URL", "pod-base-url"),
                       ("POD_MODEL", "pod-model"),
+                      ("RUNPOD_POD_NAME_PREFIX", "runpod-pod-name-prefix"),
                   ]:
                       if host["runtime_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
                           raise ValueError("Apply all AI provider parameter mappings before deployment")
+                  if host["runtime_parameters"].get("POD_BASE_URL") not in (None, f"/zipsai/{environment}/ai/pod-base-url"):
+                      raise ValueError("Invalid optional Pod base URL mapping")
                   for key, suffix in [
                       ("OPENROUTER_API_KEY", "openrouter-api-key"),
                       ("SERVERLESS_API_KEY", "serverless-api-key"),
                       ("POD_API_KEY", "pod-api-key"),
+                      ("RUNPOD_API_KEY", "runpod-api-key"),
                   ]:
                       if host["secret_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
                           raise ValueError("Apply all AI provider secret mappings before deployment")

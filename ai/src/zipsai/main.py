@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -16,9 +17,11 @@ from zipsai.api.error_responses import (
 )
 from zipsai.api.health import router as health_router
 from zipsai.api.indexing import router as indexing_router
+from zipsai.integrations.runpod import get_locator
 from zipsai.metrics import finish_http, metrics_payload, start_http
 from zipsai.observability import configure_logging
 from zipsai.settings import (
+    ACTIVE_MODEL_PROVIDER,
     API_PREFIX,
     COMMENT_API_PREFIX,
     CORS_ORIGINS,
@@ -34,9 +37,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     missing = missing_required_settings()
     if missing:
         raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
+    locator = get_locator() if ACTIVE_MODEL_PROVIDER == "pod" else None
+    task = None
     try:
+        if locator is not None:
+            await locator.refresh()
+            task = asyncio.create_task(locator.run())
         yield
     finally:
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        if locator is not None:
+            await locator.aclose()
+            get_locator.cache_clear()
         client = get_tracing_client()
         if client is not None:
             client.flush()
@@ -49,9 +64,7 @@ app.add_middleware(
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
-app.add_middleware(
-    AccessLogMiddleware, record_http=finish_http, start_http=start_http
-)
+app.add_middleware(AccessLogMiddleware, record_http=finish_http, start_http=start_http)
 
 
 @app.get("/metrics")
