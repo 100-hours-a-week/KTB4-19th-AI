@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from zipsai import settings as settings_module
@@ -95,3 +97,34 @@ def test_get_settings_rejects_non_https_provider_url(monkeypatch):
         get_settings()
 
     get_settings.cache_clear()
+
+
+def test_pod_settings_follow_locator_address_changes(monkeypatch):
+    monkeypatch.setattr(settings_module, "ACTIVE_MODEL_PROVIDER", "pod")
+    monkeypatch.setenv("POD_API_KEY", "pod-key")
+    monkeypatch.setenv("POD_MODEL", "pod-model")
+    monkeypatch.delenv("POD_BASE_URL", raising=False)
+    locator = SimpleNamespace(base_url="https://first-8000.proxy.runpod.net/v1")
+    monkeypatch.setattr(settings_module, "get_locator", lambda: locator)
+
+    first = get_settings()
+    assert first.llm_base_url == locator.base_url
+    assert get_settings() is first
+
+    locator.base_url = "https://second-8000.proxy.runpod.net/v1"
+    second = get_settings()
+    assert second.llm_base_url == locator.base_url
+    assert second is not first
+
+    locator.base_url = None
+    with pytest.raises(LlmUnavailableError, match="POD_BASE_URL"):
+        get_settings()
+
+
+def test_other_providers_do_not_access_locator(monkeypatch):
+    monkeypatch.setattr(
+        settings_module, "get_locator", lambda: pytest.fail("locator accessed")
+    )
+
+    assert get_settings("serverless").provider == "serverless"
+    assert get_settings("openrouter").provider == "openrouter"

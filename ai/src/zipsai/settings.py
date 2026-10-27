@@ -7,6 +7,7 @@ from typing import Final
 from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
+from zipsai.integrations.runpod import get_locator
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +127,14 @@ def call_cost_usd(
     return incoming / 1_000_000 * in_price + outgoing / 1_000_000 * out_price
 
 
-@lru_cache
 def get_settings(provider_override: str | None = None) -> Settings:
+    provider = provider_override or ACTIVE_MODEL_PROVIDER
+    locator = get_locator() if provider == "pod" else None
+    return _settings_for(provider, locator.base_url if locator else None)
+
+
+@lru_cache
+def _settings_for(provider: str, discovered_base_url: str | None) -> Settings:
     profiles = {
         "openrouter": (
             os.getenv("OPENROUTER_API_KEY"),
@@ -147,14 +154,13 @@ def get_settings(provider_override: str | None = None) -> Settings:
         ),
         "pod": (
             os.getenv("POD_API_KEY"),
-            os.getenv("POD_BASE_URL"),
+            os.getenv("POD_BASE_URL") or discovered_base_url,
             os.getenv("POD_MODEL"),
             os.getenv("POD_MODEL"),
             "POD_MODEL",
             "POD_MODEL",
         ),
     }
-    provider = provider_override or ACTIVE_MODEL_PROVIDER
     if provider not in profiles:
         raise LlmUnavailableError(
             "ACTIVE_MODEL_PROVIDER must be openrouter, serverless, or pod"
@@ -186,3 +192,6 @@ def get_settings(provider_override: str | None = None) -> Settings:
         vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
         vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
     )
+
+
+get_settings.cache_clear = _settings_for.cache_clear
