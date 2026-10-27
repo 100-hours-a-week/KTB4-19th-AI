@@ -1,4 +1,5 @@
 import logging
+import os
 from functools import lru_cache
 
 import httpx
@@ -7,7 +8,8 @@ from fastapi.responses import JSONResponse
 
 from zipsai.errors import LlmUnavailableError
 from zipsai.integrations.qdrant import create_client
-from zipsai.settings import EMBEDDING_API_URL, get_settings
+from zipsai.integrations.runpod import get_locator
+from zipsai.settings import ACTIVE_MODEL_PROVIDER, EMBEDDING_API_URL, get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,10 +34,6 @@ def _vector_store_ready() -> bool:
 
 def _models_ready() -> bool:
     try:
-        get_settings()
-    except LlmUnavailableError:
-        return False
-    try:
         response = httpx.get(
             f"{EMBEDDING_API_URL}/health", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
         )
@@ -44,17 +42,31 @@ def _models_ready() -> bool:
         return False
 
 
+def _llm_ready() -> bool:
+    if ACTIVE_MODEL_PROVIDER == "pod" and not os.getenv("POD_BASE_URL"):
+        locator = get_locator()
+        if locator is not None:
+            return locator.is_ready()
+    try:
+        get_settings()
+        return True
+    except LlmUnavailableError:
+        return False
+
+
 @router.get("/health", response_model=None)
 def health() -> dict[str, object] | JSONResponse:
     vector_store_ready = _vector_store_ready()
     models_ready = _models_ready()
+    llm_ready = _llm_ready()
 
     data = {
         "ai_service": "ready",
         "vector_store": "ready" if vector_store_ready else "not_ready",
         "models": "ready" if models_ready else "not_ready",
+        "llm": "ready" if llm_ready else "not_ready",
         "prompt_version": PROMPT_VERSION,
     }
-    if vector_store_ready and models_ready:
+    if vector_store_ready and models_ready and llm_ready:
         return {"message": "ok", "data": data}
     return JSONResponse(status_code=503, content={"message": "not_ready", "data": data})
