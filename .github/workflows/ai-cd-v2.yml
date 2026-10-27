@@ -232,6 +232,48 @@ jobs:
                   time.sleep(5)
               return False
           
+          def deployed_image(release, role):
+              if release is None or not release.is_dir():
+                  return None
+              result = subprocess.check_output(
+                  ["docker", "compose", "--project-name", f"zipsai-ai-v2-{role}",
+                   "--env-file", str(release / "runtime.env"), "-f", str(release / "compose.yaml"),
+                   "ps", "-q", role], cwd=release, stderr=subprocess.DEVNULL, text=True).strip()
+              if not re.fullmatch(r"[0-9a-f]{12,64}", result):
+                  return None
+              return subprocess.check_output(
+                  ["docker", "inspect", "--format", "{{.Image}}", result],
+                  stderr=subprocess.DEVNULL, text=True).strip()
+
+          def cleanup_previous_image(previous_image, release, role, image_uri):
+              # Best effort, after health and current-release commit only. Never force or prune globally.
+              if role == "qdrant" or not previous_image:
+                  return
+              try:
+                  if (not re.fullmatch(r"sha256:[0-9a-f]{64}", previous_image)
+                          or previous_image == deployed_image(release, role)):
+                      return
+                  image = json.loads(subprocess.check_output(
+                      ["docker", "image", "inspect", previous_image],
+                      stderr=subprocess.DEVNULL, text=True))[0]
+                  repository = image_uri.split("@", 1)[0]
+                  references = (image.get("RepoTags") or []) + (image.get("RepoDigests") or [])
+                  if not references or any(
+                      ref.split("@", 1)[0] != repository if "@" in ref
+                      else ref.rsplit(":", 1)[0] != repository for ref in references
+                  ):
+                      return
+                  users = subprocess.check_output(
+                      ["docker", "ps", "-a", "-q", "--filter", "ancestor=" + previous_image],
+                      stderr=subprocess.DEVNULL, text=True).strip()
+                  if users:
+                      return
+                  subprocess.run(["docker", "image", "rm", previous_image],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                  print("Previous service image removed after successful deployment", flush=True)
+              except Exception:
+                  print("Warning: previous-image cleanup skipped; deployment remains healthy", flush=True)
+
           def run(config_path):
               import fcntl
               os.umask(0o077)
@@ -259,9 +301,15 @@ jobs:
                   subprocess.run(["docker", "login", "--username", "AWS", "--password-stdin", registry],
                                  input=pw, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
               print("Pulling selected image", flush=True)
-              compose(release, role, "pull", "--quiet", role)
               current = BASE / "current"
               previous = current.resolve() if current.is_symlink() else None
+              previous_image = None
+              if role != "qdrant":
+                  try:
+                      previous_image = deployed_image(previous, role)
+                  except Exception:
+                      print("Warning: previous image could not be identified; cleanup disabled", flush=True)
+              compose(release, role, "pull", "--quiet", role)
               try:
                   print("Applying AI-owned Compose", flush=True)
                   compose(release, role, "up", "-d", "--no-build", "--no-deps", role)
@@ -286,6 +334,7 @@ jobs:
               pending.symlink_to(release)
               os.replace(pending, current)
               print("Container health passed; model/indexing end-to-end tests are separate", flush=True)
+              cleanup_previous_image(previous_image, release, role, config["image_uri"])
           
           if __name__ == "__main__":
               try:
