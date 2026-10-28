@@ -184,12 +184,17 @@ jobs:
                       raise ValueError("Empty secret")
               role = config["service"]
               if role == "ai-api":
-                  for key in ["QDRANT_URL", "EMBEDDING_API_URL", "S3_BUCKET",
+                  required = ["QDRANT_URL", "EMBEDDING_API_URL", "S3_BUCKET",
                               "OPENROUTER_BASE_URL", "OPENROUTER_LLM_MODEL", "OPENROUTER_VLM_MODEL",
-                              "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_MODEL", "RUNPOD_POD_NAME_PREFIX"]:
+                              "SERVERLESS_BASE_URL", "SERVERLESS_MODEL", "POD_MODEL"]
+                  required.append("RUNPOD_POD_NAME_PREFIX" if config["environment"] == "staging" else "POD_BASE_URL")
+                  for key in required:
                       if not values.get(key):
                           raise ValueError("Required AI configuration is missing")
-                  for key in ["OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "RUNPOD_API_KEY"]:
+                  required_keys = ["OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY"]
+                  if config["environment"] == "staging":
+                      required_keys.append("RUNPOD_API_KEY")
+                  for key in required_keys:
                       if not values.get(key):
                           raise ValueError("All provider API keys are required")
                   for key in ["OPENROUTER_BASE_URL", "SERVERLESS_BASE_URL", "POD_BASE_URL"]:
@@ -384,25 +389,29 @@ jobs:
                   tags.get("Environment") != environment or tags.get("Project") != "zipsai"):
                   raise ValueError("Refusing a non-matching V2 AI instance")
               if service == "ai-api":
-                  for key, suffix in [
+                  required_runtime = [
                       ("OPENROUTER_BASE_URL", "openrouter-base-url"),
                       ("OPENROUTER_LLM_MODEL", "openrouter-llm-model"),
                       ("OPENROUTER_VLM_MODEL", "openrouter-vlm-model"),
                       ("SERVERLESS_BASE_URL", "serverless-base-url"),
                       ("SERVERLESS_MODEL", "serverless-model"),
                       ("POD_MODEL", "pod-model"),
-                      ("RUNPOD_POD_NAME_PREFIX", "runpod-pod-name-prefix"),
-                  ]:
+                  ]
+                  required_runtime.append(("RUNPOD_POD_NAME_PREFIX", "runpod-pod-name-prefix") if environment == "staging"
+                                          else ("POD_BASE_URL", "pod-base-url"))
+                  for key, suffix in required_runtime:
                       if host["runtime_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
                           raise ValueError("Apply all AI provider parameter mappings before deployment")
-                  if host["runtime_parameters"].get("POD_BASE_URL") not in (None, f"/zipsai/{environment}/ai/pod-base-url"):
+                  if environment == "staging" and host["runtime_parameters"].get("POD_BASE_URL") not in (None, f"/zipsai/{environment}/ai/pod-base-url"):
                       raise ValueError("Invalid optional Pod base URL mapping")
-                  for key, suffix in [
+                  required_secrets = [
                       ("OPENROUTER_API_KEY", "openrouter-api-key"),
                       ("SERVERLESS_API_KEY", "serverless-api-key"),
                       ("POD_API_KEY", "pod-api-key"),
-                      ("RUNPOD_API_KEY", "runpod-api-key"),
-                  ]:
+                  ]
+                  if environment == "staging":
+                      required_secrets.append(("RUNPOD_API_KEY", "runpod-api-key"))
+                  for key, suffix in required_secrets:
                       if host["secret_parameters"].get(key) != f"/zipsai/{environment}/ai/{suffix}":
                           raise ValueError("Apply all AI provider secret mappings before deployment")
               if environment == "prod" and service in {"ai-api", "embedding"}:
@@ -474,7 +483,7 @@ jobs:
               if environment == "prod":
                   record = json.loads(aws("ssm", "get-parameter", "--name", verified_path)["Parameter"]["Value"])
                   assert_promotion(record, expected)
-              config = {"region": REGION, "service": service, "host": host, "image_uri": uri}
+              config = {"region": REGION, "environment": environment, "service": service, "host": host, "image_uri": uri}
               command = bundle_command(config, compose_text)
               sent = aws("ssm", "send-command", "--document-name", "AWS-RunShellScript",
                          "--instance-ids", host["instance_id"], "--timeout-seconds", "600",
