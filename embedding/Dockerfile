@@ -17,12 +17,12 @@ ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-RUN groupadd --system app && useradd --system --gid app app
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
 # Large, stable contents are copied before application source, in separate layers.
-COPY --link --from=dependencies --chown=app:app /app/.venv /app/.venv
-COPY --link --from=models --chown=app:app /app/.cache/huggingface /app/.cache/huggingface
-COPY --from=dependencies --chown=app:app /app/pyproject.toml /app/uv.lock /app/README.md ./
-COPY --chown=app:app src ./src
+COPY --link --from=dependencies --chown=10001:10001 /app/.venv /app/.venv
+COPY --link --from=models --chown=10001:10001 /app/.cache/huggingface /app/.cache/huggingface
+COPY --from=dependencies --chown=10001:10001 /app/pyproject.toml /app/uv.lock /app/README.md ./
+COPY --chown=10001:10001 src ./src
 # Install the project after source COPY, preserving its editable /app/src import path.
 # uv is mounted only for this step; it is not added to the runtime image.
 # No package cache is retained in this final installation layer.
