@@ -134,6 +134,38 @@ def test_classify_and_analyze_supports_text_only_intent(monkeypatch):
     ]
 
 
+def test_pod_503_retries_image_analysis_on_openrouter(monkeypatch):
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30,
+                   vlm_model="pod-model", provider="pod")
+    backup = Settings("router-key", "https://router.example/v1", "router-text", 30,
+                      vlm_model="router-vision", provider="openrouter")
+    parsed = _ModelIntentAndImages(
+        route=Route.COMPLAINT,
+        images=[_ModelObservation(summary="누수", ocr_text=None)],
+        contextualized_message=None,
+    )
+    calls = []
+
+    def client(key, *_args):
+        def parse(**kwargs):
+            calls.append((key, kwargs["model"]))
+            if key == "pod-key":
+                raise APIStatusError("unavailable", response=_response(503), body=None)
+            return _fake_parse_client(parsed).chat.completions.parse(**kwargs)
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=parse)))
+
+    monkeypatch.setattr(vlm_module, "get_settings", lambda: pod)
+    monkeypatch.setattr(vlm_module, "_get_client", client)
+    monkeypatch.setattr(
+        "zipsai.integrations.llm.get_settings", lambda provider=None: backup
+    )
+    monkeypatch.setattr("zipsai.integrations.llm.mark_pod_unavailable", lambda *_: None)
+
+    assert _classify()[0] is Route.COMPLAINT
+    assert calls == [("pod-key", "pod-model"), ("router-key", "router-vision")]
+
+
 def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
     monkeypatch: pytest.MonkeyPatch,
 ):

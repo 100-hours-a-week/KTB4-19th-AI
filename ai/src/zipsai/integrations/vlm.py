@@ -23,12 +23,13 @@ from zipsai.errors import (
 )
 from zipsai.integrations.llm import (
     _REQUIRE_STRUCTURED_OUTPUTS,
+    _call_with_fallback,
     _get_client,
     _reason,
     _retry_after,
     start_llm_call,
 )
-from zipsai.settings import get_settings
+from zipsai.settings import Settings, get_settings
 from zipsai.tracing import get_tracing_client
 
 
@@ -72,18 +73,29 @@ def classify_and_analyze(
     finish_reason: str | None = None
     structured_ok: bool | None = True
     try:
-        response = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.parse(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
-            **({"name": "intent-and-image-analysis"} if get_tracing_client() else {}),
-            response_format=_ModelIntentAndImages,
-            extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
-        )
+        def request(selected: Settings):
+            return _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            ).chat.completions.parse(
+                model=selected.vlm_model if images else selected.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ],
+                **({"name": "intent-and-image-analysis"} if get_tracing_client() else {}),
+                response_format=_ModelIntentAndImages,
+                extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = used.vlm_model if images else used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
         call.usage = getattr(response, "usage", None)
         if not response.choices or response.choices[0].message.parsed is None:
             outcome = "fail"

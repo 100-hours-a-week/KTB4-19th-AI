@@ -32,10 +32,6 @@ def _vector_store_ready() -> bool:
 
 def _models_ready() -> bool:
     try:
-        get_settings()
-    except LlmUnavailableError:
-        return False
-    try:
         response = httpx.get(
             f"{EMBEDDING_API_URL}/health", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
         )
@@ -44,17 +40,27 @@ def _models_ready() -> bool:
         return False
 
 
+def _llm_ready() -> bool:
+    try:
+        get_settings()
+        return True
+    except LlmUnavailableError:
+        return False
+
+
 @router.get("/health", response_model=None)
 def health() -> dict[str, object] | JSONResponse:
     vector_store_ready = _vector_store_ready()
     models_ready = _models_ready()
+    llm_ready = _llm_ready()
 
     data = {
         "ai_service": "ready",
         "vector_store": "ready" if vector_store_ready else "not_ready",
         "models": "ready" if models_ready else "not_ready",
+        "llm": "ready" if llm_ready else "not_ready",
         "prompt_version": PROMPT_VERSION,
     }
-    if vector_store_ready and models_ready:
+    if vector_store_ready and models_ready and llm_ready:
         return {"message": "ok", "data": data}
     return JSONResponse(status_code=503, content={"message": "not_ready", "data": data})
