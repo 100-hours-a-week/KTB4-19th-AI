@@ -29,14 +29,14 @@ RUN /app/.venv/bin/python -c "import pathlib, shutil, rapidocr; target=pathlib.P
 FROM base AS runtime
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
-RUN groupadd --system app && useradd --system --gid app app
-COPY --link --from=dependencies --chown=app:app /app/.venv /app/.venv
-COPY --link --from=models --chown=app:app /app/.cache/huggingface /app/.cache/huggingface
-COPY --link --from=models --chown=app:app /app/.cache/tiktoken /app/.cache/tiktoken
-COPY --from=models --chown=app:app /model-artifacts/rapidocr-models /app/.venv/lib/python3.12/site-packages/rapidocr/models
-COPY --from=dependencies --chown=app:app /app/pyproject.toml /app/uv.lock /app/README.md ./
-COPY --chown=app:app ai/src ./src
-COPY --chown=app:app ai/scripts ./scripts
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
+COPY --link --from=dependencies --chown=10001:10001 /app/.venv /app/.venv
+COPY --link --from=models --chown=10001:10001 /app/.cache/huggingface /app/.cache/huggingface
+COPY --link --from=models --chown=10001:10001 /app/.cache/tiktoken /app/.cache/tiktoken
+COPY --from=models --chown=10001:10001 /model-artifacts/rapidocr-models /app/.venv/lib/python3.12/site-packages/rapidocr/models
+COPY --from=dependencies --chown=10001:10001 /app/pyproject.toml /app/uv.lock /app/README.md ./
+COPY --chown=10001:10001 ai/src ./src
+COPY --chown=10001:10001 ai/scripts ./scripts
 # Only project installation follows source changes; large dependency/model COPYs stay separate.
 RUN --mount=type=bind,from=dependencies,source=/usr/local/bin/uv,target=/usr/local/bin/uv \
     UV_NO_CACHE=1 uv sync --frozen --no-dev
