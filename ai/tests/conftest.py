@@ -1,5 +1,6 @@
 import pytest
 
+from zipsai import settings as settings_module
 from zipsai.integrations.runpod import get_locator
 from zipsai.settings import get_settings
 
@@ -20,6 +21,8 @@ def _fake_openrouter_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RUNPOD_POD_NAME_PREFIX", raising=False)
     get_settings.cache_clear()
     get_locator.cache_clear()
+    monkeypatch.setattr(settings_module, "_pod_failed_url", None)
+    monkeypatch.setattr(settings_module, "_pod_failed_until", 0.0)
     yield
     get_settings.cache_clear()
     get_locator.cache_clear()

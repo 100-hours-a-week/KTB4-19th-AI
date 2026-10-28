@@ -57,6 +57,11 @@ def test_get_settings_uses_code_selected_provider_profile(
 
 def test_get_settings_requires_selected_profile_values(monkeypatch):
     monkeypatch.setattr(settings_module, "ACTIVE_MODEL_PROVIDER", "pod")
+    monkeypatch.setattr(
+        settings_module,
+        "get_locator",
+        lambda: SimpleNamespace(base_url="https://pod.example/v1"),
+    )
     for name in ("POD_API_KEY", "POD_BASE_URL", "POD_MODEL"):
         monkeypatch.delenv(name, raising=False)
     get_settings.cache_clear()
@@ -117,8 +122,31 @@ def test_pod_settings_follow_locator_address_changes(monkeypatch):
     assert second is not first
 
     locator.base_url = None
+    assert get_settings().provider == "openrouter"
     with pytest.raises(LlmUnavailableError, match="POD_BASE_URL"):
-        get_settings()
+        get_settings("pod")
+
+
+def test_pod_error_uses_openrouter_until_cooldown_or_new_address(monkeypatch):
+    monkeypatch.setattr(settings_module, "ACTIVE_MODEL_PROVIDER", "pod")
+    monkeypatch.setenv("POD_API_KEY", "pod-key")
+    monkeypatch.setenv("POD_MODEL", "pod-model")
+    monkeypatch.delenv("POD_BASE_URL", raising=False)
+    locator = SimpleNamespace(base_url="https://first-8000.proxy.runpod.net/v1")
+    monkeypatch.setattr(settings_module, "get_locator", lambda: locator)
+    now = [100.0]
+    monkeypatch.setattr(settings_module.time, "monotonic", lambda: now[0])
+
+    assert get_settings().provider == "pod"
+    settings_module.mark_pod_unavailable(locator.base_url)
+    assert get_settings().provider == "openrouter"
+
+    locator.base_url = "https://second-8000.proxy.runpod.net/v1"
+    assert get_settings().provider == "pod"
+
+    locator.base_url = "https://first-8000.proxy.runpod.net/v1"
+    now[0] += 31
+    assert get_settings().provider == "pod"
 
 
 def test_other_providers_do_not_access_locator(monkeypatch):

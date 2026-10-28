@@ -1,5 +1,4 @@
 import logging
-import os
 from functools import lru_cache
 
 import httpx
@@ -8,8 +7,7 @@ from fastapi.responses import JSONResponse
 
 from zipsai.errors import LlmUnavailableError
 from zipsai.integrations.qdrant import create_client
-from zipsai.integrations.runpod import get_locator
-from zipsai.settings import ACTIVE_MODEL_PROVIDER, EMBEDDING_API_URL, get_settings
+from zipsai.settings import EMBEDDING_API_URL, get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,10 +41,6 @@ def _models_ready() -> bool:
 
 
 def _llm_ready() -> bool:
-    if ACTIVE_MODEL_PROVIDER == "pod" and not os.getenv("POD_BASE_URL"):
-        locator = get_locator()
-        if locator is not None:
-            return locator.is_ready()
     try:
         get_settings()
         return True

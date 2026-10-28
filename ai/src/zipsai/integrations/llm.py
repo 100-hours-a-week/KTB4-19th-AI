@@ -2,12 +2,13 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlparse
 
 from openai import (
+    APIConnectionError,
     APIError,
     APIStatusError,
     APITimeoutError,
@@ -27,7 +28,7 @@ from zipsai.errors import (
 )
 from zipsai.metrics import observe_llm
 from zipsai.observability import current_stage, note_llm_cost, note_llm_tokens
-from zipsai.settings import call_cost_usd, get_settings
+from zipsai.settings import Settings, call_cost_usd, get_settings, mark_pod_unavailable
 from zipsai.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,35 @@ def start_llm_call(
     )
 
 
+def _pod_failed(settings: Settings, error: APIError) -> bool:
+    if settings.provider != "pod" or not settings.llm_base_url or not (
+        isinstance(error, APIConnectionError)
+        or isinstance(error, APIStatusError) and error.status_code >= 500
+    ):
+        return False
+    mark_pod_unavailable(settings.llm_base_url)
+    logger.warning(
+        "pod_fallback_to_openrouter",
+        extra={
+            "status_code": getattr(error, "status_code", None),
+            "error_type": type(error).__name__,
+        },
+    )
+    return True
+
+
+def _call_with_fallback[T](
+    settings: Settings, request: Callable[[Settings], T]
+) -> tuple[T, Settings]:
+    try:
+        return request(settings), settings
+    except (APIConnectionError, APIStatusError) as error:
+        if not _pod_failed(settings, error):
+            raise
+        fallback = get_settings("openrouter")
+        return request(fallback), fallback
+
+
 def generate_text(
     system_prompt: str,
     user_prompt: str,
@@ -226,25 +256,36 @@ def generate_text(
     structured_ok: bool | None = True if response_format else None
     output_text: str | None = None
     try:
-        client = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        )
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            **({"name": "generate-text"} if get_tracing_client() else {}),
-            **(
-                {
-                    "response_format": response_format,
-                    "extra_body": _REQUIRE_STRUCTURED_OUTPUTS,
-                }
-                if response_format
-                else {}
-            ),
-        )
+        def request(selected: Settings):
+            client = _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            )
+            return client.chat.completions.create(
+                model=selected.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                **({"name": "generate-text"} if get_tracing_client() else {}),
+                **(
+                    {
+                        "response_format": response_format,
+                        "extra_body": _REQUIRE_STRUCTURED_OUTPUTS,
+                    }
+                    if response_format
+                    else {}
+                ),
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
         call.usage = response.usage
         _record_usage(usage_sink, response.usage)
         content = response.choices[0].message.content if response.choices else None
@@ -316,32 +357,49 @@ async def generate_text_stream(
     err_code: str | None = None
     parts: list[str] = []
     try:
-        client = _get_async_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        )
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        async for chunk in stream:
-            usage = getattr(chunk, "usage", None)
-            if usage is not None:
-                call.usage = usage
-                _record_usage(usage_sink, usage)
-            if not chunk.choices:
-                continue
-            text = chunk.choices[0].delta.content
-            if text:
-                call.mark_ttft()
-                parts.append(text)
-                yield text
-        outcome = "ok"
-        status_code = 200
+        selected = settings
+        while True:
+            try:
+                client = _get_async_client(
+                    selected.llm_api_key,
+                    selected.llm_base_url,
+                    selected.llm_timeout_seconds,
+                )
+                stream = await client.chat.completions.create(
+                    model=selected.llm_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                async for chunk in stream:
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        call.usage = usage
+                        _record_usage(usage_sink, usage)
+                    if not chunk.choices:
+                        continue
+                    text = chunk.choices[0].delta.content
+                    if text:
+                        call.mark_ttft()
+                        parts.append(text)
+                        yield text
+                outcome = "ok"
+                status_code = 200
+                break
+            except (APIConnectionError, APIStatusError) as error:
+                if _pod_failed(selected, error) and not parts:
+                    selected = get_settings("openrouter")
+                    call.provider = selected.provider
+                    call.model = selected.llm_model
+                    call.base_url = selected.llm_base_url
+                    call.attempt += 1
+                    call.retry_reason = "pod_unavailable"
+                    call.usage = None
+                    continue
+                raise
     except (asyncio.CancelledError, GeneratorExit):
         outcome = "cancelled"
         status_code = None
@@ -408,17 +466,28 @@ def generate_structured[T: BaseModel](
     finish_reason: str | None = None
     structured_ok: bool | None = True
     try:
-        response = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.parse(
-            model=chosen,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=response_format,
-            extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
-        )
+        def request(selected: Settings):
+            return _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            ).chat.completions.parse(
+                model=model if model is not None else selected.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format=response_format,
+                extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = model if model is not None else used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
         call.usage = response.usage
         _record_usage(usage_sink, response.usage)
         if not response.choices:
