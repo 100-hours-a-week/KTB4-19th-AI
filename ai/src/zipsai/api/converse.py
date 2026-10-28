@@ -266,7 +266,7 @@ async def _stream_converse(request: ConverseRequest):
                     error_type=type(error).__name__,
                 )
             raise
-        except TimeoutError:
+        except TimeoutError as error:
             logger.warning("stream_request_timeout")
             if trace is not None:
                 trace.update(output={"outcome": "fail", "error_type": "RequestTimeout"})
