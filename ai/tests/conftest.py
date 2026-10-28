@@ -1,5 +1,7 @@
 import pytest
 
+from zipsai import settings as settings_module
+from zipsai.integrations.runpod import get_locator
 from zipsai.settings import get_settings
 
 
@@ -13,6 +15,14 @@ def _fake_openrouter_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SERVERLESS_API_KEY", "test-serverless-key")
     monkeypatch.setenv("SERVERLESS_BASE_URL", "https://serverless.example/v1")
     monkeypatch.setenv("SERVERLESS_MODEL", "test-serverless-model")
+    # settings가 load_dotenv()를 하므로 개발자 .env의 실제 RunPod 키가 새어 들어올 수
+    # 있다. 지우지 않으면 테스트가 진짜 RunPod API를 때린다. 쓰는 테스트가 직접 넣는다.
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.delenv("RUNPOD_POD_NAME_PREFIX", raising=False)
     get_settings.cache_clear()
+    get_locator.cache_clear()
+    monkeypatch.setattr(settings_module, "_pod_failed_url", None)
+    monkeypatch.setattr(settings_module, "_pod_failed_until", 0.0)
     yield
     get_settings.cache_clear()
+    get_locator.cache_clear()

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final
@@ -7,6 +8,7 @@ from typing import Final
 from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
+from zipsai.integrations.runpod import get_locator
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +60,13 @@ LOCATION_PLACEHOLDER: Final = "미상"
 # 작업 자체를 강제 종료하진 않는다(Python은 실행 중 스레드를 취소할 수 없음).
 CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "115"))
 
-# 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
-ACTIVE_MODEL_PROVIDER: Final = "serverless"
+# 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 배포 환경에서 선택한다.
+ACTIVE_MODEL_PROVIDER: Final = os.getenv("ACTIVE_MODEL_PROVIDER", "serverless")
 LLM_JUDGE_MODEL: Final = os.getenv("LLM_JUDGE_MODEL") or None
+
+_POD_FAILOVER_SECONDS: Final = 30.0
+_pod_failed_url: str | None = None
+_pod_failed_until = 0.0
 
 # 평가 전용. 채점 사진은 공개 URL이 없어 data URL로 넣는다. 운영 compose는
 # 이 값을 절대 설정하지 않는다 — 켜지면 /converse가 임의 크기의 base64 사진을
@@ -126,8 +132,28 @@ def call_cost_usd(
     return incoming / 1_000_000 * in_price + outgoing / 1_000_000 * out_price
 
 
-@lru_cache
 def get_settings(provider_override: str | None = None) -> Settings:
+    provider = provider_override or ACTIVE_MODEL_PROVIDER
+    manual_url = os.getenv("POD_BASE_URL") if provider == "pod" else None
+    locator = get_locator() if provider == "pod" and not manual_url else None
+    discovered_url = locator.base_url if locator else None
+    if provider == "pod" and provider_override is None:
+        pod_url = manual_url or discovered_url
+        if not pod_url or (
+            pod_url == _pod_failed_url and time.monotonic() < _pod_failed_until
+        ):
+            return _settings_for("openrouter", None)
+    return _settings_for(provider, discovered_url)
+
+
+def mark_pod_unavailable(base_url: str | None) -> None:
+    global _pod_failed_url, _pod_failed_until
+    _pod_failed_url = base_url
+    _pod_failed_until = time.monotonic() + _POD_FAILOVER_SECONDS
+
+
+@lru_cache
+def _settings_for(provider: str, discovered_base_url: str | None) -> Settings:
     profiles = {
         "openrouter": (
             os.getenv("OPENROUTER_API_KEY"),
@@ -147,14 +173,13 @@ def get_settings(provider_override: str | None = None) -> Settings:
         ),
         "pod": (
             os.getenv("POD_API_KEY"),
-            os.getenv("POD_BASE_URL"),
+            os.getenv("POD_BASE_URL") or discovered_base_url,
             os.getenv("POD_MODEL"),
             os.getenv("POD_MODEL"),
             "POD_MODEL",
             "POD_MODEL",
         ),
     }
-    provider = provider_override or ACTIVE_MODEL_PROVIDER
     if provider not in profiles:
         raise LlmUnavailableError(
             "ACTIVE_MODEL_PROVIDER must be openrouter, serverless, or pod"
@@ -186,3 +211,6 @@ def get_settings(provider_override: str | None = None) -> Settings:
         vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
         vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
     )
+
+
+get_settings.cache_clear = _settings_for.cache_clear
