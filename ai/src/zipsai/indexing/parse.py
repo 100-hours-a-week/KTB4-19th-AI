@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -38,6 +39,11 @@ class ParsedPages(list[dict[str, int | str]]):
     parser: str | None = None
     fallback_reason: str | None = None
     text_layer: str | None = None
+    parser_route: str | None = None
+    route_reason: str | None = None
+    t_convert_s: float | None = None
+    t_ocr_s: float | None = None
+    t_table_s: float | None = None
 
 
 def conversion_stats(result: object, pages: list[dict[str, int | str]]) -> ParsedPages:
@@ -113,6 +119,19 @@ def _converter() -> DocumentConverter:
     )
 
 
+def _annotate_route(
+    parsed: ParsedPages, *, route: str, reason: str, convert_s: float
+) -> ParsedPages:
+    parsed.parser_route = route
+    parsed.route_reason = reason
+    parsed.t_convert_s = convert_s
+    # convert() 한 번이 OCR과 표 구조를 같이 끝낸다. 시간을 나누려면
+    # profile_pipeline_timings를 켜야 해서 켜지 않는다.
+    parsed.t_ocr_s = None
+    parsed.t_table_s = None
+    return parsed
+
+
 def _read_with(
     path: Path,
     converter: DocumentConverter,
@@ -120,9 +139,11 @@ def _read_with(
     parser: str,
     fallback_reason: str | None,
     text_layer: str | None,
-) -> ParsedPages:
+) -> tuple[ParsedPages, float]:
     try:
+        started = perf_counter()
         converted = converter.convert(path)
+        convert_s = perf_counter() - started
         document = converted.document
         page_numbers = sorted(document.pages)
         if not page_numbers:
@@ -138,7 +159,7 @@ def _read_with(
         parsed.parser = parser
         parsed.fallback_reason = fallback_reason
         parsed.text_layer = text_layer
-        return parsed
+        return parsed, convert_s
     except PdfParseError:
         raise
     except Exception as exc:
@@ -195,16 +216,21 @@ def parse_document(source: str | Path) -> ParsedPages:
         raise PdfParseError(f"File is unreadable: {path}") from exc
 
     if path.suffix.lower() != ".pdf":
-        return _read_with(
+        parsed, convert_s = _read_with(
             path,
             _converter(),
             parser="docling",
             fallback_reason=None,
             text_layer=None,
         )
+        return _annotate_route(
+            parsed, route="docling_ocr", reason="non_pdf", convert_s=convert_s
+        )
 
     try:
+        started = perf_counter()
         report = inspect_pdf(path)
+        inspect_s = perf_counter() - started
     except PdfParseError:
         raise
     except Exception as exc:
@@ -212,19 +238,36 @@ def parse_document(source: str | Path) -> ParsedPages:
 
     kind, reason, layer = _docling_route(report)
     if kind == "scan":
-        return _read_with(
+        parsed, convert_s = _read_with(
             path,
             _converter(),
             parser="docling",
             fallback_reason=reason,
             text_layer=layer,
         )
+        return _annotate_route(
+            parsed,
+            route="docling_ocr",
+            reason=reason or "text_layer_none",
+            convert_s=convert_s,
+        )
     if kind == "fast":
-        return _read_with(
+        parsed, convert_s = _read_with(
             path,
             _fast_converter(),
             parser="docling",
             fallback_reason=reason,
             text_layer=layer,
         )
-    return _from_pdfplumber(path, report, layer)
+        return _annotate_route(
+            parsed,
+            route="docling_fast",
+            reason=reason or "ragged_table",
+            convert_s=convert_s,
+        )
+    return _annotate_route(
+        _from_pdfplumber(path, report, layer),
+        route="pdfplumber",
+        reason="text_layer_ok",
+        convert_s=inspect_s,
+    )
