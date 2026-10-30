@@ -18,3 +18,8 @@ class AgentState(TypedDict):
     image_analysis: ImageAnalysis | None
     image_analysis_failed: NotRequired[bool]
     contextualized_message: NotRequired[str | None]
+    agent_messages: NotRequired[list[object]]
+    pending_tool_calls: NotRequired[tuple[object, ...]]
+    tool_call_count: NotRequired[int]
+    last_tool_result: NotRequired[object]
+    search_result: NotRequired[object]

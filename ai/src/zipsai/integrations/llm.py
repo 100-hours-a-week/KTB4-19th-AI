@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import time
@@ -225,6 +226,125 @@ def _call_with_fallback[T](
             raise
         fallback = get_settings("openrouter")
         return request(fallback), fallback
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ToolDecision:
+    message: object
+    content: str | None
+    tool_calls: tuple[ToolCall, ...]
+
+
+def generate_tool_decision(
+    messages: list[object],
+    tools: list[dict[str, object]],
+    *,
+    usage_sink: dict[str, object] | None = None,
+    purpose: str | None = None,
+) -> ToolDecision:
+    """도구 선택을 요청한다. 반환한 message를 도구 결과와 함께 다음 호출에 넣는다."""
+    settings = get_settings()
+    call = start_llm_call(
+        purpose=purpose,
+        model=settings.llm_model,
+        provider=settings.provider,
+        base_url=settings.llm_base_url,
+        streaming=False,
+        structured=False,
+    )
+    outcome = "fail"
+    status_code: int | None = None
+    err_code: str | None = None
+    finish_reason: str | None = None
+    output_text: str | None = None
+    try:
+        def request(selected: Settings):
+            return _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            ).chat.completions.create(
+                model=selected.llm_model,
+                messages=messages,
+                tools=tools,
+                **({"name": "generate-tool-decision"} if get_tracing_client() else {}),
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
+        call.usage = response.usage
+        _record_usage(usage_sink, response.usage)
+        if not response.choices:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an empty response")
+        choice = response.choices[0]
+        message = choice.message
+        finish_reason = _reason(getattr(choice, "finish_reason", None))
+        if finish_reason in {"length", "content_filter"}:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an incomplete response")
+        parsed = []
+        for item in message.tool_calls or []:
+            try:
+                arguments = json.loads(item.function.arguments)
+                if (
+                    item.type != "function"
+                    or not isinstance(arguments, dict)
+                    or not item.id
+                    or not item.function.name
+                ):
+                    raise ValueError("invalid tool call")
+            except (ValueError, TypeError, AttributeError) as error:
+                err_code = "DEPENDENCY_NOT_READY"
+                raise LlmUnavailableError("LLM returned invalid tool arguments") from error
+            parsed.append(ToolCall(item.id, item.function.name, arguments))
+        if not message.content and not parsed:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an empty response")
+        output_text = message.content
+        outcome, status_code = "ok", 200
+        return ToolDecision(message, message.content, tuple(parsed))
+    except RateLimitError as error:
+        outcome, status_code, err_code = "fail", 429, "MODEL_RATE_LIMITED"
+        raise LlmRateLimitedError(
+            "LLM rate limit exceeded", retry_after_seconds=_retry_after(error)
+        ) from error
+    except APITimeoutError as error:
+        outcome, status_code, err_code = "fail", None, "MODEL_TIMEOUT"
+        raise LlmTimeoutError("LLM request timed out") from error
+    except APIStatusError as error:
+        status_code = error.status_code
+        err_code = "MODEL_UPSTREAM_ERROR" if error.status_code >= 500 else "DEPENDENCY_NOT_READY"
+        if error.status_code >= 500:
+            raise LlmUpstreamError("LLM provider returned an upstream error") from error
+        raise LlmUnavailableError("LLM request failed") from error
+    except APIError as error:
+        err_code = "DEPENDENCY_NOT_READY"
+        raise LlmUnavailableError("LLM request failed") from error
+    except Exception as error:
+        if err_code is None:
+            err_code = type(error).__name__
+        raise
+    finally:
+        call.finish(
+            outcome=outcome,
+            status_code=status_code,
+            error_code=err_code,
+            finish_reason=finish_reason,
+            output_text=output_text,
+        )
 
 
 def generate_text(
