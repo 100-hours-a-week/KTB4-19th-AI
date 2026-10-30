@@ -46,6 +46,7 @@ def _decision(*, content: str | None = None, calls: tuple[ToolCall, ...] = ()):
 
 
 def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.MonkeyPatch):
+    events: list[dict[str, str]] = []
     calls = iter(
         [
             _decision(calls=(ToolCall("call-1", "search_building_docs", {"query": "주차"}),)),
@@ -58,6 +59,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
         lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
+    monkeypatch.setattr(graph_module, "get_stream_writer", lambda: events.append)
     monkeypatch.setattr(
         graph_module,
         "search_building_docs",
@@ -71,6 +73,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert result["tool_call_count"] == 1
     assert result["agent_messages"][-2]["role"] == "tool"
     assert result["agent_messages"][-2]["tool_call_id"] == "call-1"
+    assert events == [{"type": "status", "status": "건물 문서를 확인하고 있습니다."}]
 
 
 def test_graph_ends_immediately_after_complaint_tool(monkeypatch: pytest.MonkeyPatch):

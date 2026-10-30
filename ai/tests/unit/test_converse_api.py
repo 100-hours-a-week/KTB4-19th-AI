@@ -37,7 +37,7 @@ class _FakeGraph:
     def __init__(
         self,
         result: dict[str, object] | Exception,
-        custom_events: list[str] | None = None,
+        custom_events: list[object] | None = None,
     ):
         self.result = result
         self.custom_events = custom_events or []
@@ -198,6 +198,42 @@ def test_converse_stream_returns_sse_status_reply_and_done(monkeypatch):
     assert complete["data"]["reply"] == "건물 이용 안내입니다."
     assert complete["data"]["meta"]["model"] == "test-model"
     assert isinstance(complete["data"]["meta"]["timing_ms"], int)
+
+
+def test_converse_stream_forwards_tool_progress_but_not_tool_message(monkeypatch):
+    graph = _FakeGraph(
+        {
+            "route": Route.KNOWLEDGE,
+            "complaint_state": None,
+            "reply": "지하 1층을 이용해 주세요.",
+        },
+        custom_events=[
+            {"type": "status", "status": "건물 문서를 확인하고 있습니다."},
+            {
+                "role": "tool",
+                "tool_call_id": "call-search-1",
+                "content": '{"status":"ok"}',
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        converse_module, "build_graph", lambda streaming=False: graph
+    )
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+    )
+
+    response = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events[1] == {"type": "status", "status": "건물 문서를 확인하고 있습니다."}
+    assert all("tool_call_id" not in event for event in events)
 
 
 def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
