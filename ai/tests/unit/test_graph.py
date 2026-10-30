@@ -2,10 +2,12 @@ import pytest
 
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
+import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import (
     ComplaintState,
     ConverseRequest,
     ImageAnalysis,
+    ImageAttachment,
     ImageObservation,
     Route,
     RouteResult,
@@ -294,6 +296,25 @@ def test_graph_passes_intent_context_and_image_analysis_to_complaint(
     build_graph().invoke(state)
 
     assert received == [(analysis, contextualized_message)]
+
+
+def test_graph_passes_separate_image_observation_to_complaint(monkeypatch):
+    state = _make_state(None)
+    state["request"].message.images = [ImageAttachment(attachmentId=123, url="https://example.com/leak.jpg")]
+    analysis = ImageAnalysis(images=[ImageObservation(attachmentId=123, summary="바닥에 물이 고임")])
+    received = []
+    monkeypatch.setattr(intent_module, "analyze_images", lambda *_args, **_kwargs: analysis)
+    monkeypatch.setattr(intent_module, "generate_structured", lambda *_args, **_kwargs: intent_module._RouteDecision(route=Route.COMPLAINT, contextualized_message="바닥에 물이 새요"))
+
+    def complaint(_request, *, image_analysis=None, contextualized_message=None):
+        received.append((image_analysis, contextualized_message))
+        return {"reply": "확인", "result": RouteResult()}
+
+    monkeypatch.setattr(graph_module, "handle_complaint", complaint)
+    result = build_graph().invoke(state)
+
+    assert received == [(analysis, "바닥에 물이 새요")]
+    assert result["result"].image_analysis == analysis
 
 
 @pytest.mark.parametrize("route", [Route.COMPLAINT, Route.KNOWLEDGE])

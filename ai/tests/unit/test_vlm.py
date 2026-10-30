@@ -13,7 +13,7 @@ from openai import (
     RateLimitError,
 )
 
-from zipsai.contracts.converse import ImageAttachment, Route
+from zipsai.contracts.converse import ImageAttachment
 from zipsai.errors import (
     ImageAnalysisError,
     LlmRateLimitedError,
@@ -22,7 +22,7 @@ from zipsai.errors import (
     LlmUpstreamError,
 )
 from zipsai.integrations import vlm as vlm_module
-from zipsai.integrations.vlm import _ModelIntentAndImages, _ModelObservation
+from zipsai.integrations.vlm import _ModelImages, _ModelObservation
 from zipsai.settings import Settings
 
 _SYSTEM_PROMPT = "classify and analyze"
@@ -44,7 +44,7 @@ def _response(
 
 
 def _fake_parse_client(
-    parsed: _ModelIntentAndImages | None,
+    parsed: _ModelImages | None,
     calls: list[dict[str, object]] | None = None,
     refusal: str | None = None,
 ) -> SimpleNamespace:
@@ -73,29 +73,26 @@ def _use_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _classify(images: list[ImageAttachment] | None = None):
-    return vlm_module.classify_and_analyze(
+def _analyze(images: list[ImageAttachment] | None = None):
+    return vlm_module.analyze_images(
         [_IMAGE] if images is None else images,
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_USER_PROMPT,
     )
 
 
-def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypatch):
+def test_analyze_images_returns_attachment_observations(monkeypatch):
     calls: list[dict[str, object]] = []
-    parsed = _ModelIntentAndImages(
-        route=Route.COMPLAINT,
+    parsed = _ModelImages(
         images=[_ModelObservation(summary="세탁기 아래 물이 고여 있음", ocr_text="E1")],
-        contextualized_message="세탁기 아래 물이 새는데 어떻게 하나요?",
     )
     monkeypatch.setattr(
         vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, contextualized_message = _classify()
+    analysis = _analyze()
 
-    assert route is Route.COMPLAINT
     assert analysis.model_dump() == {
         "images": [
             {
@@ -105,33 +102,27 @@ def test_classify_and_analyze_returns_route_and_attachment_observations(monkeypa
             }
         ]
     }
-    assert contextualized_message == "세탁기 아래 물이 새는데 어떻게 하나요?"
     assert calls[0]["messages"][0] == {"role": "system", "content": _SYSTEM_PROMPT}
     assert calls[0]["messages"][1]["content"] == [
         {"type": "text", "text": _USER_PROMPT},
         {"type": "image_url", "image_url": {"url": _IMAGE.url}},
     ]
-    assert calls[0]["response_format"] is _ModelIntentAndImages
+    assert calls[0]["response_format"] is _ModelImages
+    assert "route" not in calls[0]["response_format"].model_fields
+    assert "contextualized_message" not in calls[0]["response_format"].model_fields
 
 
-def test_classify_and_analyze_supports_text_only_intent(monkeypatch):
+def test_analyze_images_skips_provider_without_images(monkeypatch):
     calls: list[dict[str, object]] = []
-    parsed = _ModelIntentAndImages(
-        route=Route.KNOWLEDGE, images=[], contextualized_message=None
-    )
     monkeypatch.setattr(
-        vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed, calls)
+        vlm_module, "_get_client", lambda *_: _fake_parse_client(None, calls)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, contextualized_message = _classify([])
+    analysis = _analyze([])
 
-    assert route is Route.KNOWLEDGE
     assert analysis.images == []
-    assert contextualized_message is None
-    assert calls[0]["messages"][1]["content"] == [
-        {"type": "text", "text": _USER_PROMPT}
-    ]
+    assert calls == []
 
 
 def test_pod_503_retries_image_analysis_on_openrouter(monkeypatch):
@@ -139,10 +130,8 @@ def test_pod_503_retries_image_analysis_on_openrouter(monkeypatch):
                    vlm_model="pod-model", provider="pod")
     backup = Settings("router-key", "https://router.example/v1", "router-text", 30,
                       vlm_model="router-vision", provider="openrouter")
-    parsed = _ModelIntentAndImages(
-        route=Route.COMPLAINT,
+    parsed = _ModelImages(
         images=[_ModelObservation(summary="누수", ocr_text=None)],
-        contextualized_message=None,
     )
     calls = []
 
@@ -162,11 +151,11 @@ def test_pod_503_retries_image_analysis_on_openrouter(monkeypatch):
     )
     monkeypatch.setattr("zipsai.integrations.llm.mark_pod_unavailable", lambda *_: None)
 
-    assert _classify()[0] is Route.COMPLAINT
+    assert _analyze().images[0].summary == "누수"
     assert calls == [("pod-key", "pod-model"), ("router-key", "router-vision")]
 
 
-def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
+def test_analyze_images_never_requests_hallucinated_images_when_none_attached(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """VLM이 이미지 0장인데도 images 필드를 채워 돌려줄 때가 있다(할루시네이션).
@@ -175,21 +164,17 @@ def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
     (zipsai-ai-stage-failed 알람). 요청한 이미지가 없으면 모델이 뭘 돌려주든
     버리고 통과시킨다 — 실제 이미지 개수가 어긋난 경우는 별개로 계속 막는다.
     """
-    parsed = _ModelIntentAndImages(
-        route=Route.KNOWLEDGE,
+    parsed = _ModelImages(
         images=[_ModelObservation(summary="할루시네이션된 관측", ocr_text=None)],
-        contextualized_message="쓰레기 배출일이 언제예요?",
     )
     monkeypatch.setattr(
         vlm_module, "_get_client", lambda *_: _fake_parse_client(parsed)
     )
     _use_settings(monkeypatch)
 
-    route, analysis, contextualized_message = _classify([])
+    analysis = _analyze([])
 
-    assert route is Route.KNOWLEDGE
     assert analysis.images == []
-    assert contextualized_message == "쓰레기 배출일이 언제예요?"
 
 
 @pytest.mark.parametrize(
@@ -199,20 +184,32 @@ def test_classify_and_analyze_ignores_hallucinated_images_when_none_attached(
         lambda: _fake_parse_client(None),
         _fake_empty_client,
         lambda: _fake_parse_client(
-            _ModelIntentAndImages(
-                route=Route.CLARIFY, images=[], contextualized_message=None
-            )
+            _ModelImages(images=[])
         ),
     ],
 )
-def test_classify_and_analyze_rejects_refusal_invalid_or_mismatched_response(
+def test_analyze_images_rejects_refusal_invalid_or_mismatched_response(
     monkeypatch: pytest.MonkeyPatch, client
 ):
     monkeypatch.setattr(vlm_module, "_get_client", lambda *_: client())
     _use_settings(monkeypatch)
 
     with pytest.raises(ImageAnalysisError):
-        _classify()
+        _analyze()
+
+
+def test_mismatched_observations_are_logged_as_failure(monkeypatch, caplog):
+    monkeypatch.setattr(vlm_module, "_get_client", lambda *_: _fake_parse_client(_ModelImages(images=[])))
+    _use_settings(monkeypatch)
+
+    with (
+        caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
+        pytest.raises(ImageAnalysisError),
+    ):
+        _analyze()
+
+    recorded = [record for record in caplog.records if record.message == "llm_call"]
+    assert recorded[-1].outcome == "fail"
 
 
 class _FakeCompletions:
@@ -269,7 +266,7 @@ def test_provider_errors_keep_their_existing_error_mapping(
     _use_fake_completions_client(monkeypatch, error)
 
     with pytest.raises(error_type):
-        _classify()
+        _analyze()
 
 
 def test_rate_limit_error_preserves_retry_after(monkeypatch):
@@ -281,7 +278,7 @@ def test_rate_limit_error_preserves_retry_after(monkeypatch):
     )
 
     with pytest.raises(LlmRateLimitedError) as caught:
-        _classify()
+        _analyze()
 
     assert caught.value.retry_after_seconds == 7
 
@@ -301,7 +298,7 @@ def test_provider_error_does_not_log_signed_image_url(monkeypatch):
     )
 
     with pytest.raises(LlmUnavailableError) as caught:
-        _classify()
+        _analyze()
 
     rendered_error = "".join(traceback.format_exception(caught.value))
     assert caught.value.__suppress_context__
@@ -329,7 +326,7 @@ def test_unknown_vlm_exception_is_logged_as_failure(monkeypatch, caplog):
         caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"),
         pytest.raises(BoomError),
     ):
-        _classify()
+        _analyze()
 
     recorded = [record for record in caplog.records if record.message == "llm_call"]
     assert recorded[-1].outcome == "fail"

@@ -13,7 +13,7 @@ import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
-from zipsai.contracts.converse import ConverseRequest, ImageAnalysis, Route
+from zipsai.contracts.converse import ConverseRequest, Route
 from zipsai.errors import (
     ChunkTooLongError,
     ComplaintExtractionError,
@@ -755,8 +755,10 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
 ):
     monkeypatch.setattr(
         intent_module,
-        "classify_and_analyze",
-        lambda *_args, **_kwargs: (Route.COMPLAINT, ImageAnalysis(images=[]), None),
+        "generate_structured",
+        lambda *_args, **_kwargs: intent_module._RouteDecision(
+            route=Route.COMPLAINT, contextualized_message=None
+        ),
     )
     monkeypatch.setattr(
         converse_module,

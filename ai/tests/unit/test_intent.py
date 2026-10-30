@@ -1,10 +1,11 @@
+from types import SimpleNamespace
+
 import pytest
 
 import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import (
     ConverseRequest,
     ImageAnalysis,
-    ImageAttachment,
     ImageObservation,
     Route,
 )
@@ -55,73 +56,75 @@ def _build_state(
     }
 
 
-def test_classify_intent_analyzes_new_images_and_returns_route(monkeypatch):
-    calls: list[tuple[list[ImageAttachment], str, str]] = []
-    observation = ImageObservation(
-        attachmentId=123, summary="세탁기 아래 물이 고여 있음", ocrText=None
+def _decision(route: Route, contextualized_message: str | None = None):
+    return SimpleNamespace(route=route, contextualized_message=contextualized_message)
+
+
+def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
+    analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
     )
-
-    def classify(images, *, system_prompt, user_prompt):
-        calls.append((images, system_prompt, user_prompt))
-        return Route.COMPLAINT, ImageAnalysis(images=[observation]), "세탁기 밑으로 물이 새요"
-
-    monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
-    state = _build_state(
-        "세탁기 밑으로 물이 새요",
-        images=[{"attachmentId": 123, "url": "https://example.com/leak.jpg"}],
+    monkeypatch.setattr(
+        intent_module, "analyze_images", lambda *_args, **_kwargs: analysis
     )
+    prompts = []
 
-    result = classify_intent(state)
+    def classify(system, user, schema, **_kwargs):
+        prompts.append((system, user, schema))
+        return _decision(Route.COMPLAINT, "세탁기 밑으로 물이 새요")
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+    result = classify_intent(
+        _build_state(
+            "물이 새요",
+            images=[{"attachmentId": 123, "url": "https://example.com/leak.jpg"}],
+        )
+    )
 
     assert result["route"] is Route.COMPLAINT
-    assert result["image_analysis"].images == [observation]
+    assert result["image_analysis"] is analysis
     assert result["contextualized_message"] == "세탁기 밑으로 물이 새요"
-    assert calls[0][0][0].attachment_id == 123
-    assert "세탁기 밑으로 물이 새요" in calls[0][2]
-    assert "현재 진행 중인 route" in calls[0][2]
+    assert "세탁기 아래 물이 고임" in prompts[0][1]
+    assert "route" in prompts[0][2].model_fields
+    assert "images" not in prompts[0][2].model_fields
 
 
-def test_intent_prompt_requests_reusable_summary_and_separate_ocr(monkeypatch):
-    prompts: list[str] = []
-
-    def classify(_images, *, system_prompt, **_kwargs):
-        prompts.append(system_prompt)
-        return Route.CLARIFY, ImageAnalysis(images=[]), None
-
-    monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
-
-    classify_intent(_build_state("사진을 봐주세요"))
-
-    prompt = prompts[0]
-    assert "useful for both complaint extraction and knowledge search" in prompt
-    assert "main visible subject and its relevant visible state" in prompt
-    assert (
-        "clearly visible error code, indicator, condition, item or material" in prompt
+def test_intent_prompt_keeps_observation_and_context_rules(monkeypatch):
+    prompts = []
+    monkeypatch.setattr(
+        intent_module,
+        "analyze_images",
+        lambda *_args, **_kwargs: ImageAnalysis(images=[]),
     )
-    assert "Do not list unrelated labels" in prompt
-    assert "Transcribe clearly readable, relevant text verbatim" in prompt
-    assert "Omit unreadable fragments instead of guessing them" in prompt
-    assert "contextualized_message" in prompt
-    assert "Do not answer, diagnose, or add facts" in prompt
-    assert "Missing complaint details such as location or date" in prompt
-    assert "without an explicit photo request" in prompt
-    assert "history shows one active request" in prompt
-    assert "If multiple topics are active or the connection is" in prompt
-    assert "The image alone cannot establish intent or location" in prompt
+
+    def classify(system, user, *_args, **_kwargs):
+        prompts.append((system, user))
+        return _decision(Route.CLARIFY)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+    classify_intent(_build_state("사진을 봐주세요"))
+    system, user = prompts[0]
+    assert "Do not answer, diagnose, or add facts" in system
+    assert "The image alone cannot establish intent or location" in system
+    assert "현재 이미지 관찰" in user
 
 
-def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
-    calls: list[list[ImageAttachment]] = []
-
-    def classify(images, **_kwargs):
-        calls.append(images)
-        return Route.KNOWLEDGE, ImageAnalysis(images=[]), "쓰레기 배출일이 언제예요?"
-
-    monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
+def test_text_only_classifies_without_vlm(monkeypatch):
+    monkeypatch.setattr(
+        intent_module,
+        "analyze_images",
+        lambda *_args, **_kwargs: pytest.fail("no image call"),
+    )
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda *_args, **_kwargs: _decision(
+            Route.KNOWLEDGE, "쓰레기 배출일이 언제예요?"
+        ),
+    )
 
     result = classify_intent(_build_state("쓰레기 배출일이 언제예요?"))
 
-    assert calls == [[]]
     assert result == {
         "route": Route.KNOWLEDGE,
         "image_analysis": None,
@@ -129,21 +132,40 @@ def test_classify_intent_still_uses_vlm_without_new_images(monkeypatch):
     }
 
 
-def test_classify_intent_resolves_a_demonstrative_pronoun_via_history(monkeypatch):
-    # #108: "그거 어디다해"가 원문 그대로 knowledge 검색에 쓰이면 건물 문서와
-    # 매칭되지 않는다. intent가 이미 보는 대화 이력으로 미리 보강해 넘긴다.
-    def classify(_images, *, system_prompt, user_prompt):
-        assert "분리수거 언제해" in user_prompt
-        return Route.KNOWLEDGE, ImageAnalysis(images=[]), "분리수거는 어디에 배출하나요?"
+def test_image_only_success_passes_observation_to_route_model(monkeypatch):
+    analysis = ImageAnalysis(
+        images=[ImageObservation(attachmentId=123, summary="세탁기 아래에 물이 고임")]
+    )
+    monkeypatch.setattr(
+        intent_module, "analyze_images", lambda *_args, **_kwargs: analysis
+    )
+    prompts = []
 
-    monkeypatch.setattr(intent_module, "classify_and_analyze", classify)
+    def classify(_system, user, *_args, **_kwargs):
+        prompts.append(user)
+        return _decision(Route.CLARIFY)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+    result = classify_intent(
+        _build_state(
+            None, images=[{"attachmentId": 123, "url": "https://example.com/leak.jpg"}]
+        )
+    )
+
+    assert result["route"] is Route.CLARIFY
+    assert result["image_analysis"] is analysis
+    assert "세탁기 아래에 물이 고임" in prompts[0]
+
+
+def test_classify_intent_resolves_history_reference(monkeypatch):
+    def classify(_system, user, *_args, **_kwargs):
+        assert "분리수거 언제해" in user
+        return _decision(Route.KNOWLEDGE, "분리수거는 어디에 배출하나요?")
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
     history = [
         {"message_id": "m1", "role": "user", "text": "분리수거 언제해"},
-        {
-            "message_id": "m2",
-            "role": "assistant",
-            "text": "재활용은 화요일·목요일 저녁에 건물 앞 지정 배출대에 내놓으시면 됩니다.",
-        },
+        {"message_id": "m2", "role": "assistant", "text": "화요일 저녁에 배출합니다."},
     ]
 
     result = classify_intent(_build_state("그거 어디다해", history=history))
@@ -151,22 +173,22 @@ def test_classify_intent_resolves_a_demonstrative_pronoun_via_history(monkeypatc
     assert result["contextualized_message"] == "분리수거는 어디에 배출하나요?"
 
 
-def test_classify_intent_wraps_invalid_vlm_response(monkeypatch):
-    def fail(*_args, **_kwargs):
-        raise ImageAnalysisError("invalid structured response")
-
-    monkeypatch.setattr(intent_module, "classify_and_analyze", fail)
-
+def test_classify_intent_rejects_invalid_structured_response(monkeypatch):
+    monkeypatch.setattr(
+        intent_module, "generate_structured", lambda *_args, **_kwargs: None
+    )
     with pytest.raises(IntentClassificationError):
         classify_intent(_build_state("화장실에서 물이 새요"))
 
 
 def test_classify_intent_propagates_provider_failure(monkeypatch):
-    def fail(*_args, **_kwargs):
-        raise LlmUnavailableError("provider unavailable")
-
-    monkeypatch.setattr(intent_module, "classify_and_analyze", fail)
-
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            LlmUnavailableError("provider unavailable")
+        ),
+    )
     with pytest.raises(LlmUnavailableError):
         classify_intent(_build_state("화장실에서 물이 새요"))
 
@@ -184,16 +206,16 @@ def test_classify_intent_propagates_provider_failure(monkeypatch):
 def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
     monkeypatch.setattr(
         intent_module,
-        "classify_and_analyze",
+        "analyze_images",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
     )
-    calls: list[tuple[str, str, type]] = []
+    calls = []
 
-    def classify_text(system_prompt, user_prompt, response_format, *, purpose=None):
-        calls.append((system_prompt, user_prompt, response_format))
-        return type("ParsedRoute", (), {"route": Route.KNOWLEDGE})()
+    def classify(system, user, *_args, **_kwargs):
+        calls.append((system, user))
+        return _decision(Route.KNOWLEDGE)
 
-    monkeypatch.setattr(intent_module, "generate_structured", classify_text)
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
     result = classify_intent(
         _build_state(
             "세탁기 어떻게 돌려?",
@@ -204,8 +226,8 @@ def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
     assert result["route"] is Route.KNOWLEDGE
     assert result["image_analysis"] is None
     assert result["image_analysis_failed"] is True
-    assert calls and "세탁기 어떻게 돌려?" in calls[0][1]
-    assert "could not be analyzed" in calls[0][0]
+    assert "세탁기 어떻게 돌려?" in calls[0][1]
+    assert "사진 내용을 추측하지 말 것" in calls[0][1]
 
 
 @pytest.mark.parametrize(
@@ -221,17 +243,16 @@ def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
 def test_image_only_failure_routes_to_clarify_without_text_fallback(monkeypatch, error):
     monkeypatch.setattr(
         intent_module,
-        "classify_and_analyze",
+        "analyze_images",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
     )
     monkeypatch.setattr(
         intent_module,
         "generate_structured",
         lambda *_args, **_kwargs: pytest.fail(
-            "must not infer intent from image summary"
+            "must not infer intent from failed image"
         ),
     )
-
     result = classify_intent(
         _build_state(
             None,
