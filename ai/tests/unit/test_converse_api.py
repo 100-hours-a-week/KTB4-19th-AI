@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +26,10 @@ from zipsai.errors import (
     LlmUpstreamError,
     VectorStoreError,
 )
+from zipsai.integrations.llm import ToolCall, ToolDecision
 from zipsai.main import app
 from zipsai.observability import _ContextFilter, collect_timings, note_llm_cost
+from zipsai.orchestration.tool_contracts import BuildingDocsResult
 from zipsai.settings import EMBEDDING_DIM, Settings
 
 
@@ -634,6 +637,15 @@ def test_converse_runs_clarify_flow_through_real_graph(monkeypatch):
         "get_settings",
         lambda: Settings("key", None, "test-model", 30),
     )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: ToolDecision(
+            SimpleNamespace(),
+            "어떤 것을 도와드릴까요? 민원/시설 문제인가요, 건물 정보 질문인가요?",
+            (),
+        ),
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
 
@@ -668,6 +680,15 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
             )
             if response_format is complaint_node._InterpretationOutput
             else None
+        ),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: ToolDecision(
+            SimpleNamespace(),
+            None,
+            (ToolCall("call-1", "process_complaint_turn", {}),),
         ),
     )
     payload = _payload()
@@ -742,6 +763,26 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
         "generate_text",
         lambda **_kwargs: "22시까지 이용할 수 있습니다.",
     )
+    decisions = iter(
+        [
+            ToolDecision(
+                SimpleNamespace(),
+                None,
+                (ToolCall("call-1", "search_building_docs", {"query": "세탁실"}),),
+            ),
+            ToolDecision(SimpleNamespace(), "22시까지 이용할 수 있습니다.", ()),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: BuildingDocsResult(status="no_results"),
+    )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
 
@@ -778,6 +819,15 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
             )
             if response_format is complaint_node._InterpretationOutput
             else None
+        ),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: ToolDecision(
+            SimpleNamespace(),
+            None,
+            (ToolCall("call-1", "process_complaint_turn", {}),),
         ),
     )
     payload = _payload()
