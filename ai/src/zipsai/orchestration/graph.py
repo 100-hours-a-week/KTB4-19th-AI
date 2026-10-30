@@ -129,6 +129,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
                 ],
             ],
             "pending_tool_calls": (),
+            "tool_call_count": state.get("tool_call_count", 0) + 1,
         }
 
     call = calls[0]

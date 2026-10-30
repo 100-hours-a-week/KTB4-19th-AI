@@ -141,11 +141,42 @@ def test_graph_rejects_parallel_tool_calls_without_executing_them(
     result = graph_module.build_graph().invoke(_state())
 
     assert result["reply"] == "한 가지 요청을 알려주세요."
-    assert result["tool_call_count"] == 0
+    assert result["tool_call_count"] == 1
     assert [message["tool_call_id"] for message in result["agent_messages"][-3:-1]] == [
         "call-search",
         "call-complaint",
     ]
+
+
+def test_graph_stops_offering_tools_after_repeated_parallel_requests(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-1", "search_building_docs", {"query": "주차"}), ToolCall("call-2", "process_complaint_turn", {}))),
+            _decision(calls=(ToolCall("call-3", "search_building_docs", {"query": "주차"}), ToolCall("call-4", "process_complaint_turn", {}))),
+            _decision(content="한 가지 요청을 알려주세요."),
+        ]
+    )
+    offered_tools: list[list[object]] = []
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
+    )
+
+    def decide(_messages, tools, **_kwargs):
+        offered_tools.append(tools)
+        return next(decisions)
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == "한 가지 요청을 알려주세요."
+    assert result["tool_call_count"] == 2
+    assert offered_tools[-1] == []
 
 
 def test_graph_returns_invalid_arguments_to_agent_without_running_search(
