@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from functools import lru_cache
 
 from langgraph.config import get_stream_writer
@@ -11,6 +13,7 @@ from zipsai.contracts.converse import Route, RouteResult
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
 from zipsai.knowledge.tool import search_building_docs
+from zipsai.metrics import observe_tool_call, observe_tool_rejection
 from zipsai.orchestration.intent import classify_intent
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
@@ -23,6 +26,7 @@ from zipsai.orchestration.tool_contracts import (
 )
 
 _MAX_TOOL_CALLS = 2
+logger = logging.getLogger(__name__)
 _PARALLEL_CALL_MESSAGE = "한 번에 하나의 작업만 요청할 수 있습니다."
 _INVALID_CALL_MESSAGE = "요청한 작업을 처리할 수 없습니다."
 _AGENT_SYSTEM = (
@@ -117,6 +121,11 @@ def _run_tool(state: AgentState) -> dict[str, object]:
     calls = tuple(state.get("pending_tool_calls") or ())
     messages = list(state.get("agent_messages") or [])
     if len(calls) != 1:
+        observe_tool_rejection("parallel_calls")
+        logger.info(
+            "tool_call_rejected",
+            extra={"reason": "parallel_calls", "requested_count": len(calls)},
+        )
         return {
             "agent_messages": [
                 *messages,
@@ -134,9 +143,19 @@ def _run_tool(state: AgentState) -> dict[str, object]:
 
     call = calls[0]
     if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
+        observe_tool_rejection("max_calls")
+        logger.info(
+            "tool_call_rejected",
+            extra={"reason": "max_calls", "tool": call.name},
+        )
         return {"agent_messages": [*messages, _tool_message(call, _invalid_result())], "pending_tool_calls": ()}
 
     request = state["request"]
+    started = time.perf_counter()
+    logger.info(
+        "tool_call_selected",
+        extra={"tool": call.name, "tool_call_count": state.get("tool_call_count", 0) + 1},
+    )
     try:
         if call.name == "search_building_docs":
             _emit_status("건물 문서를 확인하고 있습니다.")
@@ -157,6 +176,18 @@ def _run_tool(state: AgentState) -> dict[str, object]:
     except ValidationError:
         result = _invalid_result()
         updates = {}
+
+    outcome = "failure" if isinstance(result, ToolFailure) else "success"
+    duration = time.perf_counter() - started
+    observe_tool_call(call.name, outcome, duration)
+    logger.info(
+        "tool_call_completed",
+        extra={
+            "tool": call.name,
+            "outcome": outcome,
+            "duration_ms": round(duration * 1000),
+        },
+    )
 
     updates.update(
         {
