@@ -21,7 +21,16 @@ _INTENT_SYSTEM_PROMPT = (
     "request in the contextualized message. If multiple topics are active or the connection is "
     "unclear, set the message to null and choose clarify. The image alone cannot establish intent "
     "or location.\n\n"
-    "Image analysis for each attached image, in input order:\n"
+    "contextualized_message: a self-contained Korean rendering of the current turn after resolving "
+    "clear context. Return the original text unchanged when no resolution is needed. For an "
+    "image-only turn, return a message only when the active request is clear from history; otherwise "
+    "return null.\n"
+    "route: classify the contextualized current request. Use clarify when its intent remains "
+    "ambiguous; do not guess."
+)
+
+IMAGE_OBSERVATION_PROMPT = (
+    "Observe each attached image in input order. Describe only visible facts.\n"
     "- Write a concise, factual Korean summary that remains useful for both complaint extraction "
     "and knowledge search. In 1–2 short sentences, identify the main visible subject and its "
     "relevant visible state. Include distinguishing details that help understand or identify it, "
@@ -35,13 +44,7 @@ _INTENT_SYSTEM_PROMPT = (
     "- Keep OCR separate from the summary. Transcribe clearly readable, relevant text verbatim; "
     "preserve exact error codes, numbers, and units. Omit unreadable fragments instead of "
     "guessing them, and use null when no relevant text can be read.\n"
-    "Return exactly one image observation per attached image. Use null for unavailable fields.\n\n"
-    "contextualized_message: a self-contained Korean rendering of the current turn after resolving "
-    "clear context. Return the original text unchanged when no resolution is needed. For an "
-    "image-only turn, return a message only when the active request is clear from history; otherwise "
-    "return null.\n"
-    "route: classify the contextualized current request. Use clarify when its intent remains "
-    "ambiguous; do not guess."
+    "Return exactly one image observation per attached image. Use null for unavailable fields."
 )
 
 _INTENT_USER_TEMPLATE = (

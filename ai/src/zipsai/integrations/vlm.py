@@ -12,7 +12,6 @@ from zipsai.contracts.converse import (
     ImageAnalysis,
     ImageAttachment,
     ImageObservation,
-    Route,
 )
 from zipsai.errors import (
     ImageAnalysisError,
@@ -42,16 +41,13 @@ class _ModelImages(BaseModel):
     images: list[_ModelObservation]
 
 
-class _ModelIntentAndImages(_ModelImages):
-    route: Route
-    contextualized_message: str | None
-
-
-def classify_and_analyze(
+def analyze_images(
     images: list[ImageAttachment], *, system_prompt: str, user_prompt: str
-) -> tuple[Route, ImageAnalysis, str | None]:
+) -> ImageAnalysis:
+    if not images:
+        return ImageAnalysis(images=[])
     settings = get_settings()
-    model = settings.vlm_model if images else settings.llm_model
+    model = settings.vlm_model
     content: list[dict[str, object]] = [{"type": "text", "text": user_prompt}]
     content.extend(
         {"type": "image_url", "image_url": {"url": image.url}}
@@ -59,7 +55,7 @@ def classify_and_analyze(
         if image.url
     )
     call = start_llm_call(
-        purpose="image_analysis" if images else "intent",
+        purpose="image_analysis",
         model=model,
         provider=settings.provider,
         base_url=settings.llm_base_url,
@@ -79,20 +75,20 @@ def classify_and_analyze(
                 selected.llm_base_url,
                 selected.llm_timeout_seconds,
             ).chat.completions.parse(
-                model=selected.vlm_model if images else selected.llm_model,
+                model=selected.vlm_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": content},
                 ],
-                **({"name": "intent-and-image-analysis"} if get_tracing_client() else {}),
-                response_format=_ModelIntentAndImages,
+                **({"name": "image-analysis"} if get_tracing_client() else {}),
+                response_format=_ModelImages,
                 extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
             )
 
         response, used = _call_with_fallback(settings, request)
         if used is not settings:
             call.provider = used.provider
-            call.model = used.vlm_model if images else used.llm_model
+            call.model = used.vlm_model
             call.base_url = used.llm_base_url
             call.attempt += 1
             call.retry_reason = "pod_unavailable"
@@ -101,15 +97,32 @@ def classify_and_analyze(
             outcome = "fail"
             structured_ok = False
             err_code = "structured_output"
-            raise ImageAnalysisError("VLM returned an invalid intent or image analysis")
+            raise ImageAnalysisError("VLM returned an invalid image analysis")
         if response.choices[0].message.refusal:
             outcome = "fail"
             structured_ok = False
             err_code = "structured_output"
-            raise ImageAnalysisError("VLM refused intent or image analysis")
+            raise ImageAnalysisError("VLM refused image analysis")
         finish_reason = _reason(getattr(response.choices[0], "finish_reason", None))
+        parsed = response.choices[0].message.parsed
+        if len(parsed.images) != len(images):
+            structured_ok = False
+            err_code = "structured_output"
+            raise ImageAnalysisError(
+                "VLM returned observations that do not match input images"
+            )
         outcome = "ok"
         status_code = 200
+        return ImageAnalysis(
+            images=[
+                ImageObservation(
+                    attachmentId=image.attachment_id,
+                    summary=observation.summary,
+                    ocrText=observation.ocr_text,
+                )
+                for image, observation in zip(images, parsed.images)
+            ]
+        )
     except RateLimitError as error:
         outcome, status_code, err_code, structured_ok = "fail", 429, "MODEL_RATE_LIMITED", None
         raise LlmRateLimitedError(
@@ -152,24 +165,3 @@ def classify_and_analyze(
             finish_reason=finish_reason,
             structured_output_ok=structured_ok,
         )
-    parsed = response.choices[0].message.parsed
-    if not images:
-        return parsed.route, ImageAnalysis(images=[]), parsed.contextualized_message
-    if len(parsed.images) != len(images):
-        raise ImageAnalysisError(
-            "VLM returned observations that do not match input images"
-        )
-    return (
-        parsed.route,
-        ImageAnalysis(
-            images=[
-                ImageObservation(
-                    attachmentId=image.attachment_id,
-                    summary=observation.summary,
-                    ocrText=observation.ocr_text,
-                )
-                for image, observation in zip(images, parsed.images)
-            ]
-        ),
-        parsed.contextualized_message,
-    )

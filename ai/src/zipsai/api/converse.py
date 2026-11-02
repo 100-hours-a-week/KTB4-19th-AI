@@ -118,6 +118,23 @@ def _sse(data: dict[str, object]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _public_stream_event(event: object) -> dict[str, str] | None:
+    """내부 Agent 상태가 SSE에 섞이지 않도록 사용자용 이벤트만 고른다."""
+    if isinstance(event, str):
+        return {"type": "delta", "field": "reply", "text": event}
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") == "status" and isinstance(event.get("status"), str):
+        return {"type": "status", "status": event["status"]}
+    if (
+        event.get("type") == "delta"
+        and event.get("field") == "reply"
+        and isinstance(event.get("text"), str)
+    ):
+        return {"type": "delta", "field": "reply", "text": event["text"]}
+    return None
+
+
 _CONVERSE_OUTCOMES = {"ok", "fail", "cancelled"}
 
 
@@ -218,15 +235,11 @@ async def _stream_converse(request: ConverseRequest):
                 except StopAsyncIteration:
                     break
                 if mode == "custom":
-                    if isinstance(event, str):
-                        streamed_reply = True
-                        yield _sse(
-                            {"type": "delta", "field": "reply", "text": event}
-                        )
-                    elif isinstance(event, dict):
-                        if event.get("type") == "delta":
+                    public_event = _public_stream_event(event)
+                    if public_event is not None:
+                        if public_event["type"] == "delta":
                             streamed_reply = True
-                        yield _sse(event)
+                        yield _sse(public_event)
                 elif mode == "values":
                     state = event
         except AGENT_ERRORS as error:
@@ -266,7 +279,7 @@ async def _stream_converse(request: ConverseRequest):
                     error_type=type(error).__name__,
                 )
             raise
-        except TimeoutError as error:
+        except TimeoutError:
             logger.warning("stream_request_timeout")
             if trace is not None:
                 trace.update(output={"outcome": "fail", "error_type": "RequestTimeout"})
