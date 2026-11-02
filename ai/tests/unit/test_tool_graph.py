@@ -84,6 +84,35 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert tool_events[0][2] >= 0
 
 
+def test_prepare_keeps_both_required_capabilities_in_graph_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": Route.COMPLAINT,
+            "image_analysis": None,
+            "required_capabilities": (
+                "search_building_docs",
+                "process_complaint_turn",
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: _decision(content="두 요청을 확인하겠습니다."),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["required_capabilities"] == (
+        "search_building_docs",
+        "process_complaint_turn",
+    )
+
+
 def test_graph_ends_immediately_after_complaint_tool(monkeypatch: pytest.MonkeyPatch):
     decision = _decision(
         calls=(ToolCall("call-1", "process_complaint_turn", {}),)

@@ -26,7 +26,11 @@ _INTENT_SYSTEM_PROMPT = (
     "image-only turn, return a message only when the active request is clear from history; otherwise "
     "return null.\n"
     "route: classify the contextualized current request. Use clarify when its intent remains "
-    "ambiguous; do not guess."
+    "ambiguous; do not guess.\n"
+    "required_capabilities: list each needed action once, in execution order. Only use "
+    "search_building_docs for a building-information question and process_complaint_turn for a "
+    "facility complaint or active complaint draft. A request may need both; return [] when neither "
+    "is needed."
 )
 
 IMAGE_OBSERVATION_PROMPT = (

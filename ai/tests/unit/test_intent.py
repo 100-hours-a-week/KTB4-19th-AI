@@ -57,7 +57,11 @@ def _build_state(
 
 
 def _decision(route: Route, contextualized_message: str | None = None):
-    return SimpleNamespace(route=route, contextualized_message=contextualized_message)
+    return SimpleNamespace(
+        route=route,
+        contextualized_message=contextualized_message,
+        required_capabilities=(),
+    )
 
 
 def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
@@ -129,7 +133,41 @@ def test_text_only_classifies_without_vlm(monkeypatch):
         "route": Route.KNOWLEDGE,
         "image_analysis": None,
         "contextualized_message": "쓰레기 배출일이 언제예요?",
+        "required_capabilities": (),
     }
+
+
+def test_classify_intent_returns_both_required_capabilities(monkeypatch):
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            route=Route.COMPLAINT,
+            contextualized_message="누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘",
+            required_capabilities=(
+                "search_building_docs",
+                "process_complaint_turn",
+            ),
+        ),
+    )
+
+    result = classify_intent(
+        _build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘")
+    )
+
+    assert result["required_capabilities"] == (
+        "search_building_docs",
+        "process_complaint_turn",
+    )
+
+
+def test_route_decision_rejects_duplicate_required_capabilities():
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        intent_module._RouteDecision(
+            route=Route.KNOWLEDGE,
+            contextualized_message="주차 위치를 알려줘",
+            required_capabilities=("search_building_docs", "search_building_docs"),
+        )
 
 
 def test_image_only_success_passes_observation_to_route_model(monkeypatch):
