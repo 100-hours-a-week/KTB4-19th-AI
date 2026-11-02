@@ -133,7 +133,7 @@ def test_text_only_classifies_without_vlm(monkeypatch):
         "route": Route.KNOWLEDGE,
         "image_analysis": None,
         "contextualized_message": "쓰레기 배출일이 언제예요?",
-        "required_capabilities": (),
+        "required_capabilities": ("search_building_docs",),
     }
 
 

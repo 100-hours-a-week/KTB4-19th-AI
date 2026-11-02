@@ -92,6 +92,14 @@ def classify_intent(state: AgentState) -> dict[str, object]:
             route = decision.route
             contextualized_message = decision.contextualized_message
             required_capabilities = decision.required_capabilities
+            if not required_capabilities:
+                required_capabilities = (
+                    ("search_building_docs",)
+                    if route is Route.KNOWLEDGE
+                    else ("process_complaint_turn",)
+                    if route is Route.COMPLAINT
+                    else ()
+                )
         step["intent_route"] = route.value
         original_text = (request.message.text or "").strip()
         step["question_rewritten"] = bool(

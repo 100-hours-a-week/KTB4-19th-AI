@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import zipsai.orchestration.graph as graph_module
-from zipsai.contracts.converse import ConverseRequest, Route, RouteResult
+from zipsai.contracts.converse import ComplaintDraft, ConverseRequest, Route, RouteResult
 from zipsai.integrations.llm import ToolCall, ToolDecision
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
@@ -130,7 +130,10 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     tool_result = ComplaintTurnResult(
         reply="어느 장소에서 발생했나요?",
         complaint_state="collecting",
-        result=RouteResult(),
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+            missing_fields=["symptom"],
+        ),
     )
     monkeypatch.setattr(
         graph_module,
@@ -165,6 +168,11 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     assert result["route"] is Route.COMPLAINT
     assert result["reply"] == "처리 기한은 확인 중이며 민원 초안을 정리했습니다."
     assert result["complaint_result"] == tool_result
+    assert result["complaint_state"] == tool_result.complaint_state
+    assert result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert result["result"].complaint_draft == tool_result.result.complaint_draft
+    assert result["result"].missing_fields == ["symptom"]
+    assert result["result"].has_sufficient_evidence is False
     assert result["tool_call_count"] == 2
     assert result["completed_capabilities"] == (
         "search_building_docs",
@@ -179,7 +187,6 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
         [
             _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "주차"}),)),
             _decision(calls=(ToolCall("call-repeat", "search_building_docs", {"query": "주차"}),)),
-            _decision(content="주차 위치는 확인 중입니다."),
         ]
     )
     search_calls = []
@@ -207,9 +214,11 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
     result = graph_module.build_graph().invoke(_state())
 
     assert search_calls == ["주차"]
-    assert result["reply"] == "주차 위치는 확인 중입니다."
     assert result["completed_capabilities"] == ("search_building_docs",)
-    assert '"code": "invalid_arguments"' in result["agent_messages"][-2]["content"]
+    assert any(
+        isinstance(message, dict) and '"code": "invalid_arguments"' in message.get("content", "")
+        for message in result["agent_messages"]
+    )
 
 
 def test_graph_rejects_parallel_tool_calls_without_executing_them(

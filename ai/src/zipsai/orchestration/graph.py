@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
 from zipsai.complaint.tool import process_complaint_turn
-from zipsai.contracts.converse import Route, RouteResult
+from zipsai.contracts.converse import QaCardDraft, Route, RouteResult
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
 from zipsai.knowledge.tool import search_building_docs
@@ -69,6 +69,15 @@ def _initial_messages(state: AgentState) -> list[object]:
 
 def _run_prepare(state: AgentState) -> dict[str, object]:
     prepared = classify_intent(state)
+    if "required_capabilities" not in prepared:
+        route = prepared.get("route")
+        prepared["required_capabilities"] = (
+            ("search_building_docs",)
+            if route is Route.KNOWLEDGE
+            else ("process_complaint_turn",)
+            if route is Route.COMPLAINT
+            else ()
+        )
     prepared["agent_messages"] = _initial_messages({**state, **prepared})
     prepared["tool_call_count"] = 0
     prepared["completed_capabilities"] = ()
@@ -81,21 +90,48 @@ def _available_tool_contracts(state: AgentState):
     return tuple(contract for contract in TOOL_CONTRACTS if contract.name in required - completed)
 
 
-def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
-    request = state["request"]
-    search = state.get("search_result")
+def _assemble_result(
+    route: Route | None,
+    request: object,
+    search: object,
+    search_query: str | None,
+    complaint: object,
+) -> tuple[Route, object, RouteResult]:
+    complaint_result = complaint if isinstance(complaint, ComplaintTurnResult) else None
+    result = (
+        complaint_result.result
+        if complaint_result
+        else RouteResult(complaint_draft=request.complaint_draft)
+    )
     if isinstance(search, BuildingDocsResult):
-        result = RouteResult(
-            complaint_draft=request.complaint_draft,
-            citations=[item.citation for item in search.evidence],
-            has_sufficient_evidence=search.status == "ok",
-        )
-    else:
-        result = RouteResult(complaint_draft=request.complaint_draft)
+        result = result.model_copy(update={
+            "citations": [item.citation for item in search.evidence],
+            "has_sufficient_evidence": search.status == "ok",
+            "qa_card_draft": (
+                QaCardDraft(question=search_query)
+                if search.status == "no_results" and search_query
+                else None
+            ),
+        })
+    return (
+        Route.COMPLAINT if complaint_result else route or Route.CLARIFY,
+        complaint_result.complaint_state if complaint_result else None,
+        result,
+    )
+
+
+def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
+    route, complaint_state, result = _assemble_result(
+        state.get("route"),
+        state["request"],
+        state.get("search_result"),
+        state.get("search_query"),
+        state.get("complaint_result"),
+    )
     return _include_image_analysis(
         {
-            "route": state.get("route") or Route.CLARIFY,
-            "complaint_state": None,
+            "route": route,
+            "complaint_state": complaint_state,
             "reply": reply,
             "result": result,
         },
@@ -155,7 +191,12 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             "tool_call_rejected",
             extra={"reason": "max_calls", "tool": call.name},
         )
-        return {"agent_messages": [*messages, _tool_message(call, _invalid_result())], "pending_tool_calls": ()}
+        result = _invalid_result()
+        return {
+            "agent_messages": [*messages, _tool_message(call, result)],
+            "pending_tool_calls": (),
+            "last_tool_result": result,
+        }
 
     if call.name not in {contract.name for contract in _available_tool_contracts(state)}:
         observe_tool_rejection("unavailable_tool")
@@ -163,10 +204,12 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             "tool_call_rejected",
             extra={"reason": "unavailable_tool", "tool": call.name},
         )
+        result = _invalid_result()
         return {
-            "agent_messages": [*messages, _tool_message(call, _invalid_result())],
+            "agent_messages": [*messages, _tool_message(call, result)],
             "pending_tool_calls": (),
             "tool_call_count": state.get("tool_call_count", 0) + 1,
+            "last_tool_result": result,
         }
 
     request = state["request"]
@@ -179,7 +222,11 @@ def _run_tool(state: AgentState) -> dict[str, object]:
         if call.name == "search_building_docs":
             _emit_status("건물 문서를 확인하고 있습니다.")
             result = search_building_docs(BuildingDocsArgs.model_validate(call.arguments), request)
-            updates: dict[str, object] = {"route": Route.KNOWLEDGE, "search_result": result}
+            updates: dict[str, object] = {
+                "route": Route.KNOWLEDGE,
+                "search_result": result,
+                "search_query": call.arguments["query"],
+            }
         elif call.name == "process_complaint_turn":
             _emit_status("민원 내용을 정리하고 있습니다.")
             result = process_complaint_turn(
@@ -233,6 +280,10 @@ def _after_agent(state: AgentState) -> str:
 
 
 def _after_tool(state: AgentState) -> str:
+    if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS and isinstance(
+        state.get("last_tool_result"), ToolFailure
+    ):
+        return END
     return "agent"
 
 

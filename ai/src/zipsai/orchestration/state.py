@@ -27,4 +27,5 @@ class AgentState(TypedDict):
     tool_call_count: NotRequired[int]
     last_tool_result: NotRequired[object]
     search_result: NotRequired[object]
+    search_query: NotRequired[str]
     complaint_result: NotRequired[object]
