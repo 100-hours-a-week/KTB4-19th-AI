@@ -71,7 +71,14 @@ def _run_prepare(state: AgentState) -> dict[str, object]:
     prepared = classify_intent(state)
     prepared["agent_messages"] = _initial_messages({**state, **prepared})
     prepared["tool_call_count"] = 0
+    prepared["completed_capabilities"] = ()
     return prepared
+
+
+def _available_tool_contracts(state: AgentState):
+    completed = set(state.get("completed_capabilities", ()))
+    required = set(state.get("required_capabilities", ()))
+    return tuple(contract for contract in TOOL_CONTRACTS if contract.name in required - completed)
 
 
 def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
@@ -98,7 +105,7 @@ def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
 
 def _run_agent(state: AgentState) -> dict[str, object]:
     messages = list(state.get("agent_messages") or _initial_messages(state))
-    tools = [contract.model_spec() for contract in TOOL_CONTRACTS]
+    tools = [contract.model_spec() for contract in _available_tool_contracts(state)]
     if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
         tools = []
     decision = generate_tool_decision(messages, tools, purpose="agent")
@@ -150,6 +157,18 @@ def _run_tool(state: AgentState) -> dict[str, object]:
         )
         return {"agent_messages": [*messages, _tool_message(call, _invalid_result())], "pending_tool_calls": ()}
 
+    if call.name not in {contract.name for contract in _available_tool_contracts(state)}:
+        observe_tool_rejection("unavailable_tool")
+        logger.info(
+            "tool_call_rejected",
+            extra={"reason": "unavailable_tool", "tool": call.name},
+        )
+        return {
+            "agent_messages": [*messages, _tool_message(call, _invalid_result())],
+            "pending_tool_calls": (),
+            "tool_call_count": state.get("tool_call_count", 0) + 1,
+        }
+
     request = state["request"]
     started = time.perf_counter()
     logger.info(
@@ -195,9 +214,11 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             "pending_tool_calls": (),
             "tool_call_count": state.get("tool_call_count", 0) + 1,
             "last_tool_result": result,
+            "completed_capabilities": (*state.get("completed_capabilities", ()), call.name),
         }
     )
     if isinstance(result, ComplaintTurnResult):
+        updates["complaint_result"] = result
         updates.update(
             _include_image_analysis(
                 {"reply": result.reply, "complaint_state": result.complaint_state, "result": result.result},
@@ -212,7 +233,7 @@ def _after_agent(state: AgentState) -> str:
 
 
 def _after_tool(state: AgentState) -> str:
-    return END if isinstance(state.get("last_tool_result"), ComplaintTurnResult) else "agent"
+    return "agent"
 
 
 def _include_image_analysis(result: dict[str, object], state: AgentState) -> dict[str, object]:

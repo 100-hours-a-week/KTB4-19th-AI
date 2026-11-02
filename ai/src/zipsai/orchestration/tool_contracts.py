@@ -75,7 +75,6 @@ class ToolContract:
     description: str
     args_model: type[BaseModel]
     result_model: type[BaseModel]
-    terminal: bool = False
 
     def model_spec(self) -> dict[str, object]:
         return {
@@ -107,6 +106,5 @@ TOOL_CONTRACTS = (
         ),
         args_model=ComplaintTurnArgs,
         result_model=ComplaintTurnResult,
-        terminal=True,
     ),
 )
