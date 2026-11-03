@@ -266,16 +266,17 @@ def generate_tool_decision(
     output_text: str | None = None
     try:
         def request(selected: Settings):
+            request_args: dict[str, object] = {
+                "model": selected.llm_model,
+                "messages": messages,
+                **({"tools": tools} if tools else {}),
+                **({"name": "generate-tool-decision"} if get_tracing_client() else {}),
+            }
             return _get_client(
                 selected.llm_api_key,
                 selected.llm_base_url,
                 selected.llm_timeout_seconds,
-            ).chat.completions.create(
-                model=selected.llm_model,
-                messages=messages,
-                tools=tools,
-                **({"name": "generate-tool-decision"} if get_tracing_client() else {}),
-            )
+            ).chat.completions.create(**request_args)
 
         response, used = _call_with_fallback(settings, request)
         if used is not settings:

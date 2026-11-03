@@ -72,6 +72,30 @@ def test_tool_decision_replays_assistant_and_tool_result(monkeypatch):
     assert calls[1]["messages"][-1]["tool_call_id"] == "call_1"
 
 
+def test_tool_decision_omits_empty_tools_for_final_reply(monkeypatch):
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _response(content="최종 답변입니다.")
+
+    monkeypatch.setattr(
+        llm,
+        "_get_client",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        ),
+    )
+    monkeypatch.setattr(
+        llm, "get_settings", lambda provider=None: Settings("key", None, "model", 30)
+    )
+
+    result = llm.generate_tool_decision([{"role": "user", "content": "답변해줘"}], [])
+
+    assert result.content == "최종 답변입니다."
+    assert "tools" not in calls[0]
+
+
 def test_tool_decision_serializes_sdk_message_on_follow_up(monkeypatch):
     requests = []
 

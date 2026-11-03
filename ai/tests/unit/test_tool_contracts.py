@@ -25,8 +25,7 @@ def test_tool_contracts_expose_current_workflow_schemas():
         assert tool["function"]["name"] == contract.name
         assert tool["function"]["description"]
         assert tool["function"]["parameters"]["additionalProperties"] is False
-    assert TOOL_CONTRACTS[-1].terminal is True
-    assert all(not contract.terminal for contract in TOOL_CONTRACTS[:-1])
+    assert all(not hasattr(contract, "terminal") for contract in TOOL_CONTRACTS)
 
 
 def test_search_args_accept_query_only():
