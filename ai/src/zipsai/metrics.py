@@ -7,6 +7,7 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from zipsai.indexing.reasons import RETRYABLE
 
 SERVICE = "ai-api"
+_TOOL_LABELS = frozenset({"search_building_docs", "process_complaint_turn"})
 
 BUILD_INFO = Gauge(
     "zipsai_build_info",
@@ -81,6 +82,22 @@ LLM_STRUCTURED_FAILURES = Counter(
     "zipsai_llm_structured_output_failures_total",
     "Structured output that failed validation",
     ["purpose", "model"],
+)
+TOOL_CALLS = Counter(
+    "zipsai_tool_calls_total",
+    "Tool executions by tool and outcome",
+    ["tool", "outcome"],
+)
+TOOL_DURATION = Histogram(
+    "zipsai_tool_duration_seconds",
+    "Tool execution duration in seconds",
+    ["tool", "outcome"],
+    buckets=_STAGE_BUCKETS,
+)
+TOOL_REJECTIONS = Counter(
+    "zipsai_tool_rejections_total",
+    "Tool requests rejected before execution",
+    ["reason"],
 )
 GATE = Counter("zipsai_gate_decisions_total", "Retrieval gate results", ["passed"])
 FALLBACKS = Counter("zipsai_fallbacks_total", "Answer fallbacks", ["reason"])
@@ -166,6 +183,16 @@ def observe_llm(
         LLM_COST.labels(purpose=purpose, model=model).inc(cost_usd)
     if structured_output_ok is False:
         LLM_STRUCTURED_FAILURES.labels(purpose=purpose, model=model).inc()
+
+
+def observe_tool_call(tool: str, outcome: str, duration_seconds: float) -> None:
+    tool_label = tool if tool in _TOOL_LABELS else "unknown"
+    TOOL_CALLS.labels(tool=tool_label, outcome=outcome).inc()
+    TOOL_DURATION.labels(tool=tool_label, outcome=outcome).observe(duration_seconds)
+
+
+def observe_tool_rejection(reason: str) -> None:
+    TOOL_REJECTIONS.labels(reason=reason).inc()
 
 
 def observe_gate(passed: bool) -> None:

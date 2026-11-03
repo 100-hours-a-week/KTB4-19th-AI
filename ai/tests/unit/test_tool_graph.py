@@ -47,6 +47,7 @@ def _decision(*, content: str | None = None, calls: tuple[ToolCall, ...] = ()):
 
 def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.MonkeyPatch):
     events: list[dict[str, str]] = []
+    tool_events: list[tuple[str, str, float]] = []
     calls = iter(
         [
             _decision(calls=(ToolCall("call-1", "search_building_docs", {"query": "주차"}),)),
@@ -62,6 +63,11 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     monkeypatch.setattr(graph_module, "get_stream_writer", lambda: events.append)
     monkeypatch.setattr(
         graph_module,
+        "observe_tool_call",
+        lambda tool, outcome, duration: tool_events.append((tool, outcome, duration)),
+    )
+    monkeypatch.setattr(
+        graph_module,
         "search_building_docs",
         lambda _args, _request: BuildingDocsResult(status="no_results"),
     )
@@ -74,6 +80,8 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert result["agent_messages"][-2]["role"] == "tool"
     assert result["agent_messages"][-2]["tool_call_id"] == "call-1"
     assert events == [{"type": "status", "status": "건물 문서를 확인하고 있습니다."}]
+    assert tool_events[0][0:2] == ("search_building_docs", "success")
+    assert tool_events[0][2] >= 0
 
 
 def test_graph_ends_immediately_after_complaint_tool(monkeypatch: pytest.MonkeyPatch):
@@ -146,6 +154,38 @@ def test_graph_rejects_parallel_tool_calls_without_executing_them(
         "call-search",
         "call-complaint",
     ]
+
+
+def test_graph_records_parallel_tool_call_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    rejection_reasons: list[str] = []
+    calls = iter(
+        [
+            _decision(
+                calls=(
+                    ToolCall("call-search", "search_building_docs", {"query": "주차"}),
+                    ToolCall("call-complaint", "process_complaint_turn", {}),
+                )
+            ),
+            _decision(content="한 가지 요청을 알려주세요."),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
+    monkeypatch.setattr(
+        graph_module,
+        "observe_tool_rejection",
+        lambda reason: rejection_reasons.append(reason),
+    )
+
+    graph_module.build_graph().invoke(_state())
+
+    assert rejection_reasons == ["parallel_calls"]
 
 
 def test_graph_stops_offering_tools_after_repeated_parallel_requests(
