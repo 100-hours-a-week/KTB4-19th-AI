@@ -30,7 +30,12 @@ _INTENT_SYSTEM_PROMPT = (
     "required_capabilities: list each needed action once, in execution order. Only use "
     "search_building_docs for a building-information question and process_complaint_turn for a "
     "facility complaint or active complaint draft. A request may need both; return [] when neither "
-    "is needed."
+    "is needed.\n\n"
+    "Completeness rule: required_capabilities is not a representative route. Do not drop an "
+    "explicit goal because route is complaint or knowledge. When the current turn asks both a "
+    "building-information question and a facility complaint, you MUST include both capabilities "
+    "exactly once: search_building_docs and process_complaint_turn. Example: '누수 처리 기한을 "
+    "알려주고 욕실 누수 민원도 작성해줘' needs both capabilities, while route remains complaint."
 )
 
 IMAGE_OBSERVATION_PROMPT = (

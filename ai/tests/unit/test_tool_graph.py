@@ -117,6 +117,40 @@ def test_prepare_keeps_both_required_capabilities_in_graph_state(
     )
 
 
+def test_agent_prompt_requires_one_remaining_tool_before_a_final_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    seen_system_messages: list[str] = []
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": Route.COMPLAINT,
+            "image_analysis": None,
+            "required_capabilities": (
+                "search_building_docs",
+                "process_complaint_turn",
+            ),
+        },
+    )
+
+    def decide(messages, _tools, **_kwargs):
+        seen_system_messages.extend(
+            message["content"]
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "system"
+        )
+        return _decision(content="확인하겠습니다.")
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+
+    graph_module.build_graph().invoke(_state())
+
+    assert any("offered tools are remaining required actions" in message for message in seen_system_messages)
+    assert any("do not send a final reply" in message for message in seen_system_messages)
+
+
 def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     monkeypatch: pytest.MonkeyPatch,
 ):
