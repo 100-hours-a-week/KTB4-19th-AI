@@ -14,7 +14,7 @@ import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
-from zipsai.contracts.converse import ConverseRequest, Route
+from zipsai.contracts.converse import ComplaintDraft, ConverseRequest, QaCardDraft, Route, RouteResult
 from zipsai.errors import (
     ChunkTooLongError,
     ComplaintExtractionError,
@@ -198,6 +198,36 @@ def test_converse_stream_returns_sse_status_reply_and_done(monkeypatch):
     assert complete["data"]["reply"] == "건물 이용 안내입니다."
     assert complete["data"]["meta"]["model"] == "test-model"
     assert isinstance(complete["data"]["meta"]["timing_ms"], int)
+
+
+def test_converse_and_stream_preserve_both_card_drafts(monkeypatch):
+    graph = _FakeGraph(
+        {
+            "route": Route.COMPLAINT,
+            "complaint_state": None,
+            "reply": "질문과 민원 초안을 함께 정리했습니다.",
+            "result": RouteResult(
+                qa_card_draft=QaCardDraft(question="누수 처리 기한"),
+                complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+                has_sufficient_evidence=False,
+            ),
+        }
+    )
+    monkeypatch.setattr(converse_module, "build_graph", lambda streaming=False: graph)
+    monkeypatch.setattr(converse_module, "get_settings", lambda: Settings("key", None, "test-model", 30))
+
+    normal = TestClient(app).post("/api/v3/ai/converse", json=_payload()).json()
+    streamed = TestClient(app).post("/api/v3/ai/converse/stream", json=_payload())
+    complete = next(
+        json.loads(line.removeprefix("data: "))["response"]
+        for line in streamed.text.splitlines()
+        if line.startswith("data: ") and '"type": "complete"' in line
+    )
+
+    assert normal["data"]["route"] == complete["data"]["route"] == "complaint"
+    assert normal["data"]["result"] == complete["data"]["result"]
+    assert normal["data"]["result"]["qa_card_draft"] == {"question": "누수 처리 기한"}
+    assert normal["data"]["result"]["complaint_draft"]["location"] == "욕실"
 
 
 def test_converse_stream_forwards_tool_progress_but_not_tool_message(monkeypatch):

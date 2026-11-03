@@ -382,7 +382,7 @@ async def _stream_converse(request: ConverseRequest):
         yield _sse(
             {
                 "type": "complete",
-                "response": complete.model_dump(mode="json"),
+                "response": complete.model_dump(mode="json", by_alias=True),
             }
         )
         yield _sse({"type": "done"})
