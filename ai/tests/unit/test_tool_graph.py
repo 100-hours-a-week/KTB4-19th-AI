@@ -10,6 +10,7 @@ from zipsai.orchestration.tool_contracts import (
     BuildingDocsResult,
     ComplaintTurnArgs,
     ComplaintTurnResult,
+    ToolFailure,
 )
 
 
@@ -214,6 +215,46 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     )
 
 
+def test_graph_uses_final_agent_reply_after_second_tool_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "누수 처리 기한"}),)),
+            _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),)),
+            _decision(content="민원 처리는 현재 실패했지만, 처리 기한은 관리자에게 확인해 주세요."),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {
+            "route": Route.COMPLAINT,
+            "image_analysis": None,
+            "required_capabilities": (
+                "search_building_docs",
+                "process_complaint_turn",
+            ),
+        },
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda _args, _request: BuildingDocsResult(status="no_results"),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_args, **_kwargs: ToolFailure(code="timeout", message="민원 도구 시간 초과"),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["tool_call_count"] == 2
+    assert result["reply"] == "민원 처리는 현재 실패했지만, 처리 기한은 관리자에게 확인해 주세요."
+
+
 def test_graph_rejects_repeated_completed_tool_without_running_it_again(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -221,6 +262,7 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
         [
             _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "주차"}),)),
             _decision(calls=(ToolCall("call-repeat", "search_building_docs", {"query": "주차"}),)),
+            _decision(content="검색 결과를 다시 요청할 수 없습니다."),
         ]
     )
     search_calls = []
@@ -253,6 +295,7 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
         isinstance(message, dict) and '"code": "invalid_arguments"' in message.get("content", "")
         for message in result["agent_messages"]
     )
+    assert result["reply"] == "검색 결과를 다시 요청할 수 없습니다."
 
 
 def test_graph_rejects_parallel_tool_calls_without_executing_them(

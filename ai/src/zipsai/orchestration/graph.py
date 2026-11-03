@@ -29,6 +29,7 @@ _MAX_TOOL_CALLS = 2
 logger = logging.getLogger(__name__)
 _PARALLEL_CALL_MESSAGE = "한 번에 하나의 작업만 요청할 수 있습니다."
 _INVALID_CALL_MESSAGE = "요청한 작업을 처리할 수 없습니다."
+_FINALIZATION_FAILURE_MESSAGE = "요청을 마무리하지 못했습니다. 다시 말씀해 주세요."
 _AGENT_SYSTEM = (
     "You are a residential-building assistant. Decide whether to use a tool or reply in Korean. "
     "Use search_building_docs before answering questions about the current building. "
@@ -151,6 +152,13 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     messages.append(decision.message)
     if not decision.tool_calls:
         return {"agent_messages": messages, **_agent_result(state, decision.content or "")}
+    if not tools and state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
+        observe_tool_rejection("tool_after_finalization")
+        logger.info("tool_call_rejected", extra={"reason": "tool_after_finalization"})
+        return {
+            "agent_messages": messages,
+            **_agent_result(state, decision.content or _FINALIZATION_FAILURE_MESSAGE),
+        }
     return {"agent_messages": messages, "pending_tool_calls": decision.tool_calls}
 
 
@@ -283,10 +291,6 @@ def _after_agent(state: AgentState) -> str:
 
 
 def _after_tool(state: AgentState) -> str:
-    if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS and isinstance(
-        state.get("last_tool_result"), ToolFailure
-    ):
-        return END
     return "agent"
 
 

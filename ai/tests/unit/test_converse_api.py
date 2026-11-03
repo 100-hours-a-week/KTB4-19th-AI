@@ -748,14 +748,18 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
             else None
         ),
     )
+    decisions = iter(
+        [
+            ToolDecision(
+                SimpleNamespace(),
+                None,
+                (ToolCall("call-1", "process_complaint_turn", {}),),
+            ),
+            ToolDecision(SimpleNamespace(), "어디에서 생긴 문제인가요?", ()),
+        ]
+    )
     monkeypatch.setattr(
-        graph_module,
-        "generate_tool_decision",
-        lambda *_args, **_kwargs: ToolDecision(
-            SimpleNamespace(),
-            None,
-            (ToolCall("call-1", "process_complaint_turn", {}),),
-        ),
+        graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
     )
     payload = _payload()
     payload["current_route"] = "complaint"
@@ -887,14 +891,18 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
             else None
         ),
     )
+    decisions = iter(
+        [
+            ToolDecision(
+                SimpleNamespace(),
+                None,
+                (ToolCall("call-1", "process_complaint_turn", {}),),
+            ),
+            ToolDecision(SimpleNamespace(), "어디에서 생긴 문제인가요?", ()),
+        ]
+    )
     monkeypatch.setattr(
-        graph_module,
-        "generate_tool_decision",
-        lambda *_args, **_kwargs: ToolDecision(
-            SimpleNamespace(),
-            None,
-            (ToolCall("call-1", "process_complaint_turn", {}),),
-        ),
+        graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
     )
     payload = _payload()
     payload["current_route"] = "complaint"
