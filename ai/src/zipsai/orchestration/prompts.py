@@ -21,7 +21,25 @@ _INTENT_SYSTEM_PROMPT = (
     "request in the contextualized message. If multiple topics are active or the connection is "
     "unclear, set the message to null and choose clarify. The image alone cannot establish intent "
     "or location.\n\n"
-    "Image analysis for each attached image, in input order:\n"
+    "contextualized_message: a self-contained Korean rendering of the current turn after resolving "
+    "clear context. Return the original text unchanged when no resolution is needed. For an "
+    "image-only turn, return a message only when the active request is clear from history; otherwise "
+    "return null.\n"
+    "route: classify the contextualized current request. Use clarify when its intent remains "
+    "ambiguous; do not guess.\n"
+    "required_capabilities: list each needed action once, in execution order. Only use "
+    "search_building_docs for a building-information question and process_complaint_turn for a "
+    "facility complaint or active complaint draft. A request may need both; return [] when neither "
+    "is needed.\n\n"
+    "Completeness rule: required_capabilities is not a representative route. Do not drop an "
+    "explicit goal because route is complaint or knowledge. When the current turn asks both a "
+    "building-information question and a facility complaint, you MUST include both capabilities "
+    "exactly once: search_building_docs and process_complaint_turn. Example: '누수 처리 기한을 "
+    "알려주고 욕실 누수 민원도 작성해줘' needs both capabilities, while route remains complaint."
+)
+
+IMAGE_OBSERVATION_PROMPT = (
+    "Observe each attached image in input order. Describe only visible facts.\n"
     "- Write a concise, factual Korean summary that remains useful for both complaint extraction "
     "and knowledge search. In 1–2 short sentences, identify the main visible subject and its "
     "relevant visible state. Include distinguishing details that help understand or identify it, "
@@ -35,13 +53,7 @@ _INTENT_SYSTEM_PROMPT = (
     "- Keep OCR separate from the summary. Transcribe clearly readable, relevant text verbatim; "
     "preserve exact error codes, numbers, and units. Omit unreadable fragments instead of "
     "guessing them, and use null when no relevant text can be read.\n"
-    "Return exactly one image observation per attached image. Use null for unavailable fields.\n\n"
-    "contextualized_message: a self-contained Korean rendering of the current turn after resolving "
-    "clear context. Return the original text unchanged when no resolution is needed. For an "
-    "image-only turn, return a message only when the active request is clear from history; otherwise "
-    "return null.\n"
-    "route: classify the contextualized current request. Use clarify when its intent remains "
-    "ambiguous; do not guess."
+    "Return exactly one image observation per attached image. Use null for unavailable fields."
 )
 
 _INTENT_USER_TEMPLATE = (
