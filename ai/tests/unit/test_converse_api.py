@@ -14,7 +14,13 @@ import zipsai.complaint.node as complaint_node
 import zipsai.knowledge.node as knowledge_node
 import zipsai.orchestration.graph as graph_module
 import zipsai.orchestration.intent as intent_module
-from zipsai.contracts.converse import ComplaintDraft, ConverseRequest, QaCardDraft, Route, RouteResult
+from zipsai.contracts.converse import (
+    ComplaintDraft,
+    ConverseRequest,
+    QaCardDraft,
+    Route,
+    RouteResult,
+)
 from zipsai.errors import (
     ChunkTooLongError,
     ComplaintExtractionError,
@@ -264,6 +270,8 @@ def test_converse_stream_forwards_tool_progress_but_not_tool_message(monkeypatch
     ]
     assert events[1] == {"type": "status", "status": "건물 문서를 확인하고 있습니다."}
     assert all("tool_call_id" not in event for event in events)
+    assert "search_building_docs" not in response.text
+    assert "process_complaint_turn" not in response.text
 
 
 def test_converse_stream_forwards_multiple_custom_deltas(monkeypatch):
