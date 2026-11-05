@@ -67,6 +67,8 @@ def test_tool_decision_replays_assistant_and_tool_result(monkeypatch):
     assert second.content == "주차 규정입니다"
     assert second.tool_calls == ()
     assert calls[0]["tools"] == calls[1]["tools"] == specs
+    assert calls[0]["tool_choice"] == calls[1]["tool_choice"] == "auto"
+    assert calls[0]["parallel_tool_calls"] is calls[1]["parallel_tool_calls"] is False
     assert len(calls[0]["messages"]) == 1
     assert calls[1]["messages"][-2] is first.message
     assert calls[1]["messages"][-1]["tool_call_id"] == "call_1"

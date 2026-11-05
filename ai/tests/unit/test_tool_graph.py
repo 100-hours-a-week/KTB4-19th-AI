@@ -418,6 +418,7 @@ def test_graph_stops_offering_tools_after_repeated_parallel_requests(
         ]
     )
     offered_tools: list[list[object]] = []
+    purposes: list[str] = []
 
     monkeypatch.setattr(
         graph_module,
@@ -425,8 +426,9 @@ def test_graph_stops_offering_tools_after_repeated_parallel_requests(
         lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
     )
 
-    def decide(_messages, tools, **_kwargs):
+    def decide(_messages, tools, **kwargs):
         offered_tools.append(tools)
+        purposes.append(kwargs["purpose"])
         return next(decisions)
 
     monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
@@ -436,6 +438,7 @@ def test_graph_stops_offering_tools_after_repeated_parallel_requests(
     assert result["reply"] == "한 가지 요청을 알려주세요."
     assert result["tool_call_count"] == 2
     assert offered_tools[-1] == []
+    assert purposes[-1] == "composer"
 
 
 def test_graph_returns_invalid_arguments_to_agent_without_running_search(
@@ -466,3 +469,97 @@ def test_graph_returns_invalid_arguments_to_agent_without_running_search(
 
     assert result["reply"] == "질문을 조금 더 구체적으로 알려주세요."
     assert '"code": "invalid_arguments"' in result["agent_messages"][-2]["content"]
+
+
+def test_graph_retries_tool_call_mimicked_as_text(monkeypatch: pytest.MonkeyPatch):
+    decisions = iter(
+        [
+            _decision(content='search_building_docs {"query":"주차"}'),
+            _decision(content="현재 정보로 답변하겠습니다."),
+        ]
+    )
+    calls = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+
+    def decide(messages, tools, **kwargs):
+        calls.append((messages, tools, kwargs))
+        return next(decisions)
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == "현재 정보로 답변하겠습니다."
+    assert len(calls) == 2
+    assert any(
+        isinstance(message, dict) and "native function calls" in message.get("content", "")
+        for message in calls[1][0]
+    )
+    assert calls[1][1]
+    assert calls[0][2]["purpose"] == calls[1][2]["purpose"] == "action"
+
+
+def test_graph_ends_safely_after_repeated_tool_call_mimic_text(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    decisions = iter(
+        [
+            _decision(content='{"query":"주차"}'),
+            _decision(content='{"query":"주차"}'),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
+    assert "search_building_docs" not in result["reply"]
+    assert "query" not in result["reply"]
+
+
+def test_graph_ends_safely_when_composer_returns_an_unoffered_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-1", "search_building_docs", {"query": "주차"}),)),
+            _decision(calls=(ToolCall("call-2", "search_building_docs", {"query": "주차"}),)),
+            _decision(
+                content="process_complaint_turn {}",
+                calls=(ToolCall("call-3", "process_complaint_turn", {}),),
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args, **_kwargs: BuildingDocsResult(status="no_results"),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
+    assert "process_complaint_turn" not in result["reply"]

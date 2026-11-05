@@ -26,10 +26,15 @@ from zipsai.orchestration.tool_contracts import (
 )
 
 _MAX_TOOL_CALLS = 2
+_MAX_PROTOCOL_RETRIES = 1
 logger = logging.getLogger(__name__)
 _PARALLEL_CALL_MESSAGE = "한 번에 하나의 작업만 요청할 수 있습니다."
 _INVALID_CALL_MESSAGE = "요청한 작업을 처리할 수 없습니다."
-_FINALIZATION_FAILURE_MESSAGE = "요청을 마무리하지 못했습니다. 다시 말씀해 주세요."
+_PROTOCOL_FAILURE_MESSAGE = "요청한 작업을 처리하지 못했습니다. 다시 말씀해 주세요."
+_PROTOCOL_RETRY_MESSAGE = (
+    "Use native function calls for tools. Do not write tool names or tool arguments as text. "
+    "If no tool is needed, answer naturally in Korean."
+)
 _AGENT_SYSTEM = (
     "You are a residential-building assistant. Decide whether to use a tool or reply in Korean. "
     "Use search_building_docs before answering questions about the current building. "
@@ -153,18 +158,66 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     tools = [contract.model_spec() for contract in _available_tool_contracts(state)]
     if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
         tools = []
-    decision = generate_tool_decision(messages, tools, purpose="agent")
+    decision = generate_tool_decision(
+        messages, tools, purpose="action" if tools else "composer"
+    )
     messages.append(decision.message)
     if not decision.tool_calls:
-        return {"agent_messages": messages, **_agent_result(state, decision.content or "")}
+        if _is_tool_text(decision.content):
+            observe_tool_rejection("protocol_failure")
+            logger.warning("tool_call_protocol_failure", extra={"reason": "tool_call_as_text"})
+            if state.get("protocol_retry_count", 0) < _MAX_PROTOCOL_RETRIES:
+                messages.append({"role": "system", "content": _PROTOCOL_RETRY_MESSAGE})
+                return {
+                    "agent_messages": messages,
+                    "protocol_retry_count": state.get("protocol_retry_count", 0) + 1,
+                    "protocol_retry_pending": True,
+                }
+            return {
+                "agent_messages": messages,
+                "protocol_retry_pending": False,
+                **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
+            }
+        return {
+            "agent_messages": messages,
+            "protocol_retry_pending": False,
+            **_agent_result(state, decision.content or ""),
+        }
     if not tools and state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
         observe_tool_rejection("tool_after_finalization")
         logger.info("tool_call_rejected", extra={"reason": "tool_after_finalization"})
         return {
             "agent_messages": messages,
-            **_agent_result(state, decision.content or _FINALIZATION_FAILURE_MESSAGE),
+            "protocol_retry_pending": False,
+            **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
         }
-    return {"agent_messages": messages, "pending_tool_calls": decision.tool_calls}
+    return {
+        "agent_messages": messages,
+        "pending_tool_calls": decision.tool_calls,
+        "protocol_retry_pending": False,
+    }
+
+
+def _is_tool_text(content: str | None) -> bool:
+    if not content:
+        return False
+    if any(contract.name in content for contract in TOOL_CONTRACTS):
+        return True
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and any(
+        _valid_tool_arguments(contract, payload) for contract in TOOL_CONTRACTS
+    )
+
+
+def _valid_tool_arguments(contract, payload: dict[str, object]) -> bool:
+    try:
+        contract.args_model.model_validate(payload)
+    except ValidationError:
+        return False
+    return True
 
 
 def _tool_message(call: ToolCall, result: object) -> dict[str, str]:
@@ -297,7 +350,9 @@ def _run_tool(state: AgentState) -> dict[str, object]:
 
 
 def _after_agent(state: AgentState) -> str:
-    return "tool" if state.get("pending_tool_calls") else END
+    if state.get("pending_tool_calls"):
+        return "tool"
+    return "agent" if state.get("protocol_retry_pending") else END
 
 
 def _after_tool(state: AgentState) -> str:
@@ -327,6 +382,8 @@ def build_graph(streaming: bool = False) -> CompiledStateGraph:
     builder.add_node("tool", _run_tool)
     builder.add_edge(START, "prepare")
     builder.add_edge("prepare", "agent")
-    builder.add_conditional_edges("agent", _after_agent, {"tool": "tool", END: END})
+    builder.add_conditional_edges(
+        "agent", _after_agent, {"agent": "agent", "tool": "tool", END: END}
+    )
     builder.add_conditional_edges("tool", _after_tool, {"agent": "agent", END: END})
     return builder.compile()

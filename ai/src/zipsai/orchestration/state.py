@@ -25,6 +25,8 @@ class AgentState(TypedDict):
     agent_messages: NotRequired[list[object]]
     pending_tool_calls: NotRequired[tuple[object, ...]]
     tool_call_count: NotRequired[int]
+    protocol_retry_count: NotRequired[int]
+    protocol_retry_pending: NotRequired[bool]
     last_tool_result: NotRequired[object]
     search_result: NotRequired[object]
     search_query: NotRequired[str]
