@@ -1,5 +1,7 @@
 import asyncio
+import importlib.util
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,11 @@ from zipsai.errors import (
     ComplaintExtractionError,
     LlmUnavailableError,
 )
+
+_COMPARE_SCRIPT = Path(__file__).parents[2] / "scripts" / "compare_complaint_prompts.py"
+_COMPARE_SPEC = importlib.util.spec_from_file_location("compare_complaint_prompts", _COMPARE_SCRIPT)
+compare_prompts = importlib.util.module_from_spec(_COMPARE_SPEC)
+_COMPARE_SPEC.loader.exec_module(compare_prompts)
 
 
 def _node_records(caplog: pytest.LogCaptureFixture) -> list:
@@ -207,6 +214,31 @@ def test_complaint_prompt_does_not_treat_request_as_a_symptom_or_repeat_location
     ]
 
 
+def test_complaint_prompt_routes_unresolved_door_lock_to_other(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        extract,
+    )
+
+    _interpret_turn(_make_request("현관 도어록이 잠기지 않아요"))
+
+    assert "interior_repair includes hinges and door handles, not door locks" in captured[
+        "system_prompt"
+    ]
+    assert "Until routing is decided, classify a door lock as other" in captured[
+        "system_prompt"
+    ]
+
+
 def test_interpret_turn_retries_empty_structured_output_once(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -290,12 +322,72 @@ def test_occurred_at_prompt_defines_weekday_and_time_ambiguity(
     assert "A bare weekday without a week qualifier is ambiguous" in captured[
         "system_prompt"
     ]
+    assert (
+        "'이번 주' is the Monday-to-Sunday week containing today; '지난주' is the previous "
+        "Monday-to-Sunday week"
+    ) in captured["system_prompt"]
     assert "A time without an explicit onset date is ambiguous; use null" in captured[
         "system_prompt"
     ]
     assert "For a stated date and time, include the Asia/Seoul offset" in captured[
         "system_prompt"
     ]
+
+
+@pytest.mark.parametrize(
+    ("occurred_at", "serialized"),
+    [
+        ("2026-11-03", "2026-11-03T00:00:00"),
+        ("2026-11-03T08:00:00+09:00", "2026-11-03T08:00:00+09:00"),
+    ],
+)
+def test_interpret_turn_preserves_date_and_datetime_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+    occurred_at: str,
+    serialized: str,
+):
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        lambda **_: _interpretation_output(occurred_at=occurred_at),
+    )
+
+    result = _interpret_turn(_make_request("11월 3일에 시작했어요"))
+
+    assert result.fields.occurred_at == datetime.fromisoformat(serialized)
+    assert result.fields.model_dump(mode="json")["occurred_at"] == serialized
+
+
+def test_prompt_comparison_uses_the_matching_output_schema_for_each_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    response_formats = []
+    result = type("Result", (), {"model_dump": lambda _self, **_kwargs: {}})()
+
+    monkeypatch.setattr(
+        compare_prompts,
+        "get_settings",
+        lambda: type("Settings", (), {"llm_model": "Qwen/test"})(),
+    )
+    monkeypatch.setattr(
+        compare_prompts,
+        "generate_structured",
+        lambda **kwargs: (response_formats.append(kwargs["response_format"]) or result),
+    )
+
+    compare_prompts.main()
+
+    assert len(response_formats) == len(compare_prompts.CASES) * 2
+    assert response_formats[0] is not response_formats[1]
+    assert response_formats[0].model_validate(
+        {
+            "complaint_switch": "same",
+            "issue_type": "leak",
+            "location": None,
+            "symptom": "물이 샘",
+            "occurred_at": None,
+        }
+    ).issue_type == "leak"
 
 
 def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
@@ -324,6 +416,27 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     ).model_dump()
     assert result.complaint_draft.representative_attachment_id is None
     assert result.missing_fields == []
+
+
+def test_handle_complaint_updates_old_location_inside_symptom_after_correction(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("주방이 아니라 욕실이에요.")
+    request.complaint_draft = ComplaintDraft(
+        issue_type="plumbing",
+        location="주방",
+        symptom="주방에서 물이 떨어져요",
+    )
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda *_args, **_kwargs: _TurnInterpretation(ComplaintDraft(location="욕실")),
+    )
+
+    result = handle_complaint(request)["result"]
+
+    assert result.complaint_draft.location == "욕실"
+    assert result.complaint_draft.symptom == "욕실에서 물이 떨어져요"
 
 
 def test_advance_complaint_merges_collected_evidence_without_model_calls(

@@ -14,13 +14,16 @@ COMPLAINT_SYSTEM_PROMPT = (
     "plumbing = water supply, blocked/backing-up drains, leaks, dampness, or mold; "
     "heating_cooling = boiler, heating, hot water, or air conditioning; "
     "interior_repair = non-water-related interior finish or fixture damage such as tile, wallpaper, "
-    "window, or door hardware; electrical = power, outlet, breaker, or lighting inside the unit; "
+    "window hardware, door hinges, or door handles; electrical = power, outlet, breaker, or lighting "
+    "inside the unit; "
     "appliance = optional/built-in appliance, intercom, or wall pad; hygiene = pests or sewer odor "
     "without a drainage blockage; common_area = a problem outside the resident's unit, regardless "
     "of cause; noise = disruptive neighbor or construction noise; other = an unresolved or unmatched "
     "complaint. Water not draining or leaking is plumbing; hot water/heating failure is "
     "heating_cooling. A hallway/elevator/stairwell issue is common_area. Do not infer the cause; "
-    "classify the reported issue using these service-team boundaries.\n\n"
+    "classify the reported issue using these service-team boundaries. interior_repair includes "
+    "hinges and door handles, not door locks. Until routing is decided, classify a door lock as "
+    "other.\n\n"
     "complaint_switch: compare the current complaint with the existing draft by symptom. Output "
     '"same" if the draft has no symptom. Otherwise output "ask" only for a clearly different problem, '
     '"accept" only when the resident agrees to a specific switch question, and "same" in all other '

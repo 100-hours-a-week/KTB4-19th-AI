@@ -1,8 +1,16 @@
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from zipsai.contracts.comment import CommentItem
-from zipsai.contracts.converse import ComplaintDraft, ComplaintState, RouteResult
+from zipsai.contracts.converse import (
+    ComplaintDraft,
+    ComplaintState,
+    ConverseRequest,
+    RouteResult,
+)
 from zipsai.orchestration.tool_contracts import (
     TOOL_CONTRACTS,
     BuildingDocsArgs,
@@ -139,6 +147,16 @@ def test_comment_ingestion_accepts_new_and_historical_issue_types(issue_type):
     )
 
     assert comment.issue_type == issue_type
+
+
+def test_symptom_changed_request_fixture_uses_current_taxonomy():
+    payload = json.loads(
+        (Path(__file__).parents[2] / "complaint_symptom_changed_payload.json").read_text()
+    )
+
+    request = ConverseRequest.model_validate(payload)
+
+    assert request.complaint_draft.issue_type == "plumbing"
 
 
 @pytest.mark.parametrize(

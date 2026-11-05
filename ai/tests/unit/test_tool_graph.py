@@ -242,11 +242,11 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
         [
             _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "누수 처리 기한"}),)),
             _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),)),
-            _decision(content="처리 기한은 확인 중이며 민원 초안을 정리했습니다."),
+            _decision(content="처리 기한은 확인 중입니다."),
         ]
     )
     tool_result = ComplaintTurnResult(
-        reply="어느 장소에서 발생했나요?",
+        reply="어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?",
         complaint_state="collecting",
         result=RouteResult(
             complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실"),
@@ -280,7 +280,9 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
     result = graph_module.build_graph().invoke(_state())
 
     assert result["route"] is Route.COMPLAINT
-    assert result["reply"] == "처리 기한은 확인 중이며 민원 초안을 정리했습니다."
+    assert result["reply"] == (
+        "처리 기한은 확인 중입니다. 어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+    )
     assert result["complaint_result"] == tool_result
     assert result["complaint_state"] == tool_result.complaint_state
     assert result["result"].qa_card_draft.question == "누수 처리 기한"

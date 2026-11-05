@@ -571,6 +571,21 @@ def _advance_complaint(
         draft = draft.model_copy(
             update={"symptom": current_symptom or previous_symptom}
         )
+    elif (
+        interpretation.switch == ComplaintSwitch.SAME
+        and request.complaint_draft
+        and request.complaint_draft.location
+        and interpretation.fields.location
+        and request.complaint_draft.location != interpretation.fields.location
+        and request.complaint_draft.location in previous_symptom
+    ):
+        draft = draft.model_copy(
+            update={
+                "symptom": previous_symptom.replace(
+                    request.complaint_draft.location, interpretation.fields.location
+                )
+            }
+        )
     return _ComplaintProgress(
         interpretation=interpretation,
         draft=draft,

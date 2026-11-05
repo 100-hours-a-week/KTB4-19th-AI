@@ -5,7 +5,10 @@ Run from ``ai/`` with LLM credentials configured:
 """
 
 from datetime import datetime
+from typing import Literal
 from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel
 
 from zipsai.complaint.node import _InterpretationOutput
 from zipsai.complaint.prompts import COMPLAINT_PROMPT, COMPLAINT_SYSTEM_PROMPT
@@ -13,6 +16,25 @@ from zipsai.contracts.converse import ComplaintDraft, HistoryTurn
 from zipsai.history import format_history
 from zipsai.integrations.llm import generate_structured
 from zipsai.settings import get_settings
+
+
+class _PreviousInterpretationOutput(BaseModel):
+    complaint_switch: Literal["same", "ask", "accept"]
+    issue_type: Literal[
+        "water_supply",
+        "drain",
+        "leak",
+        "heating",
+        "electricity",
+        "mold",
+        "pest",
+        "facility",
+        "noise",
+        "other",
+    ] | None
+    location: str | None
+    symptom: str | None
+    occurred_at: datetime | None
 
 # Snapshot of the long prompt before it was shortened. Keep this fixed so later
 # edits to the production prompt do not silently change the comparison baseline.
@@ -137,15 +159,15 @@ def main() -> None:
             text, history, draft, contextualized_message
         )
         results = []
-        for name, system_prompt in (
-            ("이전", PREVIOUS_SYSTEM_PROMPT),
-            ("현재", COMPLAINT_SYSTEM_PROMPT),
+        for name, system_prompt, response_format in (
+            ("이전", PREVIOUS_SYSTEM_PROMPT, _PreviousInterpretationOutput),
+            ("현재", COMPLAINT_SYSTEM_PROMPT, _InterpretationOutput),
         ):
             usage: dict[str, object] = {}
             result = generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_format=_InterpretationOutput,
+                response_format=response_format,
                 usage_sink=usage,
             )
             results.append((name, result, usage))
