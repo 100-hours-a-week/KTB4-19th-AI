@@ -75,7 +75,7 @@ CASES = [
     ("빈 초안 + 텍스트", None, []),
     (
         "위치 물은 뒤 답변",
-        ComplaintDraft(issue_type="leak", symptom="천장에서 물이 떨어져요"),
+        ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 떨어져요"),
         [
             HistoryTurn(
                 message_id="u1",

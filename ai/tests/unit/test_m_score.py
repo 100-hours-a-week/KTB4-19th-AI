@@ -19,7 +19,7 @@ def _row(item_id: str = "c1") -> ComplaintRow:
         type_ok=True,
         location_invented=False,
         symptom_invented=False,
-        issue_type="water_supply",
+        issue_type="plumbing",
         failed=False,
     )
 

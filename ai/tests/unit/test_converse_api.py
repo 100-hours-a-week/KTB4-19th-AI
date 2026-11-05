@@ -214,7 +214,7 @@ def test_converse_and_stream_preserve_both_card_drafts(monkeypatch):
             "reply": "질문과 민원 초안을 함께 정리했습니다.",
             "result": RouteResult(
                 qa_card_draft=QaCardDraft(question="누수 처리 기한"),
-                complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+                complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실"),
                 has_sufficient_evidence=False,
             ),
         }

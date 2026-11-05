@@ -36,14 +36,13 @@ def _require_complaint_state_only_for_complaint_route(
 
 
 IssueType = Literal[
-    "water_supply",
-    "drain",
-    "leak",
-    "heating",
-    "electricity",
-    "mold",
-    "pest",
-    "facility",
+    "plumbing",
+    "heating_cooling",
+    "interior_repair",
+    "electrical",
+    "appliance",
+    "hygiene",
+    "common_area",
     "noise",
     "other",
 ]

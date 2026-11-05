@@ -131,7 +131,7 @@ def test_interpret_turn_maps_structured_output_to_current_turn_draft(
         node_module,
         "generate_structured",
         lambda **_: _interpretation_output(
-            issue_type="leak",
+            issue_type="plumbing",
             location="화장실",
             symptom="천장에서 물이 떨어져요",
             occurred_at=datetime(2026, 9, 22),  # noqa: DTZ001
@@ -141,7 +141,7 @@ def test_interpret_turn_maps_structured_output_to_current_turn_draft(
     result = _interpret_turn(_make_request("화장실 천장에서 물이 계속 떨어져요"))
 
     assert result.fields == ComplaintDraft(
-        issue_type="leak",
+        issue_type="plumbing",
         location="화장실",
         symptom="천장에서 물이 떨어져요",
         occurred_at=datetime(2026, 9, 22),  # noqa: DTZ001
@@ -156,7 +156,7 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
     def extract(**kwargs: object):
         captured["system_prompt"] = str(kwargs["system_prompt"])
         return _interpretation_output(
-            issue_type="leak",
+            issue_type="plumbing",
             location="주방",
             symptom="싱크대 아래에 물이 고여요",
         )
@@ -246,7 +246,7 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
 ):
     request = _make_request("화장실로 정정할게요.")
     request.complaint_draft = ComplaintDraft(
-        issue_type="water_supply",
+        issue_type="heating_cooling",
         location="주방",
         symptom="온수가 나오지 않음",
     )
@@ -261,7 +261,7 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     assert result.complaint_draft.model_dump(
         exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
     ) == ComplaintDraft(
-        issue_type="water_supply",
+        issue_type="heating_cooling",
         location="화장실",
         symptom="온수가 나오지 않음",
     ).model_dump()
@@ -346,7 +346,7 @@ def test_handle_complaint_stream_replaces_wrong_field_question_before_emitting(
 ):
     request = _make_request("같은 민원인데 이번에는 이상한 소리가 납니다.")
     request.complaint_draft = ComplaintDraft(
-        issue_type="leak", symptom="물이 새고 있음"
+        issue_type="plumbing", symptom="물이 새고 있음"
     )
     monkeypatch.setattr(
         node_module,
@@ -405,7 +405,7 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
 ):
     request = _make_request("탈수할 때는 LE 오류도 떠요")
     request.complaint_draft = ComplaintDraft(
-        issue_type="facility",
+        issue_type="appliance",
         location="세탁실",
         symptom="세탁기가 작동하지 않음",
     )
@@ -430,7 +430,7 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
     assert outcome["result"].complaint_draft.model_dump(
         exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
     ) == ComplaintDraft(
-        issue_type="facility",
+        issue_type="appliance",
         location="세탁실",
         symptom="세탁기가 작동하지 않고 탈수할 때 LE 오류가 표시됨",
     ).model_dump()
@@ -539,7 +539,7 @@ def test_handle_complaint_clears_state_when_fields_complete(
         node_module,
         "_interpret_turn",
         lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(issue_type="leak", location="화장실", symptom="물이 새요"),
+            ComplaintDraft(issue_type="plumbing", location="화장실", symptom="물이 새요"),
         ),
     )
 
@@ -642,7 +642,7 @@ def test_handle_complaint_merges_occurred_at_without_erasing_existing_value(
 ):
     request = _make_request("화장실로 정정할게요.")
     request.complaint_draft = ComplaintDraft(
-        issue_type="water_supply",
+        issue_type="heating_cooling",
         location="주방",
         symptom="온수가 나오지 않음",
         occurred_at=datetime(2026, 9, 20),  # noqa: DTZ001
@@ -740,7 +740,7 @@ def _switching_draft() -> ComplaintDraft:
     들고 다음 턴이 오는 경우는 없다.
     """
     return ComplaintDraft(
-        issue_type="leak",
+        issue_type="plumbing",
         symptom="천장에서 물이 떨어져요",
         attachmentIds=[99],
     )
@@ -820,7 +820,7 @@ def test_settle_switch_discards_a_contradictory_ask_extraction():
     # "다른 민원"이라면서 증상이 없다. 값을 병합하면 다른 민원의 issue_type이
     # 지금 초안에 얹혀 짜깁기 카드가 된다.
     settled = node_module._settle_switch(
-        _TurnInterpretation(ComplaintDraft(issue_type="electricity"), switch="ask"),
+        _TurnInterpretation(ComplaintDraft(issue_type="electrical"), switch="ask"),
         ComplaintDraft(symptom="물이 새요"),
     )
     assert settled.switch == "same"

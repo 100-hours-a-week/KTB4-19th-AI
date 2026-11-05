@@ -100,7 +100,7 @@ def test_action_context_includes_active_complaint_draft_missing_fields_and_last_
         update={
             "current_route": Route.COMPLAINT,
             "current_complaint_state": ComplaintState.COLLECTING,
-            "complaint_draft": ComplaintDraft(issue_type="leak", symptom="물이 새요"),
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
             "conversation_history": [
                 HistoryTurn(message_id="a1", role="assistant", text="어느 장소에서 발생했나요?")
             ],
@@ -111,7 +111,7 @@ def test_action_context_includes_active_complaint_draft_missing_fields_and_last_
     context = messages[-1]["content"]
 
     assert "현재 민원 상태: collecting" in context
-    assert '"issue_type":"leak"' in context
+    assert '"issue_type":"plumbing"' in context
     assert "미수집 민원 항목: location" in context
     assert "assistant: 어느 장소에서 발생했나요?" in context
 
@@ -249,7 +249,7 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
         reply="어느 장소에서 발생했나요?",
         complaint_state="collecting",
         result=RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+            complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실"),
             missing_fields=["symptom"],
         ),
     )
@@ -309,7 +309,7 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
         complaint_state=None,
         result=RouteResult(
             complaint_draft=ComplaintDraft(
-                issue_type="leak",
+                issue_type="plumbing",
                 location="욕실",
                 symptom="욕실에서 물이 새고 있습니다.",
             )
@@ -365,7 +365,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
         reply="욕실 누수 민원 초안을 만들었습니다.",
         complaint_state="collecting",
         result=RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실")
+            complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실")
         ),
     )
     decisions = iter(
@@ -429,7 +429,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
                 reply="어느 장소인가요?",
                 complaint_state="collecting",
                 result=RouteResult(
-                    complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+                    complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실"),
                     missing_fields=["symptom"],
                 ),
             ),
@@ -442,7 +442,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
             ComplaintTurnResult(
                 reply="어느 장소인가요?",
                 complaint_state="collecting",
-                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="leak")),
+                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing")),
             ),
             False,
             True,
@@ -453,7 +453,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
             ComplaintTurnResult(
                 reply="어느 장소인가요?",
                 complaint_state="collecting",
-                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="leak")),
+                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing")),
             ),
             False,
             False,
@@ -479,7 +479,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
 def test_response_assembler_preserves_only_successful_tool_results(
     search, complaint, expected_citation, expected_qa, expected_draft
 ):
-    existing_draft = ComplaintDraft(issue_type="leak", symptom="물이 새요")
+    existing_draft = ComplaintDraft(issue_type="plumbing", symptom="물이 새요")
     request = _request().model_copy(update={"complaint_draft": existing_draft})
 
     route, complaint_state, result = graph_module._assemble_result(
@@ -507,7 +507,7 @@ def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure
         update={
             "current_route": Route.COMPLAINT,
             "current_complaint_state": ComplaintState.COLLECTING,
-            "complaint_draft": ComplaintDraft(issue_type="leak", symptom="물이 새요"),
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
         }
     )
 

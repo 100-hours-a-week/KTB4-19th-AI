@@ -37,7 +37,7 @@ def _request() -> ConverseRequest:
             "current_complaint_state": "collecting",
             "message": {"message_id": "message-1", "text": "세탁기 아래에서 물이 새요"},
             "conversation_history": [],
-            "complaint_draft": {"issue_type": "leak"},
+            "complaint_draft": {"issue_type": "plumbing"},
         }
     )
 
@@ -51,7 +51,7 @@ def test_process_complaint_turn_reuses_one_existing_turn_with_server_context(mon
         "reply": "어디에서 생긴 문제인가요?",
         "complaint_state": ComplaintState.COLLECTING,
         "result": RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak", symptom="물이 샘"),
+            complaint_draft=ComplaintDraft(issue_type="plumbing", symptom="물이 샘"),
             missing_fields=["location"],
         ),
     }

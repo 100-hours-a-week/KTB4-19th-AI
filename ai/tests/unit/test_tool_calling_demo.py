@@ -14,7 +14,7 @@ def test_demo_shows_no_results_and_complaint_result_together(capsys):
     assert '"qa_card_draft": {' in output
     assert '"question": "누수 처리 기한"' in output
     assert '"complaint_draft": {' in output
-    assert '"issue_type": "leak"' in output
+    assert '"issue_type": "plumbing"' in output
     assert "시나리오 검증: PASS" in output
     assert "4. Action 형식 오류: text → retry → 안전한 자연어 답변" in output
     assert "outcome=protocol_failure" in output
