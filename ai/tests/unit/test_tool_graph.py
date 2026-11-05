@@ -256,6 +256,102 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     )
 
 
+@pytest.mark.parametrize(
+    ("search", "complaint", "expected_citation", "expected_qa", "expected_draft"),
+    [
+        (
+            BuildingDocsResult(
+                status="ok",
+                evidence=[
+                    {
+                        "text": "주차장은 지하 1층입니다.",
+                        "citation": {
+                            "source_type": "building_document",
+                            "source_id": "parking-guide",
+                            "title": "주차 안내",
+                            "snippet": "지하 1층",
+                            "url": None,
+                        },
+                    }
+                ],
+            ),
+            ComplaintTurnResult(
+                reply="어느 장소인가요?",
+                complaint_state="collecting",
+                result=RouteResult(
+                    complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+                    missing_fields=["symptom"],
+                ),
+            ),
+            True,
+            False,
+            True,
+        ),
+        (
+            BuildingDocsResult(status="no_results"),
+            ComplaintTurnResult(
+                reply="어느 장소인가요?",
+                complaint_state="collecting",
+                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="leak")),
+            ),
+            False,
+            True,
+            True,
+        ),
+        (
+            ToolFailure(code="timeout", message="검색 시간이 초과됐습니다."),
+            ComplaintTurnResult(
+                reply="어느 장소인가요?",
+                complaint_state="collecting",
+                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="leak")),
+            ),
+            False,
+            False,
+            True,
+        ),
+        (
+            BuildingDocsResult(status="no_results"),
+            ToolFailure(code="timeout", message="민원 처리가 지연됐습니다."),
+            False,
+            True,
+            True,
+        ),
+        (
+            ToolFailure(code="timeout", message="검색 시간이 초과됐습니다."),
+            ToolFailure(code="timeout", message="민원 처리가 지연됐습니다."),
+            False,
+            False,
+            True,
+        ),
+    ],
+    ids=["both-success", "no-results-and-complaint", "search-failure", "complaint-failure", "both-fail"],
+)
+def test_response_assembler_preserves_only_successful_tool_results(
+    search, complaint, expected_citation, expected_qa, expected_draft
+):
+    existing_draft = ComplaintDraft(issue_type="leak", symptom="물이 새요")
+    request = _request().model_copy(update={"complaint_draft": existing_draft})
+
+    route, complaint_state, result = graph_module._assemble_result(
+        Route.KNOWLEDGE,
+        request,
+        search,
+        "주차장 위치",
+        complaint,
+    )
+
+    assert route is (Route.COMPLAINT if isinstance(complaint, ComplaintTurnResult) else Route.KNOWLEDGE)
+    assert bool(result.citations) is expected_citation
+    assert (result.qa_card_draft is not None) is expected_qa
+    assert (result.complaint_draft is not None) is expected_draft
+    if isinstance(complaint, ComplaintTurnResult):
+        assert result.missing_fields == complaint.result.missing_fields
+        assert complaint_state == complaint.complaint_state
+    else:
+        assert result.complaint_draft == existing_draft
+        assert complaint_state is None
+
+
 def test_graph_uses_final_agent_reply_after_second_tool_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):
