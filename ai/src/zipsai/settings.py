@@ -43,6 +43,9 @@ COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
 # 답변 반영·삭제가 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.
 # 문서 색인은 이 값을 쓰지 않고 작업 스레드 하나와 대기열로 받는다.
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
+# 색인 사진의 VLM 호출만 제한한다. 채팅 타임아웃(LLM_TIMEOUT_SECONDS)과 따로 둔다.
+INDEX_VLM_CONCURRENCY: Final = int(os.getenv("INDEX_VLM_CONCURRENCY", "1"))
+INDEX_VLM_TIMEOUT_SECONDS: Final = float(os.getenv("INDEX_VLM_TIMEOUT_SECONDS", "300"))
 INDEXING_QUEUE_LIMIT: Final = int(os.getenv("INDEXING_QUEUE_LIMIT", "5"))
 INDEXING_FIRST_WAIT_SECONDS: Final = float(
     os.getenv("INDEXING_FIRST_WAIT_SECONDS", "30")

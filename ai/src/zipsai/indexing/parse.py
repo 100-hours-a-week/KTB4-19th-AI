@@ -245,16 +245,9 @@ def parse_document(source: str | Path) -> ParsedPages:
         raise PdfParseError(f"File is unreadable: {path}") from exc
 
     if path.suffix.lower() != ".pdf":
-        parsed, convert_s = _read_with(
-            path,
-            _converter(),
-            parser="docling",
-            fallback_reason=None,
-            text_layer=None,
-        )
-        return _annotate_route(
-            parsed, route="docling_ocr", reason="non_pdf", convert_s=convert_s
-        )
+        from zipsai.indexing.image_read import read_image_pages
+
+        return read_image_pages(path)
 
     try:
         started = perf_counter()
