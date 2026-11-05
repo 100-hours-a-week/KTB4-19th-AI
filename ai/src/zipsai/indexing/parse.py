@@ -1,9 +1,11 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
+    EasyOcrOptions,
     PdfPipelineOptions,
     RapidOcrOptions,
     TableFormerMode,
@@ -96,6 +98,28 @@ def fast_pipeline_options() -> PdfPipelineOptions:
     return options
 
 
+def scan_pipeline_options() -> PdfPipelineOptions:
+    """글자층 없는 PDF만. 평가 easyocr-ct01-fix와 같은 EasyOCR 설정이다."""
+
+    kwargs: dict[str, object] = {"lang": ["ko", "en"], "confidence_threshold": 0.1}
+    model_dir = os.environ.get("EASYOCR_MODEL_DIR")
+    if model_dir:
+        kwargs["model_storage_directory"] = model_dir
+    return PdfPipelineOptions(
+        do_ocr=True,
+        ocr_options=EasyOcrOptions(**kwargs),
+    )
+
+
+def scan_pdf_option() -> PdfFormatOption:
+    from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+
+    return PdfFormatOption(
+        pipeline_options=scan_pipeline_options(),
+        backend=PyPdfiumDocumentBackend,
+    )
+
+
 @lru_cache(maxsize=1)
 def _fast_converter() -> DocumentConverter:
     options = fast_pipeline_options()
@@ -109,14 +133,19 @@ def _fast_converter() -> DocumentConverter:
 @lru_cache(maxsize=1)
 def _converter() -> DocumentConverter:
     # 문서마다 새로 만들면 OCR·레이아웃 모델을 매번 다시 올린다.
+    # 글자층 PDF의 빠른 표와 모델 예열이 쓴다. 스캔 PDF는 _scan_converter다.
     options = pipeline_options()
     return DocumentConverter(
         format_options={
-            # 스캔본은 PDF, 사진으로 찍어 올린 공지는 이미지로 들어온다. 둘 다 같은 설정으로 읽는다.
             InputFormat.PDF: PdfFormatOption(pipeline_options=options),
             InputFormat.IMAGE: ImageFormatOption(pipeline_options=options),
         }
     )
+
+
+@lru_cache(maxsize=1)
+def _scan_converter() -> DocumentConverter:
+    return DocumentConverter(format_options={InputFormat.PDF: scan_pdf_option()})
 
 
 def _annotate_route(
@@ -240,7 +269,7 @@ def parse_document(source: str | Path) -> ParsedPages:
     if kind == "scan":
         parsed, convert_s = _read_with(
             path,
-            _converter(),
+            _scan_converter(),
             parser="docling",
             fallback_reason=reason,
             text_layer=layer,
