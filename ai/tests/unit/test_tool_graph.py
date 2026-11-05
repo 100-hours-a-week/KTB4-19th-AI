@@ -3,7 +3,14 @@ from types import SimpleNamespace
 import pytest
 
 import zipsai.orchestration.graph as graph_module
-from zipsai.contracts.converse import ComplaintDraft, ConverseRequest, Route, RouteResult
+from zipsai.contracts.converse import (
+    ComplaintDraft,
+    ComplaintState,
+    ConverseRequest,
+    HistoryTurn,
+    Route,
+    RouteResult,
+)
 from zipsai.integrations.llm import ToolCall, ToolDecision
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
@@ -61,7 +68,6 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
         lambda _state: {
             "route": Route.KNOWLEDGE,
             "image_analysis": None,
-            "required_capabilities": ("search_building_docs",),
         },
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
@@ -89,7 +95,57 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert tool_events[0][2] >= 0
 
 
-def test_prepare_keeps_both_required_capabilities_in_graph_state(
+def test_action_context_includes_active_complaint_draft_missing_fields_and_last_question():
+    request = _request().model_copy(
+        update={
+            "current_route": Route.COMPLAINT,
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="leak", symptom="물이 새요"),
+            "conversation_history": [
+                HistoryTurn(message_id="a1", role="assistant", text="어느 장소에서 발생했나요?")
+            ],
+        }
+    )
+
+    messages = graph_module._initial_messages({**_state(), "request": request})
+    context = messages[-1]["content"]
+
+    assert "현재 민원 상태: collecting" in context
+    assert '"issue_type":"leak"' in context
+    assert "미수집 민원 항목: location" in context
+    assert "assistant: 어느 장소에서 발생했나요?" in context
+
+
+def test_action_prompt_treats_complaint_context_as_hint_not_route_lock():
+    system = graph_module._AGENT_SYSTEM
+
+    assert "answers the last complaint question" in system
+    assert "A clear new question may take another route" in system
+    assert "ask for clarification when intent is ambiguous" in system
+    assert "previous route is context and does not force a tool call" in system
+
+
+def test_action_receives_full_active_catalog_regardless_of_route(monkeypatch: pytest.MonkeyPatch):
+    offered: list[str] = []
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+    )
+
+    def decide(_messages, tools, **_kwargs):
+        offered.extend(tool["function"]["name"] for tool in tools)
+        return _decision(content="요청을 확인하겠습니다.")
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+
+    graph_module.build_graph().invoke(_state())
+
+    assert offered == ["search_building_docs", "process_complaint_turn"]
+
+
+def test_prepare_does_not_create_tool_plan_in_graph_state(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(
@@ -98,10 +154,6 @@ def test_prepare_keeps_both_required_capabilities_in_graph_state(
         lambda _state: {
             "route": Route.COMPLAINT,
             "image_analysis": None,
-            "required_capabilities": (
-                "search_building_docs",
-                "process_complaint_turn",
-            ),
         },
     )
     monkeypatch.setattr(
@@ -112,13 +164,10 @@ def test_prepare_keeps_both_required_capabilities_in_graph_state(
 
     result = graph_module.build_graph().invoke(_state())
 
-    assert result["required_capabilities"] == (
-        "search_building_docs",
-        "process_complaint_turn",
-    )
+    assert "required_capabilities" not in result
 
 
-def test_agent_prompt_requires_one_remaining_tool_before_a_final_reply(
+def test_agent_prompt_allows_a_natural_reply_or_one_tool(
     monkeypatch: pytest.MonkeyPatch,
 ):
     seen_system_messages: list[str] = []
@@ -129,10 +178,6 @@ def test_agent_prompt_requires_one_remaining_tool_before_a_final_reply(
         lambda _state: {
             "route": Route.COMPLAINT,
             "image_analysis": None,
-            "required_capabilities": (
-                "search_building_docs",
-                "process_complaint_turn",
-            ),
         },
     )
 
@@ -148,8 +193,8 @@ def test_agent_prompt_requires_one_remaining_tool_before_a_final_reply(
 
     graph_module.build_graph().invoke(_state())
 
-    assert any("offered tools are remaining required actions" in message for message in seen_system_messages)
-    assert any("do not send a final reply" in message for message in seen_system_messages)
+    assert any("Use an offered tool when needed" in message for message in seen_system_messages)
+    assert any("reply naturally in Korean" in message for message in seen_system_messages)
 
 
 def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
@@ -176,10 +221,6 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
         lambda _state: {
             "route": Route.COMPLAINT,
             "image_analysis": None,
-            "required_capabilities": (
-                "search_building_docs",
-                "process_complaint_turn",
-            ),
         },
     )
     monkeypatch.setattr(
@@ -209,7 +250,7 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     assert result["result"].missing_fields == ["symptom"]
     assert result["result"].has_sufficient_evidence is False
     assert result["tool_call_count"] == 2
-    assert result["completed_capabilities"] == (
+    assert result["completed_tools"] == (
         "search_building_docs",
         "process_complaint_turn",
     )
@@ -231,10 +272,6 @@ def test_graph_uses_final_agent_reply_after_second_tool_failure(
         lambda _state: {
             "route": Route.COMPLAINT,
             "image_analysis": None,
-            "required_capabilities": (
-                "search_building_docs",
-                "process_complaint_turn",
-            ),
         },
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
@@ -272,7 +309,6 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
         lambda _state: {
             "route": Route.KNOWLEDGE,
             "image_analysis": None,
-            "required_capabilities": ("search_building_docs",),
         },
     )
     monkeypatch.setattr(
@@ -290,7 +326,7 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
     result = graph_module.build_graph().invoke(_state())
 
     assert search_calls == ["주차"]
-    assert result["completed_capabilities"] == ("search_building_docs",)
+    assert result["completed_tools"] == ("search_building_docs",)
     assert any(
         isinstance(message, dict) and '"code": "invalid_arguments"' in message.get("content", "")
         for message in result["agent_messages"]
@@ -417,7 +453,6 @@ def test_graph_returns_invalid_arguments_to_agent_without_running_search(
         lambda _state: {
             "route": Route.KNOWLEDGE,
             "image_analysis": None,
-            "required_capabilities": ("search_building_docs",),
         },
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))

@@ -1,6 +1,6 @@
 import logging
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 
 from zipsai.contracts.converse import Route
 from zipsai.errors import (
@@ -16,7 +16,7 @@ from zipsai.integrations.llm import generate_structured
 from zipsai.integrations.vlm import analyze_images
 from zipsai.observability import add_context, stage
 from zipsai.orchestration.prompts import IMAGE_OBSERVATION_PROMPT, INTENT_PROMPT
-from zipsai.orchestration.state import AgentState, CapabilityName
+from zipsai.orchestration.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +24,6 @@ logger = logging.getLogger(__name__)
 class _RouteDecision(BaseModel):
     route: Route
     contextualized_message: str | None
-    required_capabilities: tuple[CapabilityName, ...] = ()
-
-    @model_validator(mode="after")
-    def validate_required_capabilities(self) -> "_RouteDecision":
-        if len(self.required_capabilities) != len(set(self.required_capabilities)):
-            raise ValueError("required_capabilities must not contain duplicates")
-        return self
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:
@@ -47,7 +40,6 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         current_route=request.current_route.value if request.current_route else None,
     ) as step:
         contextualized_message: str | None = None
-        required_capabilities: tuple[CapabilityName, ...] = ()
         image_analysis = None
         image_failed = False
         if request.message.images:
@@ -91,15 +83,6 @@ def classify_intent(state: AgentState) -> dict[str, object]:
                 raise IntentClassificationError("LLM did not return a usable intent route")
             route = decision.route
             contextualized_message = decision.contextualized_message
-            required_capabilities = decision.required_capabilities
-            if not required_capabilities:
-                required_capabilities = (
-                    ("search_building_docs",)
-                    if route is Route.KNOWLEDGE
-                    else ("process_complaint_turn",)
-                    if route is Route.COMPLAINT
-                    else ()
-                )
         step["intent_route"] = route.value
         original_text = (request.message.text or "").strip()
         step["question_rewritten"] = bool(
@@ -111,7 +94,6 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         "route": route,
         "image_analysis": image_analysis,
         "contextualized_message": contextualized_message,
-        "required_capabilities": required_capabilities,
     }
     if image_failed:
         result["image_analysis_failed"] = True
