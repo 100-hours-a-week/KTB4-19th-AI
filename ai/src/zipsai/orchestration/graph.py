@@ -13,7 +13,11 @@ from zipsai.contracts.converse import QaCardDraft, Route, RouteResult
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
 from zipsai.knowledge.tool import search_building_docs
-from zipsai.metrics import observe_tool_call, observe_tool_rejection
+from zipsai.metrics import (
+    observe_tool_call,
+    observe_tool_decision,
+    observe_tool_rejection,
+)
 from zipsai.orchestration.intent import classify_intent
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
@@ -162,9 +166,28 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     decision = generate_tool_decision(
         messages, tools, purpose="action" if tools else "composer"
     )
+    tool_text = not decision.tool_calls and _is_tool_text(decision.content)
+    route = state.get("route")
+    route_label = route.value if route else "unknown"
+    decision_outcome = (
+        "protocol_failure"
+        if tool_text
+        else "tool_selected"
+        if decision.tool_calls
+        else "no_tool"
+    )
+    observe_tool_decision(route_label, decision_outcome)
+    logger.info(
+        "agent_decision",
+        extra={
+            "route": route_label,
+            "outcome": decision_outcome,
+            "tool_call_count": state.get("tool_call_count", 0),
+        },
+    )
     messages.append(decision.message)
     if not decision.tool_calls:
-        if _is_tool_text(decision.content):
+        if tool_text:
             observe_tool_rejection("protocol_failure")
             logger.warning("tool_call_protocol_failure", extra={"reason": "tool_call_as_text"})
             if state.get("protocol_retry_count", 0) < _MAX_PROTOCOL_RETRIES:

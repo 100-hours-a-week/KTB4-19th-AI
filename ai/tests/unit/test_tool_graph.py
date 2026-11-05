@@ -197,6 +197,44 @@ def test_agent_prompt_allows_a_natural_reply_or_one_tool(
     assert any("reply naturally in Korean" in message for message in seen_system_messages)
 
 
+@pytest.mark.parametrize(
+    ("decision", "expected"),
+    [
+        (_decision(content="주차 안내입니다."), ["no_tool"]),
+        (_decision(content='search_building_docs {"query":"비공개 질문"}'), ["protocol_failure", "no_tool"]),
+        (_decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "비공개 질문"}),)), ["tool_selected", "no_tool"]),
+    ],
+    ids=["natural-reply", "tool-call-as-text", "native-tool-call"],
+)
+def test_agent_records_bounded_decision_without_logging_user_input(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, decision, expected
+):
+    observed: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+    decisions = iter([decision, _decision(content="검색 결과를 안내합니다.")])
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: BuildingDocsResult(status="no_results"),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "observe_tool_decision",
+        lambda route, outcome: observed.append((route, outcome)),
+        raising=False,
+    )
+
+    graph_module.build_graph().invoke(_state())
+
+    assert observed == [("knowledge", outcome) for outcome in expected]
+    assert "비공개 질문" not in caplog.text
+
+
 def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     monkeypatch: pytest.MonkeyPatch,
 ):
