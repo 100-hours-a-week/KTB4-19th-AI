@@ -204,6 +204,11 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                 "protocol_retry_pending": False,
                 **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
             }
+        if (
+            isinstance(state.get("last_tool_result"), ComplaintTurnResult)
+            and not state.get("search_result")
+        ):
+            return {"agent_messages": messages, "protocol_retry_pending": False}
         return {
             "agent_messages": messages,
             "protocol_retry_pending": False,
@@ -394,7 +399,7 @@ def _after_agent(state: AgentState) -> str:
 
 
 def _after_tool(state: AgentState) -> str:
-    return END if state.get("complaint_result") and not state.get("search_result") else "agent"
+    return "agent"
 
 
 def _include_image_analysis(result: dict[str, object], state: AgentState) -> dict[str, object]:

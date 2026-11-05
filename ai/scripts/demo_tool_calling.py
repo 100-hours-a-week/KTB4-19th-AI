@@ -215,7 +215,16 @@ def _patched_complaint_flow() -> Iterator[None]:
         patch.object(
             graph_module,
             "generate_tool_decision",
-            _decisions([ToolDecision(_assistant_message((call,)), None, (call,))]),
+            _decisions(
+                [
+                    ToolDecision(_assistant_message((call,)), None, (call,)),
+                    ToolDecision(
+                        {"role": "assistant", "content": "추가 도구 없이 답변할 수 있습니다."},
+                        "추가 도구 없이 답변할 수 있습니다.",
+                        (),
+                    ),
+                ]
+            ),
         ),
         patch.object(
             graph_module,
@@ -314,12 +323,12 @@ def main() -> None:
 
     with _patched_complaint_flow():
         complaint_result = _run(
-            "2. 민원: Action → 민원 pipeline → 바로 최종 답변",
+            "2. 민원: Action → 민원 pipeline → 추가 도구 확인 → workflow reply",
             _request("화장실에서 물이 새요."),
         )
     assert complaint_result["reply"] == "어느 장소에서 물이 새는지 알려주세요."
     assert complaint_result["tool_call_count"] == 1
-    print("  시나리오 검증: PASS (composer 추가 호출 없이 종료)")
+    print("  시나리오 검증: PASS (composer 합성 없이 workflow reply 사용)")
 
     with _patched_no_results_complaint_flow():
         combined_result = _run(

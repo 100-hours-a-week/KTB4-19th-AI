@@ -235,7 +235,7 @@ def test_agent_records_bounded_decision_without_logging_user_input(
     assert "비공개 질문" not in caplog.text
 
 
-def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
+def test_graph_runs_search_then_complaint_before_final_agent_reply(
     monkeypatch: pytest.MonkeyPatch,
 ):
     decisions = iter(
@@ -294,6 +294,72 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     )
 
 
+def test_graph_runs_search_after_complaint_when_agent_selects_it(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),)),
+            _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "누수 처리 기한"}),)),
+            _decision(content="건물 자료에서 처리 기한은 찾지 못했지만, 욕실 누수 민원 초안은 정리했습니다."),
+        ]
+    )
+    complaint_result = ComplaintTurnResult(
+        reply="욕실 누수 민원 초안을 정리했습니다.",
+        complaint_state=None,
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(
+                issue_type="leak",
+                location="욕실",
+                symptom="욕실에서 물이 새고 있습니다.",
+            )
+        ),
+    )
+    executed: list[str] = []
+    state = _state()
+    state["request"] = state["request"].model_copy(
+        update={
+            "message": state["request"].message.model_copy(
+                update={"text": "누수 처리 기한도 알려주고, 욕실 누수 민원도 작성해 주세요."}
+            )
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+    )
+    monkeypatch.setattr(
+        graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_args, **_kwargs: (executed.append("complaint"), complaint_result)[1],
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args, **_kwargs: (
+            executed.append("search"), BuildingDocsResult(status="no_results")
+        )[1],
+    )
+
+    result = graph_module.build_graph().invoke(state)
+
+    assert executed == ["complaint", "search"]
+    assert result["tool_call_count"] == 2
+    assert result["reply"] == (
+        "건물 자료에서 처리 기한은 찾지 못했지만, 욕실 누수 민원 초안은 정리했습니다."
+    )
+    assert result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert result["result"].complaint_draft == complaint_result.result.complaint_draft
+    assert result["completed_tools"] == (
+        "process_complaint_turn",
+        "search_building_docs",
+    )
+
+
 def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pytest.MonkeyPatch):
     tool_result = ComplaintTurnResult(
         reply="욕실 누수 민원 초안을 만들었습니다.",
@@ -303,8 +369,12 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
         ),
     )
     decisions = iter(
-        [_decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),))]
+        [
+            _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),)),
+            _decision(content="민원 초안을 정리했습니다."),
+        ]
     )
+    purposes: list[str] = []
     assembly_inputs: list[str] = []
     original_assembler = graph_module._assemble_result
 
@@ -312,12 +382,16 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
         assembly_inputs.append(complaint.reply if isinstance(complaint, ComplaintTurnResult) else "")
         return original_assembler(route, request, search, search_query, complaint)
 
+    def decide(*_args, **kwargs):
+        purposes.append(kwargs["purpose"])
+        return next(decisions)
+
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
         lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
     )
-    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
     monkeypatch.setattr(graph_module, "_assemble_result", assemble)
     monkeypatch.setattr(
         graph_module, "process_complaint_turn", lambda *_args, **_kwargs: tool_result
@@ -329,6 +403,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
     assert result["route"] is Route.COMPLAINT
     assert result["result"].complaint_draft == tool_result.result.complaint_draft
     assert assembly_inputs == [tool_result.reply]
+    assert purposes == ["action", "action"]
 
 
 @pytest.mark.parametrize(
