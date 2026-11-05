@@ -266,6 +266,38 @@ def test_interpret_turn_passes_todays_kst_date_to_prompt(
     assert f"오늘 날짜(Asia/Seoul): {today}" in captured["user_prompt"]
 
 
+def test_occurred_at_prompt_defines_weekday_and_time_ambiguity(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 6, tzinfo=tz)
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        captured["user_prompt"] = str(kwargs["user_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("지난주 화요일부터 보일러가 작동하지 않아요"))
+
+    assert "오늘 날짜(Asia/Seoul): 2026-11-06" in captured["user_prompt"]
+    assert "A bare weekday without a week qualifier is ambiguous" in captured[
+        "system_prompt"
+    ]
+    assert "A time without an explicit onset date is ambiguous; use null" in captured[
+        "system_prompt"
+    ]
+    assert "For a stated date and time, include the Asia/Seoul offset" in captured[
+        "system_prompt"
+    ]
+
+
 def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
     monkeypatch: pytest.MonkeyPatch,
 ):

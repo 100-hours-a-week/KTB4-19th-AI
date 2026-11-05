@@ -39,9 +39,13 @@ COMPLAINT_SYSTEM_PROMPT = (
     "affected component and what is wrong. A prior assistant's image observation may be used only "
     "when the resident confirms or refers to it. On an accepted switch, use only the new complaint "
     "stated in the assistant's switch question.\n"
-    "occurred_at: use only an onset date or time stated in the current turn. Resolve relative dates against today's "
-    "Asia/Seoul date; weekday references mean that named week. Output YYYY-MM-DD or null. On an "
-    'accepted switch, use null unless the current turn states a time.\n\n'
+    "occurred_at: extract only when the issue began, not when it was noticed in an image. Resolve "
+    "relative days against today's Asia/Seoul date. '이번 주' is the Monday-to-Sunday week containing "
+    "today; '지난주' is the previous Monday-to-Sunday week. A bare weekday without a week qualifier "
+    "is ambiguous; use null. A time without an explicit onset date is ambiguous; use null. For a "
+    "date without a time, output YYYY-MM-DD. For a stated date and time, include the Asia/Seoul "
+    "offset in ISO 8601. If the date or onset is unclear, use null. On an accepted switch, use null "
+    'unless the current turn states the new issue onset.\n\n'
     "Output only a JSON object with exactly these five keys: complaint_switch, issue_type, location, "
     "symptom, occurred_at. Use null for unknown values; no markdown or explanation.\n"
     '{{"complaint_switch": "same", "issue_type": null, "location": null, "symptom": null, '
