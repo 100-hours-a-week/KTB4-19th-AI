@@ -1,8 +1,9 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 COMPLAINT_SYSTEM_PROMPT = (
-    "Extract facility-complaint fields from the resident's current turn. Use history and the existing "
-    "draft to resolve references and corrections; do not repeat unchanged draft values. The "
+    "Extract fields from a resident's housing-maintenance complaint to building management. The "
+    "location is the stated room or area in the resident's home where the issue occurs. Use history "
+    "and the existing draft to resolve references and corrections; do not repeat unchanged draft values. The "
     "contextualized message is a reading aid, not independent evidence. Preserve the original turn's "
     "negation, comparison, correction, and uncertainty. Add no facts unsupported by the current turn, "
     "history, or current image evidence.\n\n"
@@ -19,9 +20,13 @@ COMPLAINT_SYSTEM_PROMPT = (
     '"same" if the draft has no symptom. Otherwise output "ask" only for a clearly different problem, '
     '"accept" only when the resident agrees to a specific switch question, and "same" in all other '
     "cases, including refusals and replies that only supply a missing field.\n"
-    "location: use a location stated in the current turn, including a direct answer to a location "
-    "question. If the resident says they do not know or will not provide it, use \"모름\". Otherwise "
-    "null.\n"
+    "location: use the explicitly stated room or area where the problem occurs, including a direct "
+    "answer to a location question. If both a room or area and a component are stated, use the room "
+    "or area as location and describe the component in symptom. If only a component is stated, leave "
+    "location null; do not infer a room. Extract a stated room or area even when the sentence "
+    "contains negation or contrast. A room or area may appear inside the problem description; do not "
+    "require a separate location clause. If the resident says they do not know or will not provide it, "
+    "use \"모름\".\n"
     "symptom: describe the current problem in the resident's words, resolving references with history "
     "and the contextualized message; use current image evidence when relevant. If no problem is "
     "supported, use null, never a placeholder. A prior assistant's image observation may be used only "

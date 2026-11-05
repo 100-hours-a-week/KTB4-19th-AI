@@ -242,12 +242,11 @@ def _switch_question(current_symptom: str, new_symptom: str) -> str:
 
 _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
-    "symptom": "어떤 불편 증상인지 알려주세요.",
+    "symptom": "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?",
 }
-# 고정 문구는 LLM이 비었을 때만 나간다. 모델이 다듬은 질문도 같은 항목으로 센다.
 _ASK_FIELD_PATTERNS = {
     "location": re.compile(r"어디|위치|장소|어느 (곳|방|공간)"),
-    "symptom": re.compile(r"증상|어떤 (문제|불편)|어떻게 (되|안)"),
+    "symptom": re.compile(r"증상|어떤 (문제|불편)|무슨 (문제|불편)|어떻게 (되|안)"),
 }
 
 
@@ -304,12 +303,13 @@ def _photo_label(
 
 
 def _follow_up(asked: str, llm_reply: str) -> tuple[str, str]:
-    """부족한 항목 하나를 묻는 문구와 그 출처.
-
-    어떤 항목이 부족한지는 이미 _missing_fields(draft)로 직접 계산했으므로, LLM
-    문구는 표현만 다듬는 역할이다. 있으면 그대로 신뢰하고, 없으면 고정 문구로 묻는다.
-    """
-    if llm_reply:
+    """LLM 질문이 서버가 정한 누락 항목과 일치할 때만 사용한다."""
+    other = "symptom" if asked == "location" else "location"
+    if (
+        llm_reply
+        and _same_field_ask(llm_reply, asked)
+        and not _same_field_ask(llm_reply, other)
+    ):
         return llm_reply, "llm"
     return _MISSING_FIELD_REPLY[asked], "fixed"
 
@@ -704,17 +704,16 @@ async def _stream_generated_reply(
             purpose="turn_reply",
         ):
             parts.append(text)
-            emit({"type": "delta", "field": "reply", "text": text})
 
     reply = "".join(parts).strip()
-    if not reply:
-        return None
-    return _ask_for_missing(
+    turn = _ask_for_missing(
         draft,
         analysis.progress.missing_fields,
         analysis.evidence.image_analysis,
         reply,
     )
+    emit({"type": "delta", "field": "reply", "text": turn.reply})
+    return turn
 
 
 def _finalize_turn(
