@@ -256,6 +256,43 @@ def test_graph_runs_required_search_then_complaint_before_final_agent_reply(
     )
 
 
+def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pytest.MonkeyPatch):
+    tool_result = ComplaintTurnResult(
+        reply="욕실 누수 민원 초안을 만들었습니다.",
+        complaint_state="collecting",
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실")
+        ),
+    )
+    decisions = iter(
+        [_decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),))]
+    )
+    assembly_inputs: list[str] = []
+    original_assembler = graph_module._assemble_result
+
+    def assemble(route, request, search, search_query, complaint):
+        assembly_inputs.append(complaint.reply if isinstance(complaint, ComplaintTurnResult) else "")
+        return original_assembler(route, request, search, search_query, complaint)
+
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
+    monkeypatch.setattr(graph_module, "_assemble_result", assemble)
+    monkeypatch.setattr(
+        graph_module, "process_complaint_turn", lambda *_args, **_kwargs: tool_result
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == tool_result.reply
+    assert result["route"] is Route.COMPLAINT
+    assert result["result"].complaint_draft == tool_result.result.complaint_draft
+    assert assembly_inputs == [tool_result.reply]
+
+
 @pytest.mark.parametrize(
     ("search", "complaint", "expected_citation", "expected_qa", "expected_draft"),
     [

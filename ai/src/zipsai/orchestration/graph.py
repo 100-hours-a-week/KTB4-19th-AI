@@ -358,12 +358,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
         updates["completed_tools"] = (*state.get("completed_tools", ()), call.name)
     if isinstance(result, ComplaintTurnResult):
         updates["complaint_result"] = result
-        updates.update(
-            _include_image_analysis(
-                {"reply": result.reply, "complaint_state": result.complaint_state, "result": result.result},
-                state,
-            )
-        )
+        updates.update(_agent_result({**state, **updates}, result.reply))
     return updates
 
 
@@ -374,7 +369,7 @@ def _after_agent(state: AgentState) -> str:
 
 
 def _after_tool(state: AgentState) -> str:
-    return "agent"
+    return END if state.get("complaint_result") and not state.get("search_result") else "agent"
 
 
 def _include_image_analysis(result: dict[str, object], state: AgentState) -> dict[str, object]:
