@@ -427,6 +427,35 @@ def test_response_assembler_preserves_only_successful_tool_results(
         assert complaint_state is None
 
 
+def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure():
+    request = _request().model_copy(
+        update={
+            "current_route": Route.COMPLAINT,
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="leak", symptom="물이 새요"),
+        }
+    )
+
+    route, complaint_state, _ = graph_module._assemble_result(
+        Route.COMPLAINT,
+        request,
+        None,
+        None,
+        ToolFailure(code="timeout", message="민원 처리가 지연됐습니다."),
+    )
+
+    assert route is Route.COMPLAINT
+    assert complaint_state is ComplaintState.COLLECTING
+
+
+def test_empty_json_response_is_not_mistaken_for_tool_arguments():
+    assert graph_module._is_tool_text("{}") is False
+
+
+def test_nonempty_tool_arguments_json_is_still_detected_as_tool_text():
+    assert graph_module._is_tool_text('{"query": "주차 위치"}') is True
+
+
 def test_graph_uses_final_agent_reply_after_second_tool_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):

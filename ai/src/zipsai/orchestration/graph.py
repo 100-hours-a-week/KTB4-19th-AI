@@ -134,7 +134,9 @@ def _assemble_result(
         })
     return (
         Route.COMPLAINT if complaint_result else route or Route.CLARIFY,
-        complaint_result.complaint_state if complaint_result else None,
+        complaint_result.complaint_state
+        if complaint_result
+        else request.current_complaint_state if route is Route.COMPLAINT else None,
         result,
     )
 
@@ -231,7 +233,7 @@ def _is_tool_text(content: str | None) -> bool:
         payload = json.loads(content)
     except json.JSONDecodeError:
         return False
-    return isinstance(payload, dict) and any(
+    return isinstance(payload, dict) and bool(payload) and any(
         _valid_tool_arguments(contract, payload) for contract in TOOL_CONTRACTS
     )
 
