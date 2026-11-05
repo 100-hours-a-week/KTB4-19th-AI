@@ -166,6 +166,39 @@ def test_openrouter_and_pod_failure_do_not_call_openrouter(monkeypatch) -> None:
     assert calls["complete"] == 1
 
 
+def test_undiscovered_pod_skips_openrouter_and_uses_paddle(monkeypatch, tmp_path: Path) -> None:
+    calls = {"complete": 0, "openrouter": 0}
+
+    def settings(override=None):
+        if override == "openrouter":
+            calls["openrouter"] += 1
+            raise AssertionError("index must not request openrouter")
+        return _settings("openrouter")
+
+    def complete(*_args, **_kwargs):
+        calls["complete"] += 1
+        raise AssertionError("index must not call the model")
+
+    monkeypatch.setenv("ACTIVE_MODEL_PROVIDER", "pod")
+    monkeypatch.setattr(image_read, "get_settings", settings)
+    monkeypatch.setattr(image_read, "_vlm_complete", complete)
+    skipped = call_index_vlm(b"jpeg", 64, 64)
+    assert skipped.reason == "vlm_skipped"
+    assert calls["complete"] == 0
+    assert calls["openrouter"] == 0
+
+    monkeypatch.setattr(
+        image_read,
+        "call_index_paddle",
+        lambda _image: ("대체 경로로 읽은 안내문입니다", 0.2),
+    )
+    pages = read_image_pages(_save(tmp_path, (32, 32)))
+    assert pages.parser == "paddleocr"
+    assert pages.parser_route == "index_paddle"
+    assert calls["complete"] == 0
+    assert calls["openrouter"] == 0
+
+
 def test_both_failures_use_existing_parse_reason(monkeypatch, tmp_path: Path) -> None:
     from zipsai.indexing.pipeline import _STAGE_REASON as stage_reason
 
