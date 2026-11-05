@@ -27,6 +27,7 @@ from zipsai.orchestration.tool_contracts import (
 
 _MAX_TOOL_CALLS = 2
 _MAX_PROTOCOL_RETRIES = 1
+_RETRYABLE_FAILURES = {"timeout", "unavailable", "rate_limited", "upstream_error"}
 logger = logging.getLogger(__name__)
 _PARALLEL_CALL_MESSAGE = "한 번에 하나의 작업만 요청할 수 있습니다."
 _INVALID_CALL_MESSAGE = "요청한 작업을 처리할 수 없습니다."
@@ -267,14 +268,18 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             "last_tool_result": result,
         }
 
-    if (
-        call.name not in {contract.name for contract in _available_tool_contracts(state)}
-        or call.name in state.get("attempted_tools", ())
-    ):
-        observe_tool_rejection("unavailable_tool")
+    rejection = (
+        "repeated_tool"
+        if call.name in state.get("attempted_tools", ())
+        else "unavailable_tool"
+        if call.name not in {contract.name for contract in _available_tool_contracts(state)}
+        else None
+    )
+    if rejection:
+        observe_tool_rejection(rejection)
         logger.info(
             "tool_call_rejected",
-            extra={"reason": "unavailable_tool", "tool": call.name},
+            extra={"reason": rejection, "tool": call.name},
         )
         result = _invalid_result()
         return {
@@ -293,16 +298,17 @@ def _run_tool(state: AgentState) -> dict[str, object]:
     try:
         if call.name == "search_building_docs":
             _emit_status("건물 문서를 확인하고 있습니다.")
-            result = search_building_docs(BuildingDocsArgs.model_validate(call.arguments), request)
+            args = BuildingDocsArgs.model_validate(call.arguments)
+            execute = lambda: search_building_docs(args, request)
             updates: dict[str, object] = {
                 "route": Route.KNOWLEDGE,
-                "search_result": result,
                 "search_query": call.arguments["query"],
             }
         elif call.name == "process_complaint_turn":
             _emit_status("민원 내용을 정리하고 있습니다.")
-            result = process_complaint_turn(
-                ComplaintTurnArgs.model_validate(call.arguments),
+            args = ComplaintTurnArgs.model_validate(call.arguments)
+            execute = lambda: process_complaint_turn(
+                args,
                 request,
                 image_analysis=state.get("image_analysis"),
                 contextualized_message=state.get("contextualized_message"),
@@ -314,6 +320,18 @@ def _run_tool(state: AgentState) -> dict[str, object]:
     except ValidationError:
         result = _invalid_result()
         updates = {}
+    else:
+        for attempt in range(2):
+            result = execute()
+            if not isinstance(result, ToolFailure) or result.code not in _RETRYABLE_FAILURES:
+                break
+            if attempt == 0:
+                logger.info(
+                    "tool_call_retry",
+                    extra={"tool": call.name, "reason": result.code, "attempt": 2},
+                )
+        if call.name == "search_building_docs":
+            updates["search_result"] = result
 
     outcome = "failure" if isinstance(result, ToolFailure) else "success"
     duration = time.perf_counter() - started

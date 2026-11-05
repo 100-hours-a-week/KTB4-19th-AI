@@ -290,6 +290,82 @@ def test_graph_uses_final_agent_reply_after_second_tool_failure(
 
     assert result["tool_call_count"] == 2
     assert result["reply"] == "민원 처리는 현재 실패했지만, 처리 기한은 관리자에게 확인해 주세요."
+    assert result["completed_tools"] == ("search_building_docs",)
+    assert "process_complaint_turn" in result["attempted_tools"]
+
+
+def test_graph_retries_a_transient_tool_failure_once(monkeypatch: pytest.MonkeyPatch):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "주차"}),)),
+            _decision(content="검색 결과가 없습니다."),
+        ]
+    )
+    tool_results = iter(
+        [
+            ToolFailure(code="timeout", message="검색 시간이 초과됐습니다."),
+            BuildingDocsResult(status="no_results"),
+        ]
+    )
+    executions = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args, **_kwargs: (executions.append("search"), next(tool_results))[1],
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert executions == ["search", "search"]
+    assert result["completed_tools"] == ("search_building_docs",)
+    assert result["tool_call_count"] == 1
+
+
+@pytest.mark.parametrize("failure_code", ["permission_denied", "invalid_arguments"])
+def test_graph_does_not_retry_nontransient_tool_failure(
+    monkeypatch: pytest.MonkeyPatch, failure_code: str
+):
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "주차"}),)),
+            _decision(content="검색에 실패했습니다."),
+        ]
+    )
+    executions = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args, **_kwargs: (
+            executions.append("search"),
+            ToolFailure(code=failure_code, message="검색할 수 없습니다."),
+        )[1],
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert executions == ["search"]
+    assert result["attempted_tools"] == ("search_building_docs",)
+    assert result.get("completed_tools", ()) == ()
 
 
 def test_graph_rejects_repeated_completed_tool_without_running_it_again(
