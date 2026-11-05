@@ -199,6 +199,41 @@ def test_undiscovered_pod_skips_openrouter_and_uses_paddle(monkeypatch, tmp_path
     assert calls["openrouter"] == 0
 
 
+def test_short_vlm_text_stays_one_chunk_and_blank_goes_to_paddle(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from zipsai.indexing.chunk import chunk_pages
+    from zipsai.indexing.clean import apply_cleaning
+    from zipsai.indexing.mask import apply_masking
+
+    monkeypatch.setenv("ACTIVE_MODEL_PROVIDER", "pod")
+    monkeypatch.setattr(image_read, "get_settings", lambda override=None: _settings())
+    seen = {"paddle": 0}
+
+    def paddle(_image):
+        seen["paddle"] += 1
+        return "대체 경로로 읽은 안내문입니다", 0.2
+
+    monkeypatch.setattr(image_read, "call_index_paddle", paddle)
+    monkeypatch.setattr(
+        image_read, "_vlm_complete", lambda *_args, **_kwargs: _completion("가나다라")
+    )
+    pages = read_image_pages(_save(tmp_path, (32, 32)))
+    assert pages.parser == "qwen-vl"
+    assert seen["paddle"] == 0
+    chunks = chunk_pages(apply_cleaning(apply_masking(list(pages)).pages).pages)
+    assert len(chunks) == 1
+    assert "".join(chunks[0].text.split()) == "가나다라"
+
+    monkeypatch.setattr(
+        image_read, "_vlm_complete", lambda *_args, **_kwargs: _completion(" \n\t ")
+    )
+    blank = read_image_pages(_save(tmp_path, (32, 32)))
+    assert blank.parser == "paddleocr"
+    assert blank.parser_route == "index_paddle"
+    assert seen["paddle"] == 1
+
+
 def test_both_failures_use_existing_parse_reason(monkeypatch, tmp_path: Path) -> None:
     from zipsai.indexing.pipeline import _STAGE_REASON as stage_reason
 
@@ -208,7 +243,7 @@ def test_both_failures_use_existing_parse_reason(monkeypatch, tmp_path: Path) ->
         "call_index_vlm",
         lambda *_a, **_k: image_read.VlmResult(None, "vlm_error", 0.0, 1),
     )
-    monkeypatch.setattr(image_read, "call_index_paddle", lambda _image: ("짧다", 0.1))
+    monkeypatch.setattr(image_read, "call_index_paddle", lambda _image: ("   ", 0.1))
 
     with pytest.raises(PdfParseError):
         read_image_pages(path)

@@ -35,7 +35,8 @@ MIN_OUTPUT_TOKENS = 512
 RUNAWAY_CHARS = 5000
 RUNAWAY_REPEAT = 5
 RUNAWAY_LINE_CHARS = 4
-MIN_TEXT_CHARS = 10
+# 공백을 뺀 글자가 이 값 이하면 빈 출력이다. 0이라 "공사중" 같은 짧은 안내문도 남긴다.
+MIN_TEXT_CHARS = 0
 PROMPT = """이 사진 속 안내문(문서)의 글을 그대로 옮겨 적어라.
 - 사진에 보이는 글자를 그대로 적는다. 맞춤법이나 오타를 고치지 않는다.
 - 요약하거나 설명하지 않는다. 없는 내용을 지어내지 않는다.
@@ -202,7 +203,7 @@ def call_index_vlm(jpeg: bytes, width: int, height: int) -> VlmResult:
         return VlmResult(None, "vlm_error", seconds, est)
     if is_runaway(text):
         return VlmResult(text, "vlm_runaway", seconds, est)
-    if len("".join(text.split())) < MIN_TEXT_CHARS:
+    if len("".join(text.split())) <= MIN_TEXT_CHARS:
         return VlmResult(text, "vlm_empty", seconds, est)
     return VlmResult(text, None, seconds, est)
 
@@ -310,7 +311,7 @@ def read_image_pages(source: str | Path):
             paddle_text, paddle_s = call_index_paddle(prepared.upright)
         except (OSError, RuntimeError, ValueError, ImportError, TypeError):
             paddle_text = ""
-        if len("".join(paddle_text.split())) >= MIN_TEXT_CHARS:
+        if len("".join(paddle_text.split())) > MIN_TEXT_CHARS:
             text = paddle_text
             route = "paddle"
             out_chars = len(text)
