@@ -182,6 +182,31 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
     assert "욕실 천장에서 물이 새요" not in captured["system_prompt"]
 
 
+def test_complaint_prompt_does_not_treat_request_as_a_symptom_or_repeat_location(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output(location="욕실", symptom="천장에서 물이 떨어짐")
+
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        extract,
+    )
+
+    _interpret_turn(_make_request("욕실 천장에서 물이 떨어져요. 민원 접수해 주세요."))
+
+    assert "A request to file a complaint is not itself a symptom" in captured[
+        "system_prompt"
+    ]
+    assert "When location already contains the room or area, do not repeat it in symptom" in captured[
+        "system_prompt"
+    ]
+
+
 def test_interpret_turn_retries_empty_structured_output_once(
     monkeypatch: pytest.MonkeyPatch,
 ):
