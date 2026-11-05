@@ -148,6 +148,40 @@ def test_interpret_turn_maps_structured_output_to_current_turn_draft(
     )
 
 
+def test_complaint_prompt_separates_area_from_component_without_case_specific_example(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output(
+            issue_type="leak",
+            location="주방",
+            symptom="싱크대 아래에 물이 고여요",
+        )
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    result = _interpret_turn(_make_request("주방 싱크대 아래에 물이 고여요"))
+
+    assert result.fields.location == "주방"
+    assert result.fields.symptom == "싱크대 아래에 물이 고여요"
+    assert "resident's housing-maintenance complaint to building management" in captured[
+        "system_prompt"
+    ]
+    assert (
+        "If both a room or area and a component are stated, use the room or area as location"
+        in captured["system_prompt"]
+    )
+    assert "If only a component is stated, leave location null" in captured["system_prompt"]
+    assert "Extract a stated room or area even when the sentence contains negation or contrast" in captured[
+        "system_prompt"
+    ]
+    assert "A room or area may appear inside the problem description" in captured["system_prompt"]
+    assert "욕실 천장에서 물이 새요" not in captured["system_prompt"]
+
+
 def test_interpret_turn_retries_empty_structured_output_once(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -307,7 +341,7 @@ def test_handle_complaint_stream_emits_status_and_final_reply(
     assert result["reply"] == "어디에서 생긴 문제인가요?"
 
 
-def test_handle_complaint_stream_streams_generated_missing_field_reply(
+def test_handle_complaint_stream_replaces_wrong_field_question_before_emitting(
     monkeypatch: pytest.MonkeyPatch,
 ):
     request = _make_request("같은 민원인데 이번에는 이상한 소리가 납니다.")
@@ -328,8 +362,8 @@ def test_handle_complaint_stream_streams_generated_missing_field_reply(
     )
 
     async def fake_stream(**_):
-        yield "발생한 "
-        yield "위치를 알려주세요."
+        yield "어떤 증상인지 "
+        yield "알려주세요."
 
     monkeypatch.setattr(node_module, "generate_text_stream", fake_stream)
     events: list[dict[str, str]] = []
@@ -338,10 +372,13 @@ def test_handle_complaint_stream_streams_generated_missing_field_reply(
 
     assert events == [
         {"type": "status", "status": "민원 내용을 분석하고 있습니다."},
-        {"type": "delta", "field": "reply", "text": "발생한 "},
-        {"type": "delta", "field": "reply", "text": "위치를 알려주세요."},
+        {
+            "type": "delta",
+            "field": "reply",
+            "text": "어디에서 생긴 문제인가요?",
+        },
     ]
-    assert result["reply"] == "발생한 위치를 알려주세요."
+    assert result["reply"] == "어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_uses_fixed_reply_for_a_simple_missing_field(
@@ -420,7 +457,7 @@ def test_handle_complaint_uses_fixed_reply_for_the_decided_missing_field(
     outcome = handle_complaint(_make_request("화장실이요"))
 
     assert outcome["result"].missing_fields == ["symptom"]
-    assert outcome["reply"] == "어떤 불편 증상인지 알려주세요."
+    assert outcome["reply"] == "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
 
 
 def test_handle_complaint_does_not_rewrite_a_single_symptom_while_asking_location(
@@ -536,9 +573,37 @@ def test_handle_complaint_asks_only_about_missing_symptom(
         lambda _, **__: _TurnInterpretation(ComplaintDraft(location="화장실")),
     )
 
-    reply = handle_complaint(_make_request("화장실이 이상해요"))["reply"]
+    outcome = handle_complaint(_make_request("화장실이 이상해요"))
 
-    assert reply == "어떤 불편 증상인지 알려주세요."
+    assert outcome["result"].missing_fields == ["symptom"]
+    assert outcome["reply"] == "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+
+
+def test_handle_complaint_replaces_finalizer_question_for_the_wrong_missing_field(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request = _make_request("이번에는 세탁기가 안 돌아가요.")
+    request.complaint_draft = ComplaintDraft(symptom="물이 새고 있음")
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(symptom="세탁기가 안 돌아가요")
+        ),
+    )
+    monkeypatch.setattr(
+        node_module,
+        "generate_structured",
+        lambda **_: node_module._TurnFinalization(
+            symptom="물이 새고 세탁기가 안 돌아감",
+            reply="어떤 증상인지 조금 더 자세히 알려주시겠어요?",
+        ),
+    )
+
+    outcome = handle_complaint(request)
+
+    assert outcome["result"].missing_fields == ["location"]
+    assert outcome["reply"] == "어디에서 생긴 문제인가요?"
 
 
 def test_handle_complaint_asks_only_about_missing_location(
