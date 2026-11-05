@@ -1,18 +1,24 @@
-"""Tool Calling 그래프가 어떤 메시지를 주고받는지 출력하는 오프라인 데모.
+"""Tool Calling 그래프를 오프라인 또는 실제 AI API로 실행한다.
 
 실행:
     cd ai && uv run python scripts/demo_tool_calling.py
+    cd ai && uv run python scripts/demo_tool_calling.py --live
 
-실제 모델·Qdrant·민원 처리 LLM은 호출하지 않는다. 대신 Agent의 도구 선택과
-도구 결과를 고정해, 그래프의 제어 흐름과 OpenAI 호환 ToolMessage 형태를 보여 준다.
+기본 실행은 고정 결과를 사용한다. --live는 로컬 Converse API를 호출해 실제 모델과
+도구 실행 결과를 확인한다.
 """
 
+import argparse
 import json
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import ClassVar
 from unittest.mock import patch
+from uuid import uuid4
+
+import httpx
 
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
@@ -56,18 +62,18 @@ class _DemoLogHandler(logging.Handler):
         print(f"[LOG] {event} {values}")
 
 
-def _request(text: str) -> ConverseRequest:
+def _request(text: str, *, request_id: str = "demo") -> ConverseRequest:
     return ConverseRequest.model_validate(
         {
             "building_id": 101,
             "room_no": "301",
             "resident_id": "demo-resident",
-            "conversation_id": "demo-conversation",
-            "turn_id": "demo-turn",
-            "trace_id": "demo-trace",
+            "conversation_id": f"{request_id}-conversation",
+            "turn_id": f"{request_id}-turn",
+            "trace_id": request_id,
             "current_route": None,
             "current_complaint_state": None,
-            "message": {"message_id": "demo-message", "text": text},
+            "message": {"message_id": f"{request_id}-message", "text": text},
             "conversation_history": [],
             "complaint_draft": None,
         }
@@ -311,7 +317,40 @@ def _patched_protocol_retry_flow() -> Iterator[None]:
         yield
 
 
-def main() -> None:
+def _run_live() -> int:
+    trace_id = f"tool-call-live-{uuid4().hex[:12]}"
+    request = _request(
+        "누수 처리 기한도 알려주고, 욕실 누수 민원도 작성해 주세요.",
+        request_id=trace_id,
+    )
+    url = os.getenv(
+        "AI_CONVERSE_URL",
+        "http://127.0.0.1:8000/api/v3/ai/converse",
+    )
+    response = httpx.post(
+        url,
+        json=request.model_dump(mode="json"),
+        timeout=150,
+    )
+    body = response.json()
+    model = body.get("data", {}).get("meta", {}).get("model")
+    print(f"API: {url}")
+    print(f"trace_id: {trace_id}")
+    print(f"HTTP: {response.status_code}")
+    if model:
+        print(f"model: {model}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print(
+        "tool logs: docker compose -f ../compose.yaml logs --since=5m zipsai-api 2>&1 "
+        f"| rg '{trace_id}'"
+    )
+    return 0 if response.is_success else 1
+
+
+def main(*, live: bool = False) -> int:
+    if live:
+        return _run_live()
+
     with _patched_search_flow():
         search_result = _run(
             "1. 건물 정보 질문: Action → 검색 → Action/Composer",
@@ -351,7 +390,10 @@ def main() -> None:
     assert protocol_result["tool_call_count"] == 0
     assert protocol_result["reply"] == "주차는 지하 1층에서 하실 수 있습니다."
     print("  시나리오 검증: PASS (실행 0회, 재시도 답변)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--live", action="store_true", help="로컬 Converse API를 실제 호출")
+    raise SystemExit(main(live=parser.parse_args().live))
