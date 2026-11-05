@@ -8,8 +8,10 @@
 """
 
 import json
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import ClassVar
 from unittest.mock import patch
 
 import zipsai.orchestration.graph as graph_module
@@ -27,6 +29,31 @@ from zipsai.orchestration.tool_contracts import (
     ComplaintTurnResult,
     SearchEvidence,
 )
+
+
+class _DemoLogHandler(logging.Handler):
+    """Print only bounded fields from the graph's structured log events."""
+
+    _FIELDS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "agent_decision": ("route", "outcome", "tool_call_count"),
+        "tool_call_selected": ("tool", "tool_call_count"),
+        "tool_call_completed": ("tool", "outcome", "duration_ms"),
+        "tool_call_retry": ("tool", "reason", "attempt"),
+        "tool_call_protocol_failure": ("reason",),
+        "tool_call_rejected": ("reason", "tool"),
+    }
+
+    def emit(self, record: logging.LogRecord) -> None:
+        event = record.getMessage()
+        fields = self._FIELDS.get(event)
+        if fields is None:
+            return
+        values = " ".join(
+            f"{name}={getattr(record, name)}"
+            for name in fields
+            if hasattr(record, name)
+        )
+        print(f"[LOG] {event} {values}")
 
 
 def _request(text: str) -> ConverseRequest:
@@ -75,7 +102,7 @@ def _decisions(values: list[ToolDecision]):
 
 
 def _print_event(node: str, update: dict[str, object]) -> None:
-    print(f"\n[{node}]")
+    print(f"\n[{node.upper()}]")
     calls = update.get("pending_tool_calls")
     if calls:
         for call in calls:
@@ -89,28 +116,49 @@ def _print_event(node: str, update: dict[str, object]) -> None:
             print(f"  ToolMessage.content: {message['content']}")
 
     if "reply" in update:
-        print(f"  final reply: {update['reply']}")
+        if node != "tool":
+            label = "assistant reply"
+        elif len(update.get("completed_tools", ())) == 1:
+            label = "pipeline reply (final)"
+        else:
+            label = "pipeline reply (composer continues)"
+        print(f"  {label}: {update['reply']}")
     if "tool_call_count" in update:
         print(f"  executed tool calls: {update['tool_call_count']}")
 
 
-def _run(title: str, request: ConverseRequest) -> None:
+def _run(title: str, request: ConverseRequest) -> dict[str, object]:
     print("\n" + "=" * 72)
     print(title)
     print(f"resident request: {request.message.text}")
     print("=" * 72)
     result: dict[str, object] = {}
-    for update in graph_module.build_graph().stream(_initial_state(request), stream_mode="updates"):
-        for node, node_update in update.items():
-            _print_event(node, node_update)
-            result.update(node_update)
+    logger = graph_module.logger
+    previous_level = logger.level
+    handler = _DemoLogHandler()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        for update in graph_module.build_graph().stream(
+            _initial_state(request), stream_mode="updates"
+        ):
+            for node, node_update in update.items():
+                _print_event(node, node_update)
+                result.update(node_update)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
     print("\n[END]")
     print(f"  route: {result['route'].value}")
     print(f"  reply: {result['reply']}")
     print(f"  tool_call_count: {result['tool_call_count']}")
+    print(f"  attempted_tools: {result.get('attempted_tools', ())}")
+    print(f"  completed_tools: {result.get('completed_tools', ())}")
     route_result = result["result"]
-    print(f"  citations: {len(route_result.citations)}")
     print(f"  complaint_state: {result['complaint_state']}")
+    print("  structured result:")
+    print(json.dumps(route_result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    return result
 
 
 @contextmanager
@@ -178,11 +226,122 @@ def _patched_complaint_flow() -> Iterator[None]:
         yield
 
 
+@contextmanager
+def _patched_no_results_complaint_flow() -> Iterator[None]:
+    search_call = ToolCall(
+        "call-search-1", "search_building_docs", {"query": "누수 처리 기한"}
+    )
+    complaint_call = ToolCall("call-complaint-1", "process_complaint_turn", {})
+    complaint = ComplaintTurnResult(
+        reply="어느 장소에서 물이 새는지 알려주세요.",
+        complaint_state=ComplaintState.COLLECTING,
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+            missing_fields=["symptom"],
+        ),
+    )
+    with (
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT}),
+        patch.object(
+            graph_module,
+            "generate_tool_decision",
+            _decisions(
+                [
+                    ToolDecision(_assistant_message((search_call,)), None, (search_call,)),
+                    ToolDecision(_assistant_message((complaint_call,)), None, (complaint_call,)),
+                    ToolDecision(
+                        {"role": "assistant", "content": "민원 초안을 만들었습니다. 처리 기한은 확인할 자료가 없습니다."},
+                        "민원 초안을 만들었습니다. 처리 기한은 확인할 자료가 없습니다.",
+                        (),
+                    ),
+                ]
+            ),
+        ),
+        patch.object(
+            graph_module,
+            "search_building_docs",
+            lambda _args, _request: BuildingDocsResult(status="no_results"),
+        ),
+        patch.object(
+            graph_module,
+            "process_complaint_turn",
+            lambda _args, _request, **_kwargs: complaint,
+        ),
+    ):
+        yield
+
+
+@contextmanager
+def _patched_protocol_retry_flow() -> Iterator[None]:
+    invalid_text = 'search_building_docs {"query":"이 문자열을 로그에 남기지 마세요"}'
+    with (
+        patch.object(
+            graph_module,
+            "classify_intent",
+            lambda _state: {"route": Route.KNOWLEDGE},
+        ),
+        patch.object(
+            graph_module,
+            "generate_tool_decision",
+            _decisions(
+                [
+                    ToolDecision(
+                        {"role": "assistant", "content": invalid_text},
+                        invalid_text,
+                        (),
+                    ),
+                    ToolDecision(
+                        {"role": "assistant", "content": "주차는 지하 1층에서 하실 수 있습니다."},
+                        "주차는 지하 1층에서 하실 수 있습니다.",
+                        (),
+                    ),
+                ]
+            ),
+        ),
+    ):
+        yield
+
+
 def main() -> None:
     with _patched_search_flow():
-        _run("1. 건물 정보 질문: 검색 후 Agent가 근거를 보고 답변", _request("주차는 어디에 하나요?"))
+        search_result = _run(
+            "1. 건물 정보 질문: Action → 검색 → Action/Composer",
+            _request("주차는 어디에 하나요?"),
+        )
+    assert search_result["route"] is Route.KNOWLEDGE
+    assert len(search_result["result"].citations) == 1
+    print("  시나리오 검증: PASS (검색 citation 1개)")
+
     with _patched_complaint_flow():
-        _run("2. 민원: 민원 도구의 완성 결과로 즉시 종료", _request("화장실에서 물이 새요."))
+        complaint_result = _run(
+            "2. 민원: Action → 민원 pipeline → 바로 최종 답변",
+            _request("화장실에서 물이 새요."),
+        )
+    assert complaint_result["reply"] == "어느 장소에서 물이 새는지 알려주세요."
+    assert complaint_result["tool_call_count"] == 1
+    print("  시나리오 검증: PASS (composer 추가 호출 없이 종료)")
+
+    with _patched_no_results_complaint_flow():
+        combined_result = _run(
+            "3. 검색 no_results + 민원 초안: 두 구조화 결과 함께 조립",
+            _request("누수 처리 기한도 알려주고, 욕실 누수 민원도 작성해 주세요."),
+        )
+    assert combined_result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert combined_result["result"].complaint_draft.location == "욕실"
+    assert combined_result["completed_tools"] == (
+        "search_building_docs",
+        "process_complaint_turn",
+    )
+    print("  시나리오 검증: PASS (QA 초안 + 민원 초안 동시 보존)")
+
+    with _patched_protocol_retry_flow():
+        protocol_result = _run(
+            "4. Action 형식 오류: text → retry → 안전한 자연어 답변",
+            _request("주차는 어디에 하나요?"),
+        )
+    assert protocol_result["tool_call_count"] == 0
+    assert protocol_result["reply"] == "주차는 지하 1층에서 하실 수 있습니다."
+    print("  시나리오 검증: PASS (실행 0회, 재시도 답변)")
 
 
 if __name__ == "__main__":
