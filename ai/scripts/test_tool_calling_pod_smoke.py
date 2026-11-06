@@ -2,7 +2,7 @@
 
 실행: cd ai && uv run python scripts/test_tool_calling_pod_smoke.py
 POD_BASE_URL(…/v1), POD_API_KEY, POD_MODEL 설정이 필요하다. 검색/민원 실행부는
-가짜 결과를 사용하므로 Qwen의 tool call 선택·재호출 흐름만 확인한다.
+가짜 결과를 사용하고, 공개 Web 검색은 설정된 Tavily API에 실제 요청한다.
 """
 
 import asyncio
@@ -28,9 +28,8 @@ from zipsai.orchestration.tool_contracts import (
     BuildingDocsResult,
     ComplaintTurnResult,
     SearchEvidence,
-    WebSearchResult,
 )
-from zipsai.settings import get_settings
+from zipsai.settings import TAVILY_API_KEY, get_settings
 
 
 def _pod_settings():
@@ -63,7 +62,7 @@ def _request() -> ConverseRequest:
             "current_complaint_state": None,
             "message": {
                 "message_id": "pod-smoke-message",
-                "text": "주차 등록은 어떻게 하고, 욕실 누수 민원도 작성해 주세요. 욕실 천장에서 물이 새요.",
+                "text": "올겨울 수도관 동파를 예방하는 방법을 공개 정보로 찾아 요약해 주세요.",
             },
             "conversation_history": [],
             "complaint_draft": None,
@@ -82,16 +81,6 @@ def _stub_results():
             url=None,
         ),
     )
-    web = SearchEvidence(
-        text="누수 시 물 공급을 차단하고 관리 주체에 알립니다.",
-        citation=Citation(
-            source_type="web",
-            source_id=None,
-            title="일반 누수 안내",
-            snippet="물 공급을 차단",
-            url="https://example.com/leak",
-        ),
-    )
     complaint = ComplaintTurnResult(
         reply="누수 위치와 증상을 확인했습니다.",
         complaint_state=ComplaintState.COLLECTING,
@@ -102,7 +91,7 @@ def _stub_results():
             missing_fields=[],
         ),
     )
-    return evidence, web, complaint
+    return evidence, complaint
 
 
 def main() -> None:
@@ -116,13 +105,13 @@ def main() -> None:
         raise SystemExit(
             f"Qwen Pod 설정을 확인할 수 없습니다 (provider={settings.provider}, model={settings.llm_model})."
         )
+    if not TAVILY_API_KEY:
+        raise SystemExit("실제 Web 검색 확인을 위해 TAVILY_API_KEY를 설정하세요.")
     print(
         f"provider: {settings.provider} | model: {settings.llm_model} | base_url: {settings.llm_base_url}"
     )
-    print(
-        "요청: 주차 등록은 어떻게 하고, 욕실 누수 민원도 작성해 주세요. 욕실 천장에서 물이 새요."
-    )
-    evidence, web, complaint = _stub_results()
+    print("요청: 올겨울 수도관 동파를 예방하는 방법을 공개 정보로 찾아 요약해 주세요.")
+    evidence, complaint = _stub_results()
     decisions, tools = [], []
     real_decide = llm_module.generate_tool_decision
     real_classify = graph_module.classify_intent
@@ -176,6 +165,26 @@ def main() -> None:
 
         return run
 
+    real_web_search = graph_module.search_public_web
+
+    def measured_web(*args, **kwargs):
+        started = time.perf_counter()
+        result = real_web_search(*args, **kwargs)
+        tools.append(
+            {
+                "name": "search_public_web",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "status": getattr(result, "status", "error"),
+                "error_code": getattr(result, "code", None),
+                "result_count": len(getattr(result, "evidence", ())),
+                "citation_urls": [
+                    item.citation.url for item in getattr(result, "evidence", ())
+                ],
+                "stub": False,
+            }
+        )
+        return result
+
     started = time.perf_counter()
     with (
         patch.object(graph_module, "classify_intent", classify),
@@ -192,7 +201,7 @@ def main() -> None:
         patch.object(
             graph_module,
             "search_public_web",
-            measured("search_public_web", WebSearchResult(status="ok", evidence=[web])),
+            measured_web,
         ),
         patch.object(
             graph_module,
@@ -234,12 +243,17 @@ def main() -> None:
             f"Qwen {decision['stage']} {index}: {decision['latency_ms']} ms | {summary}"
         )
     for call in tools:
-        print(f"도구 실행 {call['name']}: {call['latency_ms']} ms (가짜 결과)")
+        print(f"도구 실행: {call}")
     print(f"전체 그래프: {(time.perf_counter() - started) * 1000:.1f} ms")
     print(f"완료 도구: {result.get('completed_tools', ())}")
     print(f"최종 답변: {result.get('reply')}")
+    route_result = result.get("result")
+    if route_result:
+        print(
+            f"Web citations: {[item.url for item in route_result.citations if item.source_type == 'web']}"
+        )
     print(
-        "\n검색/민원 backend는 가짜 결과입니다. Qwen 모델의 선택 편차는 관찰 결과로 확인하세요."
+        "\n공개 Web 검색은 실제 Tavily를 호출했습니다. 건물 검색/민원 처리는 가짜 결과입니다."
     )
 
 

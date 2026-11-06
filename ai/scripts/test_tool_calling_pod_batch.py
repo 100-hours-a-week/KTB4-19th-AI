@@ -2,7 +2,8 @@
 
 실행: cd ai && uv run python scripts/test_tool_calling_pod_batch.py
 POD_BASE_URL(…/v1), POD_API_KEY, POD_MODEL 설정이 필요하다. 결과는
-ai/.local-test-results/ 아래에 저장하며, downstream 도구는 가짜 결과를 사용한다.
+ai/.local-test-results/ 아래에 저장한다. 공개 Web 검색은 실제 Tavily를 호출하고,
+건물 검색과 민원 처리는 가짜 결과를 사용한다.
 """
 
 import asyncio
@@ -31,7 +32,7 @@ from zipsai.orchestration.tool_contracts import (
     ComplaintTurnResult,
     SearchEvidence,
 )
-from zipsai.settings import get_settings
+from zipsai.settings import TAVILY_API_KEY, get_settings
 
 TOOLS = ("search_building_docs", "search_public_web", "process_complaint_turn")
 
@@ -184,16 +185,6 @@ def _stub_results():
             url=None,
         ),
     )
-    web = SearchEvidence(
-        text="일반적인 안전 정보를 확인했습니다.",
-        citation=Citation(
-            source_type="web",
-            source_id=None,
-            title="공개 안전 안내",
-            snippet="일반적인 안전 정보",
-            url="https://example.com/safety",
-        ),
-    )
     complaint = ComplaintTurnResult(
         reply="문제 위치와 증상을 확인했습니다.",
         complaint_state=ComplaintState.COLLECTING,
@@ -204,13 +195,14 @@ def _stub_results():
             missing_fields=["symptom"],
         ),
     )
-    return building, web, complaint
+    return building, complaint
 
 
 def _run_case(case: Case, stubs) -> dict[str, object]:
     decisions, tool_events = [], []
     real_decide = llm_module.generate_tool_decision
     real_classify = graph_module.classify_intent
+    real_web_search = graph_module.search_public_web
 
     def classify(state):
         started = time.perf_counter()
@@ -261,6 +253,24 @@ def _run_case(case: Case, stubs) -> dict[str, object]:
 
         return run
 
+    def measured_web(*args, **kwargs):
+        started = time.perf_counter()
+        result = real_web_search(*args, **kwargs)
+        tool_events.append(
+            {
+                "name": "search_public_web",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "status": getattr(result, "status", "error"),
+                "error_code": getattr(result, "code", None),
+                "result_count": len(getattr(result, "evidence", ())),
+                "citation_urls": [
+                    item.citation.url for item in getattr(result, "evidence", ())
+                ],
+                "stub": False,
+            }
+        )
+        return result
+
     started = time.perf_counter()
     with (
         patch.object(graph_module, "classify_intent", classify),
@@ -269,9 +279,9 @@ def _run_case(case: Case, stubs) -> dict[str, object]:
         patch.object(
             graph_module, "search_building_docs", measured(TOOLS[0], stubs[0])
         ),
-        patch.object(graph_module, "search_public_web", measured(TOOLS[1], stubs[1])),
+        patch.object(graph_module, "search_public_web", measured_web),
         patch.object(
-            graph_module, "process_complaint_turn", measured(TOOLS[2], stubs[2])
+            graph_module, "process_complaint_turn", measured(TOOLS[2], stubs[1])
         ),
     ):
         request = _request(case)
@@ -337,6 +347,8 @@ def main() -> None:
         raise SystemExit(
             f"Qwen Pod 설정을 확인할 수 없습니다 (provider={settings.provider}, model={settings.llm_model})."
         )
+    if not TAVILY_API_KEY:
+        raise SystemExit("실제 Web 검색 확인을 위해 TAVILY_API_KEY를 설정하세요.")
     output_dir = Path(".local-test-results")
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000:06d}"
@@ -371,7 +383,11 @@ def main() -> None:
                 row = _run_case(case, stubs)
                 row["error"] = ""
                 status = "MATCH" if row["tools_match"] else "CHECK"
-                stop_after_row = False
+                stop_after_row = any(
+                    event["name"] == "search_public_web"
+                    and event.get("status") == "error"
+                    for event in row["tool_events"]
+                )
             except Exception as error:  # noqa: BLE001 keep later cases useful after a failed call
                 stop_after_row = _has_client_error(error)
                 row = {
@@ -408,7 +424,7 @@ def main() -> None:
             if row["error"]:
                 print(f"    원인: {row['error']}")
             if stop_after_row:
-                print("    HTTP 4xx 설정/요청 오류라 남은 사례는 실행하지 않습니다.")
+                print("    Pod 또는 Tavily 요청 오류라 남은 사례는 실행하지 않습니다.")
                 break
             for decision_index, decision in enumerate(row["model_decisions"], start=1):
                 summary = [call["name"] for call in decision.get("tool_calls", ())]
@@ -424,7 +440,7 @@ def main() -> None:
         print(f"미실행 사례: {len(CASES) - len(rows)}")
     print(f"JSONL: {jsonl_path.resolve()}\nCSV:   {csv_path.resolve()}")
     print(
-        "검색/민원 backend는 가짜 결과입니다. 이 결과는 Qwen tool calling의 탐색 로그이며 정답률 평가셋은 아닙니다."
+        "공개 Web 검색은 실제 Tavily를 호출합니다. 건물 검색/민원은 가짜 결과이며, 정답률 평가셋은 아닙니다."
     )
 
 
