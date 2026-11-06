@@ -19,7 +19,7 @@ dependencies = [
     "modal>=1.6.2",
     "openai>=3.14.0",
     "paddleocr==3.7.0 ; sys_platform == 'linux'",
-    "paddlepaddle==3.3.1 ; sys_platform == 'linux'",
+    "paddlepaddle==3.2.2 ; sys_platform == 'linux'",
     "prometheus-client>=0.26.0",
     "pdfplumber>=0.11.10",
     "pydantic>=2.13.5,<3",
