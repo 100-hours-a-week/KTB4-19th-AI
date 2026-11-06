@@ -18,7 +18,9 @@ def _stub_interpreter(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(),
+        lambda _request, _image_analysis=None, contextualized_message=None: (
+            _TurnInterpretation()
+        ),
     )
 
 
@@ -75,9 +77,7 @@ def test_photo_only_uses_intent_summary_and_keeps_attachment_id():
     result = handle_complaint(
         _request(
             text=None,
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/washer.png"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/washer.png"}],
         ),
         image_analysis=analysis,
     )["result"]
@@ -120,9 +120,7 @@ def test_photo_ocr_is_passed_to_complaint_extraction_for_symptom(
     result = handle_complaint(
         _request(
             text=None,
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/washer.png"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/washer.png"}],
         ),
         image_analysis=analysis,
     )["result"]
@@ -160,25 +158,26 @@ def test_complaint_extraction_prompt_receives_summary_and_ocr(
     node_module._interpret_turn(
         _request(
             text=None,
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/washer.png"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/washer.png"}],
         ),
         image_analysis=analysis,
     )
 
     assert "세탁기 조작부가 보임" in captured["user"]
     assert '"ocrText": "LE"' in captured["user"]
-    assert "Never infer location, date, or cause from an image" in captured["system"]
+    assert "Current image evidence may provide visible symptoms or relevant error codes" in captured[
+        "system"
+    ]
+    assert (
+        "Never infer location, onset time, or cause from an image" in captured["system"]
+    )
 
 
 def test_photo_summary_is_not_shown_while_asking_for_location():
     result = handle_complaint(
         _request(
             text=None,
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/washer.png"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/washer.png"}],
         ),
         image_analysis=ImageAnalysis(
             images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
@@ -193,9 +192,7 @@ def test_photo_without_analysis_keeps_attachment_without_fabricating_symptom():
     result = handle_complaint(
         _request(
             text=None,
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/washer.png"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/washer.png"}],
         )
     )["result"]
 
@@ -229,7 +226,10 @@ def test_multiple_images_deduplicate_ids_and_do_not_copy_raw_ocr_to_fallback():
     )["result"]
 
     assert result.complaint_draft.attachment_ids == [123, 456]
-    assert result.complaint_draft.symptom == "세탁기 아래 물이 고임 바닥이 젖음 배수구 주변 물기"
+    assert (
+        result.complaint_draft.symptom
+        == "세탁기 아래 물이 고임 바닥이 젖음 배수구 주변 물기"
+    )
     assert result.image_analysis.images[0].ocr_text == "모델명 ABC"
     assert "모델명 ABC" not in result.complaint_draft.symptom
 
@@ -260,8 +260,10 @@ def test_resident_text_correction_is_used_when_it_disagrees_with_image(
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(
-            fields=ComplaintDraft(location="욕실", symptom="배수구가 막힘")
+        lambda _request, _image_analysis=None, contextualized_message=None: (
+            _TurnInterpretation(
+                fields=ComplaintDraft(location="욕실", symptom="배수구가 막힘")
+            )
         ),
     )
     monkeypatch.setattr(
@@ -275,9 +277,7 @@ def test_resident_text_correction_is_used_when_it_disagrees_with_image(
     result = handle_complaint(
         _request(
             text="물이 새는 게 아니라 배수구가 막혔어요",
-            images=[
-                {"attachmentId": 123, "url": "https://example.com/bathroom.jpg"}
-            ],
+            images=[{"attachmentId": 123, "url": "https://example.com/bathroom.jpg"}],
         ),
         image_analysis=analysis,
     )["result"]
@@ -300,11 +300,13 @@ def test_switch_question_returns_image_analysis_without_attaching_to_old_draft(
     monkeypatch.setattr(
         node_module,
         "_interpret_with_stage",
-        lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(
-            fields=ComplaintDraft(
-                issue_type="plumbing", symptom="세탁기 아래 물이 고임"
-            ),
-            switch="ask",
+        lambda _request, _image_analysis=None, contextualized_message=None: (
+            _TurnInterpretation(
+                fields=ComplaintDraft(
+                    issue_type="plumbing", symptom="세탁기 아래 물이 고임"
+                ),
+                switch="ask",
+            )
         ),
     )
 

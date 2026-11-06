@@ -24,7 +24,9 @@ from zipsai.errors import (
 )
 
 _COMPARE_SCRIPT = Path(__file__).parents[2] / "scripts" / "compare_complaint_prompts.py"
-_COMPARE_SPEC = importlib.util.spec_from_file_location("compare_complaint_prompts", _COMPARE_SCRIPT)
+_COMPARE_SPEC = importlib.util.spec_from_file_location(
+    "compare_complaint_prompts", _COMPARE_SCRIPT
+)
 compare_prompts = importlib.util.module_from_spec(_COMPARE_SPEC)
 _COMPARE_SPEC.loader.exec_module(compare_prompts)
 
@@ -122,13 +124,12 @@ def test_complaint_prompt_keeps_raw_message_history_and_contextualized_message(
     assert "현재 발화: 화장실이요" in captured["user_prompt"]
     assert "맥락 보강 참고문" in captured["user_prompt"]
     assert "화장실에서 물이 새는 위치를 말합니다." in captured["user_prompt"]
-    assert "contextualized message is a reading aid, not independent evidence" in captured[
-        "system_prompt"
-    ]
-    assert "Preserve the original turn's negation, comparison, correction" in captured[
-        "system_prompt"
-    ]
-    assert "Add no facts unsupported by the current turn" in captured["system_prompt"]
+    assert (
+        "contextualized message is a reading aid, not independent evidence"
+        in captured["system_prompt"]
+    )
+    assert "Preserve negation and uncertainty" in captured["system_prompt"]
+    assert "add no unsupported facts" in captured["system_prompt"]
 
 
 def test_interpret_turn_maps_structured_output_to_current_turn_draft(
@@ -174,18 +175,30 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
 
     assert result.fields.location == "주방"
     assert result.fields.symptom == "싱크대 아래에 물이 고여요"
-    assert "resident's housing-maintenance complaint to building management" in captured[
+    assert "For text, use only facts newly stated or corrected" in captured[
+        "system_prompt"
+    ]
+    assert "Use history and the existing draft only to resolve references or corrections" in captured[
         "system_prompt"
     ]
     assert (
-        "If both a room or area and a component are stated, use the room or area as location"
+        "If both a place and component are stated, put the place here"
         in captured["system_prompt"]
     )
-    assert "If only a component is stated, leave location null" in captured["system_prompt"]
-    assert "Extract a stated room or area even when the sentence contains negation or contrast" in captured[
+    assert (
+        "If only a component is stated, use null; do not infer a place"
+        in captured["system_prompt"]
+    )
+    assert "Resolve a direct answer to a location question from the immediate conversation" in captured[
         "system_prompt"
     ]
-    assert "A room or area may appear inside the problem description" in captured["system_prompt"]
+    assert 'If the resident says they do not know or will not provide it, use "모름"' in captured[
+        "system_prompt"
+    ]
+    assert (
+        "Extract a stated place even when it appears in a correction or contrast"
+        in captured["system_prompt"]
+    )
     assert "욕실 천장에서 물이 새요" not in captured["system_prompt"]
 
 
@@ -206,12 +219,90 @@ def test_complaint_prompt_does_not_treat_request_as_a_symptom_or_repeat_location
 
     _interpret_turn(_make_request("욕실 천장에서 물이 떨어져요. 민원 접수해 주세요."))
 
-    assert "A request to file a complaint is not itself a symptom" in captured[
-        "system_prompt"
-    ]
-    assert "When location already contains the room or area, do not repeat it in symptom" in captured[
-        "system_prompt"
-    ]
+    assert (
+        "A request to file a complaint is not itself a symptom"
+        in captured["system_prompt"]
+    )
+    assert (
+        "When location already contains the room or area, do not repeat it in symptom"
+        in captured["system_prompt"]
+    )
+
+
+def test_complaint_prompt_uses_context_and_symptoms_to_choose_service_team(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output(issue_type="plumbing")
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("베란다 창틀에 곰팡이가 있어요"))
+
+    prompt = captured["system_prompt"]
+    assert (
+        "classify the complaint by the service team most likely to resolve the supported issue"
+        in prompt
+    )
+    assert "not by a keyword alone" in prompt
+    assert "mold or dampness to plumbing" in prompt
+    assert "does not confirm a leak or condensation" in prompt
+    assert (
+        "hygiene: pests, sewer odor without a drainage blockage, or severe sanitation cleanup"
+        in prompt
+    )
+
+
+def test_complaint_prompt_distinguishes_null_from_other_and_includes_shared_locations(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("복도 천장에 물이 새요"))
+
+    prompt = captured["system_prompt"]
+    assert (
+        "location: use the stated place where the problem occurs, inside the unit or in a shared area"
+        in prompt
+    )
+    assert (
+        "other: a complaint exists, but no listed category fits or the type remains unclassifiable"
+        in prompt
+    )
+    assert (
+        "Use null when this message provides no new supported value for a field; the server preserves the existing draft value"
+        in prompt
+    )
+    assert "common_area: any issue outside the unit" in prompt
+    assert "server preserves the existing draft value" in prompt
+
+
+def test_complaint_prompt_accepts_only_an_explicit_reply_to_a_switch_question(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("네"))
+
+    assert (
+        "Return accept only when the immediately preceding assistant message asked whether to switch"
+        in captured["system_prompt"]
+    )
 
 
 def test_complaint_prompt_routes_unresolved_door_lock_to_other(
@@ -231,12 +322,7 @@ def test_complaint_prompt_routes_unresolved_door_lock_to_other(
 
     _interpret_turn(_make_request("현관 도어록이 잠기지 않아요"))
 
-    assert "interior_repair includes hinges and door handles, not door locks" in captured[
-        "system_prompt"
-    ]
-    assert "Until routing is decided, classify a door lock as other" in captured[
-        "system_prompt"
-    ]
+    assert "A door lock is other until routing is decided" in captured["system_prompt"]
 
 
 def test_interpret_turn_retries_empty_structured_output_once(
@@ -298,6 +384,28 @@ def test_interpret_turn_passes_todays_kst_date_to_prompt(
     assert f"오늘 날짜(Asia/Seoul): {today}" in captured["user_prompt"]
 
 
+def test_interpret_turn_passes_current_kst_time_to_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 6, 15, 30, tzinfo=tz)
+
+    def extract(**kwargs: object):
+        captured["user_prompt"] = str(kwargs["user_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("한 시간 전부터 물이 새요"))
+
+    assert "현재 시각(Asia/Seoul): 2026-11-06T15:30:00+09:00" in captured["user_prompt"]
+
+
 def test_occurred_at_prompt_defines_weekday_and_time_ambiguity(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -319,19 +427,21 @@ def test_occurred_at_prompt_defines_weekday_and_time_ambiguity(
     _interpret_turn(_make_request("지난주 화요일부터 보일러가 작동하지 않아요"))
 
     assert "오늘 날짜(Asia/Seoul): 2026-11-06" in captured["user_prompt"]
-    assert "A bare weekday without a week qualifier is ambiguous" in captured[
+    assert (
+        "A bare weekday without a week qualifier is ambiguous"
+        in captured["system_prompt"]
+    )
+    assert "A relative duration such as '한 시간 전' can be resolved from the timestamp" in captured[
         "system_prompt"
     ]
+    assert "A clock time without an onset date is ambiguous" in captured["system_prompt"]
     assert (
-        "'이번 주' is the Monday-to-Sunday week containing today; '지난주' is the previous "
+        "'이번 주' means the Monday-to-Sunday week containing today; '지난주' means the previous "
         "Monday-to-Sunday week"
     ) in captured["system_prompt"]
-    assert "A time without an explicit onset date is ambiguous; use null" in captured[
-        "system_prompt"
-    ]
-    assert "For a stated date and time, include the Asia/Seoul offset" in captured[
-        "system_prompt"
-    ]
+    assert (
+        "For date and time, include the Asia/Seoul offset" in captured["system_prompt"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -372,22 +482,27 @@ def test_prompt_comparison_uses_the_matching_output_schema_for_each_prompt(
     monkeypatch.setattr(
         compare_prompts,
         "generate_structured",
-        lambda **kwargs: (response_formats.append(kwargs["response_format"]) or result),
+        lambda **kwargs: response_formats.append(kwargs["response_format"]) or result,
     )
 
     compare_prompts.main()
 
     assert len(response_formats) == len(compare_prompts.CASES) * 2
     assert response_formats[0] is not response_formats[1]
-    assert response_formats[0].model_validate(
-        {
-            "complaint_switch": "same",
-            "issue_type": "leak",
-            "location": None,
-            "symptom": "물이 샘",
-            "occurred_at": None,
-        }
-    ).issue_type == "leak"
+    assert (
+        response_formats[0]
+        .model_validate(
+            {
+                "complaint_switch": "same",
+                "issue_type": "leak",
+                "location": None,
+                "symptom": "물이 샘",
+                "occurred_at": None,
+            }
+        )
+        .issue_type
+        == "leak"
+    )
 
 
 def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
@@ -407,13 +522,21 @@ def test_handle_complaint_merges_new_values_without_erasing_existing_fields(
 
     result = handle_complaint(request)["result"]
 
-    assert result.complaint_draft.model_dump(
-        exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
-    ) == ComplaintDraft(
-        issue_type="heating_cooling",
-        location="화장실",
-        symptom="온수가 나오지 않음",
-    ).model_dump()
+    assert (
+        result.complaint_draft.model_dump(
+            exclude={
+                "representative_attachment_id",
+                "urgency_score",
+                "is_urgent",
+                "urgency_version",
+            }
+        )
+        == ComplaintDraft(
+            issue_type="heating_cooling",
+            location="화장실",
+            symptom="온수가 나오지 않음",
+        ).model_dump()
+    )
     assert result.complaint_draft.representative_attachment_id is None
     assert result.missing_fields == []
 
@@ -462,20 +585,6 @@ def test_advance_complaint_merges_collected_evidence_without_model_calls(
     assert progress.missing_fields == []
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_handle_complaint_uses_generic_reply_without_photo(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -500,9 +609,7 @@ def test_handle_complaint_stream_emits_status_and_final_reply(
     )
     events: list[dict[str, str]] = []
 
-    result = asyncio.run(
-        handle_complaint_stream(_make_request("음.."), events.append)
-    )
+    result = asyncio.run(handle_complaint_stream(_make_request("음.."), events.append))
 
     assert events == [
         {"type": "status", "status": "민원 내용을 분석하고 있습니다."},
@@ -597,13 +704,21 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
 
     outcome = handle_complaint(request)
 
-    assert outcome["result"].complaint_draft.model_dump(
-        exclude={"representative_attachment_id", "urgency_score", "is_urgent", "urgency_version"}
-    ) == ComplaintDraft(
-        issue_type="appliance",
-        location="세탁실",
-        symptom="세탁기가 작동하지 않고 탈수할 때 LE 오류가 표시됨",
-    ).model_dump()
+    assert (
+        outcome["result"].complaint_draft.model_dump(
+            exclude={
+                "representative_attachment_id",
+                "urgency_score",
+                "is_urgent",
+                "urgency_version",
+            }
+        )
+        == ComplaintDraft(
+            issue_type="appliance",
+            location="세탁실",
+            symptom="세탁기가 작동하지 않고 탈수할 때 LE 오류가 표시됨",
+        ).model_dump()
+    )
     assert outcome["result"].complaint_draft.representative_attachment_id is None
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
@@ -700,8 +815,6 @@ def test_handle_complaint_skips_finalizer_for_complete_single_symptom(
     assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
 
 
-
-
 def test_handle_complaint_clears_state_when_fields_complete(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -709,7 +822,9 @@ def test_handle_complaint_clears_state_when_fields_complete(
         node_module,
         "_interpret_turn",
         lambda _, **__: _TurnInterpretation(
-            ComplaintDraft(issue_type="plumbing", location="화장실", symptom="물이 새요"),
+            ComplaintDraft(
+                issue_type="plumbing", location="화장실", symptom="물이 새요"
+            ),
         ),
     )
 
@@ -844,8 +959,6 @@ def test_handle_complaint_asks_one_field_at_a_time_when_both_are_missing(
     assert "증상" not in outcome["reply"]
 
 
-
-
 def test_handle_complaint_logs_stages_and_turn(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
@@ -878,10 +991,6 @@ def test_handle_complaint_logs_stages_and_turn(
     assert turn.asked is None
     assert turn.reply_source == "complete"
     assert turn.total_ms >= 0
-
-
-
-
 
 
 def test_handle_complaint_keeps_confirmed_location_against_unknown(
@@ -941,8 +1050,6 @@ def test_handle_complaint_asks_before_replacing_a_draft_with_a_new_complaint(
     assert "「세탁기가 안 돌아감」" in outcome["reply"]
 
 
-
-
 def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -964,8 +1071,6 @@ def test_handle_complaint_clears_the_old_draft_once_the_switch_is_accepted(
     assert draft.issue_type is None
     # 사진도 같이 비워져야 한다. 텍스트만 비우면 옛 사진이 새 카드에 딸려간다.
     assert draft.attachment_ids == []
-
-
 
 
 @pytest.mark.parametrize(
@@ -1055,10 +1160,6 @@ def test_handle_complaint_logs_the_switch_decision(
 
     turns = [r for r in _node_records(caplog) if r.getMessage() == "complaint_turn"]
     assert [(r.switch, r.reply_source) for r in turns] == [("ask", "switch_ask")]
-
-
-
-
 
 
 def test_handle_complaint_skips_text_interpretation_for_photo_only_turn(

@@ -95,8 +95,10 @@ def _interpret_turn(
     usage_sink: dict[str, object] | None = None,
 ) -> _TurnInterpretation:
     """현재 발화에서 새로 말한 민원 사실과 전환 판정만 받는다."""
+    now = datetime.now(_KST)
     system_message, user_message = COMPLAINT_PROMPT.format_messages(
-        today=datetime.now(_KST).date().isoformat(),
+        today=now.date().isoformat(),
+        current_time=now.isoformat(timespec="seconds"),
         conversation_history=format_history(request.conversation_history),
         complaint_draft=request.complaint_draft,
         # 사진만 온 턴은 text가 None이다. 그대로 넘기면 "현재 발화: None"이 렌더돼
@@ -291,7 +293,9 @@ class ComplaintAnalysis:
 
 
 def _photo_label(
-    images: list[ImageAttachment], image_analysis: ImageAnalysis | None, switch: ComplaintSwitch
+    images: list[ImageAttachment],
+    image_analysis: ImageAnalysis | None,
+    switch: ComplaintSwitch,
 ) -> str:
     """이번 턴 사진이 어떻게 처리됐는지 나타내는 로그 값."""
     if not images:
@@ -365,9 +369,7 @@ def _ready_for_card(
     # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
     if draft.issue_type is None:
         draft = draft.model_copy(update={"issue_type": "other"})
-    representative_id = _representative_attachment_id(
-        request, draft, image_analysis
-    )
+    representative_id = _representative_attachment_id(request, draft, image_analysis)
     urgency = _assess_urgency_with_stage(draft, image_analysis)
     response_draft = CompletedComplaintDraft(
         **draft.model_dump(),
@@ -603,9 +605,7 @@ def _analyze_complaint(
     contextualized_message: str | None = None,
 ) -> ComplaintAnalysis:
     """동기·스트리밍 경로가 공유하는 민원 분석 단계."""
-    evidence = _gather_turn_evidence(
-        request, image_analysis, contextualized_message
-    )
+    evidence = _gather_turn_evidence(request, image_analysis, contextualized_message)
     progress = _advance_complaint(request, evidence)
     symptom_merge_needed = bool(
         (
@@ -814,9 +814,7 @@ def _log_complaint_turn(
             "images_analyzed": len(observations),
             "summary_chars": sum(len(image.summary or "") for image in observations),
             "ocr_chars": sum(len(image.ocr_text or "") for image in observations),
-            "photo": _photo_label(
-                evidence.images, turn.result.image_analysis, switch
-            ),
+            "photo": _photo_label(evidence.images, turn.result.image_analysis, switch),
         },
     )
     if turn.asked and repeat >= 2:
@@ -871,9 +869,7 @@ def handle_complaint(
     started_at = perf_counter()
     analysis = _analyze_complaint(request, image_analysis, contextualized_message)
     turn = _finalize_turn(analysis)
-    _log_complaint_turn(
-        request, analysis.evidence, analysis.progress, turn, started_at
-    )
+    _log_complaint_turn(request, analysis.evidence, analysis.progress, turn, started_at)
     return {
         "complaint_state": turn.complaint_state,
         "reply": turn.reply,
@@ -895,9 +891,7 @@ async def handle_complaint_stream(
     )
     streamed_turn = await _stream_generated_reply(analysis, emit)
     turn = streamed_turn or await asyncio.to_thread(_finalize_turn, analysis)
-    _log_complaint_turn(
-        request, analysis.evidence, analysis.progress, turn, started_at
-    )
+    _log_complaint_turn(request, analysis.evidence, analysis.progress, turn, started_at)
     result = {
         "complaint_state": turn.complaint_state,
         "reply": turn.reply,

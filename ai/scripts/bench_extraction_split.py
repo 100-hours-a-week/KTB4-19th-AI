@@ -103,9 +103,12 @@ def call_a(
 ) -> dict:
     messages = PROMPT_A.format_messages(
         today=TODAY,
+        current_time=f"{TODAY}T12:00:00+09:00",
         conversation_history=format_history(history),
         complaint_draft=draft,
         message_text=text,
+        contextualized_message="없음",
+        image_evidence="없음",
     )
     started = time.perf_counter()
     raw = generate_text(
