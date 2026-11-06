@@ -1,12 +1,10 @@
 from pathlib import Path
 
 import pytest
-from docling.datamodel.base_models import InputFormat
 
 from zipsai.errors import PdfParseError
 from zipsai.indexing.parse import (
     OCR_LANGUAGE,
-    _converter,
     parse_document,
     pipeline_options,
 )
@@ -22,13 +20,27 @@ def test_ocr_reads_korean_not_the_engine_default() -> None:
     assert options.ocr_options.lang == [OCR_LANGUAGE]
 
 
-def test_images_are_parsed_with_the_same_ocr_settings() -> None:
-    # 사진으로 찍어 올린 공지가 이미지로 들어온다. 등록하지 않으면 엔진 기본값으로 떨어진다.
-    registered = _converter().format_to_options
+def test_images_use_the_index_reader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from zipsai.indexing.parse import ParsedPages
 
-    for input_format in (InputFormat.PDF, InputFormat.IMAGE):
-        options = registered[input_format].pipeline_options
-        assert options.ocr_options.lang == [OCR_LANGUAGE]
+    path = tmp_path / "notice.jpg"
+    path.write_bytes(b"unused")
+    seen: dict[str, Path] = {}
+
+    def fake_reader(source: Path) -> ParsedPages:
+        seen["path"] = Path(source)
+        return ParsedPages([{"page": 1, "text": "안내문 본문"}])
+
+    monkeypatch.setattr("zipsai.indexing.image_read.read_image_pages", fake_reader)
+    monkeypatch.setattr(
+        "zipsai.indexing.parse._converter",
+        lambda: (_ for _ in ()).throw(AssertionError("image must not use docling")),
+    )
+
+    pages = parse_document(path)
+
+    assert seen["path"] == path
+    assert pages[0]["text"] == "안내문 본문"
 
 
 def test_parse_document_returns_ordered_pages_with_expected_text() -> None:
