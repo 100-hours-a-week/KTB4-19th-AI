@@ -214,6 +214,27 @@ def test_complaint_prompt_does_not_treat_request_as_a_symptom_or_repeat_location
     ]
 
 
+def test_complaint_prompt_uses_context_and_symptoms_to_choose_service_team(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output(issue_type="plumbing")
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("베란다 창틀에 곰팡이가 있어요"))
+
+    prompt = captured["system_prompt"]
+    assert "use the complaint background in the conversation history and existing draft" in prompt
+    assert "together with the resident's reported symptoms" in prompt
+    assert "Classify by the service professional most likely to resolve the supported issue" in prompt
+    assert "not by a surface word alone" in prompt
+    assert "that classification does not confirm a leak or condensation" in prompt
+
+
 def test_complaint_prompt_routes_unresolved_door_lock_to_other(
     monkeypatch: pytest.MonkeyPatch,
 ):
