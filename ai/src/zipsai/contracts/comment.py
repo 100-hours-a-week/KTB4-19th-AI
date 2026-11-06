@@ -13,6 +13,16 @@ from pydantic import (
 from zipsai.contracts.converse import IssueType
 
 MAX_ITEMS = 100
+LegacyIssueType = Literal[
+    "water_supply",
+    "drain",
+    "leak",
+    "heating",
+    "electricity",
+    "mold",
+    "pest",
+    "facility",
+]
 
 # 공백뿐인 값은 내용이 없는 것과 같다. 앞뒤 공백을 떼고 길이를 본다.
 NonBlank = Annotated[
@@ -44,7 +54,7 @@ class CommentItem(_Versioned):
     comment: NonBlank
     # 키는 반드시 와야 하고 값만 null일 수 있다. 위치를 모르는 QA는 null로 온다.
     location: StrictStr | None
-    issue_type: IssueType | None
+    issue_type: IssueType | LegacyIssueType | None
     # 검색에 쓰지 않는다. BE가 보내도 받기만 한다.
     occurred_time: StrictStr | None = None
 

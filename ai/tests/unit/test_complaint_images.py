@@ -150,7 +150,7 @@ def test_complaint_extraction_prompt_receives_summary_and_ocr(
         captured["system"] = kwargs["system_prompt"]
         return node_module._InterpretationOutput(
             complaint_switch="same",
-            issue_type="facility",
+            issue_type="appliance",
             location=None,
             symptom="세탁기에 LE 오류가 표시됨",
             occurred_at=None,
@@ -292,7 +292,7 @@ def test_switch_question_returns_image_analysis_without_attaching_to_old_draft(
         images=[ImageObservation(attachmentId=123, summary="세탁기 아래 물이 고임")]
     )
     draft = ComplaintDraft(
-        issue_type="leak",
+        issue_type="plumbing",
         location="보일러실",
         symptom="보일러에서 물이 샘",
         attachmentIds=[88],
@@ -302,7 +302,7 @@ def test_switch_question_returns_image_analysis_without_attaching_to_old_draft(
         "_interpret_with_stage",
         lambda _request, _image_analysis=None, contextualized_message=None: _TurnInterpretation(
             fields=ComplaintDraft(
-                issue_type="leak", symptom="세탁기 아래 물이 고임"
+                issue_type="plumbing", symptom="세탁기 아래 물이 고임"
             ),
             switch="ask",
         ),
@@ -365,7 +365,7 @@ def test_accepting_switch_attaches_only_the_pending_user_turn_image(
         ),
     )
     draft = ComplaintDraft(
-        issue_type="leak",
+        issue_type="plumbing",
         location="보일러실",
         symptom="보일러 누수",
         attachmentIds=[11],
@@ -398,7 +398,7 @@ def test_no_attachment_ids_skips_representative_selection_even_with_history_imag
             }
         ],
         draft=ComplaintDraft(
-            issue_type="facility", location="세탁실", symptom="세탁기가 고장 남"
+            issue_type="appliance", location="세탁실", symptom="세탁기가 고장 남"
         ),
     )
 
@@ -420,7 +420,7 @@ def test_single_attachment_is_recommended_without_embedding(
     request = _request(
         text="세탁기가 고장 났어요.",
         draft=ComplaintDraft(
-            issue_type="facility",
+            issue_type="appliance",
             location="세탁실",
             symptom="세탁기가 고장 남",
             attachmentIds=[123],
@@ -465,7 +465,7 @@ def test_multiple_attachments_select_highest_cosine_summary_match(
             }
         ],
         draft=ComplaintDraft(
-            issue_type="leak",
+            issue_type="plumbing",
             location="세탁실",
             symptom="세탁기 아래 누수",
             attachmentIds=[789, 123, 456],
@@ -477,7 +477,7 @@ def test_multiple_attachments_select_highest_cosine_summary_match(
     assert result.complaint_draft.representative_attachment_id == 789
     assert encoded_texts == [
         [
-            "leak 세탁실 세탁기 아래 누수",
+            "plumbing 세탁실 세탁기 아래 누수",
             "세탁기 아래 바닥이 젖어 있음",
             "세탁기 아래 바닥이 젖어 있음",
             "보일러가 보임",
@@ -504,7 +504,7 @@ def test_missing_summary_falls_back_to_first_attachment(
             },
         ],
         draft=ComplaintDraft(
-            issue_type="leak",
+            issue_type="plumbing",
             location="세탁실",
             symptom="누수",
             attachmentIds=[123, 456],
@@ -542,7 +542,7 @@ def test_embedding_failure_falls_back_to_first_attachment(
             },
         ],
         draft=ComplaintDraft(
-            issue_type="leak",
+            issue_type="plumbing",
             location="세탁실",
             symptom="누수",
             attachmentIds=[123, 456],

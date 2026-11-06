@@ -212,7 +212,7 @@ def _patched_complaint_flow() -> Iterator[None]:
         reply="어느 장소에서 물이 새는지 알려주세요.",
         complaint_state=ComplaintState.COLLECTING,
         result=RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak"),
+            complaint_draft=ComplaintDraft(issue_type="plumbing"),
             missing_fields=["location", "symptom"],
         ),
     )
@@ -251,7 +251,7 @@ def _patched_no_results_complaint_flow() -> Iterator[None]:
         reply="어느 장소에서 물이 새는지 알려주세요.",
         complaint_state=ComplaintState.COLLECTING,
         result=RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak", location="욕실"),
+            complaint_draft=ComplaintDraft(issue_type="plumbing", location="욕실"),
             missing_fields=["symptom"],
         ),
     )

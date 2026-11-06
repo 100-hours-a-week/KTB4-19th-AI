@@ -5,7 +5,10 @@ Run from ``ai/`` with LLM credentials configured:
 """
 
 from datetime import datetime
+from typing import Literal
 from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel
 
 from zipsai.complaint.node import _InterpretationOutput
 from zipsai.complaint.prompts import COMPLAINT_PROMPT, COMPLAINT_SYSTEM_PROMPT
@@ -14,6 +17,24 @@ from zipsai.history import format_history
 from zipsai.integrations.llm import generate_structured
 from zipsai.settings import get_settings
 
+
+class _PreviousInterpretationOutput(BaseModel):
+    complaint_switch: Literal["same", "ask", "accept"]
+    issue_type: Literal[
+        "water_supply",
+        "drain",
+        "leak",
+        "heating",
+        "electricity",
+        "mold",
+        "pest",
+        "facility",
+        "noise",
+        "other",
+    ] | None
+    location: str | None
+    symptom: str | None
+    occurred_at: datetime | None
 
 # Snapshot of the long prompt before it was shortened. Keep this fixed so later
 # edits to the production prompt do not silently change the comparison baseline.
@@ -59,7 +80,7 @@ CASES = [
             HistoryTurn(message_id="m1", role="user", text="냉장고는 괜찮아요."),
             HistoryTurn(message_id="m2", role="assistant", text="냉동고는 어떤가요?"),
         ],
-        ComplaintDraft(issue_type="facility", location="주방", symptom="가전이 이상함"),
+        ComplaintDraft(issue_type="appliance", location="주방", symptom="가전이 이상함"),
         "냉장고는 괜찮았는데 냉동고는 왜 이상한가요?",
     ),
     (
@@ -69,7 +90,7 @@ CASES = [
             HistoryTurn(message_id="m1", role="user", text="에어컨에서 물이 새요."),
             HistoryTurn(message_id="m2", role="assistant", text="물이 계속 새고 있나요?"),
         ],
-        ComplaintDraft(issue_type="leak", location="거실", symptom="에어컨에서 물이 샘"),
+        ComplaintDraft(issue_type="plumbing", location="거실", symptom="에어컨에서 물이 샘"),
         None,
     ),
     (
@@ -82,7 +103,7 @@ CASES = [
                 text="보일러 누수 대신 「세탁기 탈수가 안 됨」으로 바꿀까요?",
             )
         ],
-        ComplaintDraft(issue_type="leak", location="보일러실", symptom="보일러에서 물이 샘"),
+        ComplaintDraft(issue_type="plumbing", location="보일러실", symptom="보일러에서 물이 샘"),
         "보일러 누수 대신 세탁기 탈수 문제로 바꾸겠다는 답변입니다.",
     ),
     (
@@ -92,7 +113,7 @@ CASES = [
             HistoryTurn(message_id="m1", role="user", text="물이 새요."),
             HistoryTurn(message_id="m2", role="assistant", text="어디에서 새나요?"),
         ],
-        ComplaintDraft(issue_type="leak", symptom="물이 샘"),
+        ComplaintDraft(issue_type="plumbing", symptom="물이 샘"),
         "앞서 말한 물이 새는 문제의 위치를 모르겠습니다.",
     ),
     (
@@ -106,7 +127,7 @@ CASES = [
                 text="사진에는 세탁기 아래 물이 고여 있는 것으로 보여요.",
             ),
         ],
-        ComplaintDraft(issue_type="facility", location="세탁실"),
+        ComplaintDraft(issue_type="appliance", location="세탁실"),
         "사진에서 보인 세탁기 아래 물 고임을 가리키는 확인 답변입니다.",
     ),
 ]
@@ -138,15 +159,15 @@ def main() -> None:
             text, history, draft, contextualized_message
         )
         results = []
-        for name, system_prompt in (
-            ("이전", PREVIOUS_SYSTEM_PROMPT),
-            ("현재", COMPLAINT_SYSTEM_PROMPT),
+        for name, system_prompt, response_format in (
+            ("이전", PREVIOUS_SYSTEM_PROMPT, _PreviousInterpretationOutput),
+            ("현재", COMPLAINT_SYSTEM_PROMPT, _InterpretationOutput),
         ):
             usage: dict[str, object] = {}
             result = generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_format=_InterpretationOutput,
+                response_format=response_format,
                 usage_sink=usage,
             )
             results.append((name, result, usage))
