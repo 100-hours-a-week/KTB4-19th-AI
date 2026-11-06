@@ -2722,7 +2722,7 @@ wheels = [
 
 [[package]]
 name = "paddlepaddle"
-version = "3.3.1"
+version = "3.2.2"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cpu/" }
 dependencies = [
     { name = "httpx", marker = "sys_platform == 'linux'" },
@@ -2732,14 +2732,13 @@ dependencies = [
     { name = "pillow", marker = "sys_platform == 'linux'" },
     { name = "protobuf", marker = "sys_platform == 'linux'" },
     { name = "safetensors", marker = "sys_platform == 'linux'" },
-    { name = "setuptools", marker = "sys_platform == 'linux'" },
     { name = "typing-extensions", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.3.1-cp312-cp312-linux_aarch64.whl" },
-    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.3.1-cp312-cp312-linux_x86_64.whl" },
-    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.3.1-cp313-cp313-linux_aarch64.whl" },
-    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.3.1-cp313-cp313-linux_x86_64.whl" },
+    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.2.2-cp312-cp312-linux_aarch64.whl" },
+    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.2.2-cp312-cp312-linux_x86_64.whl" },
+    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.2.2-cp313-cp313-linux_aarch64.whl" },
+    { url = "https://paddle-whl.cdn.bcebos.com/stable/cpu/paddlepaddle/paddlepaddle-3.2.2-cp313-cp313-linux_x86_64.whl" },
 ]
 
 [[package]]
@@ -5448,7 +5447,7 @@ requires-dist = [
     { name = "modal", specifier = ">=1.6.2" },
     { name = "openai", specifier = ">=3.14.0" },
     { name = "paddleocr", marker = "sys_platform == 'linux'", specifier = "==3.7.0" },
-    { name = "paddlepaddle", marker = "sys_platform == 'linux'", specifier = "==3.3.1", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/" },
+    { name = "paddlepaddle", marker = "sys_platform == 'linux'", specifier = "==3.2.2", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
     { name = "prometheus-client", specifier = ">=0.26.0" },
     { name = "pydantic", specifier = ">=2.13.5,<3" },
