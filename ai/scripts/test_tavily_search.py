@@ -4,7 +4,9 @@
 TAVILY_API_KEY만 필요하며 결과에는 검색 지연, 파싱된 근거와 citation URL이 출력된다.
 """
 
+import json
 import time
+from pathlib import Path
 
 from zipsai.contracts.converse import ConverseRequest
 from zipsai.knowledge.web import search_public_web
@@ -12,6 +14,17 @@ from zipsai.orchestration.tool_contracts import ToolFailure, WebSearchArgs
 from zipsai.settings import TAVILY_API_KEY
 
 QUERY = "겨울철 수도관 동파 예방 방법"
+
+
+def _save_report(report: dict[str, object]) -> Path:
+    output_dir = Path(".local-test-results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000:06d}"
+    path = output_dir / f"tavily-search-{run_id}.json"
+    path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return path
 
 
 def main() -> int:
@@ -43,19 +56,50 @@ def main() -> int:
 
     if isinstance(result, ToolFailure):
         print(f"Tavily tool failure: code={result.code} message={result.message}")
+        report = {
+            "query": QUERY,
+            "latency_ms": round(latency_ms, 1),
+            "status": result.status,
+            "error_code": result.code,
+            "message": result.message,
+            "evidence": [],
+        }
+        print(f"JSON report: {_save_report(report).resolve()}")
         return 1
     if result.status == "no_results":
         print(
             "Tavily 요청은 성공했지만 유효한 URL/content가 있는 검색 결과가 없습니다."
         )
+        report = {
+            "query": QUERY,
+            "latency_ms": round(latency_ms, 1),
+            "status": result.status,
+            "evidence": [],
+        }
+        print(f"JSON report: {_save_report(report).resolve()}")
         return 0
 
     print(f"status: {result.status} | parsed results: {len(result.evidence)}")
+    evidence_rows = []
     for index, evidence in enumerate(result.evidence, start=1):
         citation = evidence.citation
         print(f"\n[{index}] {citation.title}")
         print(f"URL: {citation.url}")
         print(f"내용: {evidence.text}")
+        evidence_rows.append(
+            {
+                "title": citation.title,
+                "url": citation.url,
+                "snippet": evidence.text,
+            }
+        )
+    report = {
+        "query": QUERY,
+        "latency_ms": round(latency_ms, 1),
+        "status": result.status,
+        "evidence": evidence_rows,
+    }
+    print(f"\nJSON report: {_save_report(report).resolve()}")
     return 0
 
 

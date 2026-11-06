@@ -209,6 +209,9 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Live Qwen/Tavily smoke-test outputs contain external search results.
+ai/.local-test-results/
+
 # Ruff stuff:
 .ruff_cache/
 
