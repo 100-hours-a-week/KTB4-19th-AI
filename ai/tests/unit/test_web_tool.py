@@ -1,6 +1,6 @@
 import pytest
 
-from zipsai.contracts.converse import ConverseRequest
+from zipsai.contracts.converse import ConverseRequest, Route
 from zipsai.errors import (
     WebSearchRateLimitedError,
     WebSearchTimeoutError,
@@ -93,6 +93,71 @@ def test_search_public_web_returns_ok_with_citations(monkeypatch):
     assert result.status == "ok"
     assert result.evidence[0].citation.source_type == "web"
     assert result.evidence[0].citation.url == "https://example.com/mold"
+
+
+@pytest.mark.parametrize("query", ["linda 날씨", "301호 날씨"])
+def test_search_public_web_rejects_resident_identifiers(query, monkeypatch):
+    import zipsai.knowledge.web as web_module
+
+    monkeypatch.setattr(
+        web_module, "search", lambda _query: pytest.fail("private query reached Tavily")
+    )
+
+    result = web_module.search_public_web(WebSearchArgs(query=query), _request())
+
+    assert isinstance(result, ToolFailure)
+    assert result.code == "invalid_arguments"
+
+
+def test_search_public_web_rejects_complaint_text_and_image_observations(monkeypatch):
+    import zipsai.knowledge.web as web_module
+
+    request = _request().model_copy(
+        update={
+            "current_route": Route.COMPLAINT,
+            "message": _request().message.model_copy(
+                update={"text": "안방 천장에서 물이 새고 벽지가 젖었어요"}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        web_module, "search", lambda _query: pytest.fail("private query reached Tavily")
+    )
+
+    for query, private_context in (
+        ("안방 천장에서 물이 새고 벽지가 젖었어요 응급 조치", ()),
+        ("사진에 나온 파란 배관 파손", ("사진에 나온 파란 배관 파손",)),
+    ):
+        result = web_module.search_public_web(
+            WebSearchArgs(query=query), request, private_context=private_context
+        )
+        assert isinstance(result, ToolFailure)
+        assert result.code == "invalid_arguments"
+
+
+def test_search_public_web_allows_independent_general_query_during_complaint(monkeypatch):
+    import zipsai.knowledge.web as web_module
+
+    request = _request().model_copy(
+        update={
+            "current_route": Route.COMPLAINT,
+            "message": _request().message.model_copy(
+                update={"text": "욕실 누수를 접수하고 미세먼지 정보도 알려주세요"}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        web_module,
+        "search",
+        lambda query: [{"title": "대기 정보", "url": "https://example.com/air", "content": query}],
+    )
+
+    result = web_module.search_public_web(
+        WebSearchArgs(query="미세먼지 노출 수칙"), request
+    )
+
+    assert isinstance(result, WebSearchResult)
+    assert result.status == "ok"
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 from urllib.parse import urlsplit
 
-from zipsai.contracts.converse import Citation, ConverseRequest
+from zipsai.contracts.converse import Citation, ConverseRequest, Route
 from zipsai.errors import (
     WebSearchRateLimitedError,
     WebSearchTimeoutError,
@@ -20,6 +20,7 @@ _UNAVAILABLE = "Web 검색을 사용할 수 없습니다."
 _TIMEOUT = "Web 검색이 시간 초과됐습니다."
 _RATE_LIMITED = "Web 검색 요청이 많아 잠시 후 다시 시도해야 합니다."
 _UPSTREAM_ERROR = "Web 검색 결과를 처리하지 못했습니다."
+_PRIVATE_QUERY = "개인정보나 민원 상세는 공개 Web 검색에 보낼 수 없습니다."
 
 
 def web_evidence(raw_results: list[dict[str, object]]) -> list[SearchEvidence]:
@@ -58,11 +59,15 @@ def web_evidence(raw_results: list[dict[str, object]]) -> list[SearchEvidence]:
 
 
 def search_public_web(
-    args: WebSearchArgs, request: ConverseRequest
+    args: WebSearchArgs,
+    request: ConverseRequest,
+    *,
+    private_context: tuple[str, ...] = (),
 ) -> WebSearchResult | ToolFailure:
-    """공개 Web에서만 근거를 검색한다. request는 호출 패턴을 search_building_docs와
-    맞추기 위해 받지만 건물 범위 검증에는 쓰지 않는다 — 공개 정보라 범위가 없다."""
-    del request
+    """공개 Web 근거를 검색하되 요청의 식별 정보와 민원 세부 내용은 보내지 않는다."""
+    if _contains_private_details(args.query, request, private_context):
+        return ToolFailure(code="invalid_arguments", message=_PRIVATE_QUERY)
+
     try:
         raw_results = search(args.query)
     except WebSearchTimeoutError:
@@ -78,3 +83,54 @@ def search_public_web(
     if not evidence:
         return WebSearchResult(status="no_results")
     return WebSearchResult(status="ok", evidence=evidence)
+
+
+def _contains_private_details(
+    query: str, request: ConverseRequest, private_context: tuple[str, ...]
+) -> bool:
+    normalized_query = " ".join(query.casefold().split())
+    identifiers = (request.resident_id, request.room_no)
+    if any(value.casefold() in normalized_query for value in identifiers if value):
+        return True
+
+    sensitive_values: list[str] = list(private_context)
+    exact_messages: list[str] = []
+    draft = request.complaint_draft
+    if draft:
+        sensitive_values.extend((draft.location or "", draft.symptom or ""))
+        if draft.occurred_at:
+            sensitive_values.append(draft.occurred_at.isoformat())
+
+    active_complaint = (
+        request.current_route is Route.COMPLAINT
+        or request.current_complaint_state is not None
+        or draft is not None
+    )
+    if active_complaint:
+        exact_messages.append(request.message.text or "")
+        for turn in request.conversation_history:
+            if turn.role != "user":
+                continue
+            exact_messages.append(turn.text or "")
+            for image in turn.images or ():
+                sensitive_values.extend((image.summary or "", image.ocr_text or ""))
+
+    for item in private_context:
+        if item and (item == request.message.text or any(item == turn.text for turn in request.conversation_history)):
+            exact_messages.append(item)
+
+    # shortcut: literal matching catches copied details, not paraphrases; use vetted DLP if policy requires semantic detection.
+    if any(
+        (value := " ".join(item.casefold().split()))
+        and len(value) >= 2
+        and value in normalized_query
+        for item in exact_messages
+    ):
+        return True
+
+    return any(
+        (value := " ".join(item.casefold().split()))
+        and len(value) >= 2
+        and value in normalized_query
+        for item in sensitive_values
+    )
