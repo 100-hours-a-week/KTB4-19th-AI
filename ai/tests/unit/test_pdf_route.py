@@ -9,6 +9,7 @@ from zipsai.indexing.parse import (
     fast_pipeline_options,
     parse_document,
     pipeline_options,
+    scan_pipeline_options,
 )
 from zipsai.indexing.pdf_text import (
     CID_RATIO_MAX,
@@ -55,12 +56,28 @@ def test_ragged_rows_need_more_than_one_width() -> None:
 
 def test_fast_options_leave_the_scan_path_on_ocr() -> None:
     fast = fast_pipeline_options()
-    scan = pipeline_options()
+    base = pipeline_options()
+    scan = scan_pipeline_options()
 
     assert fast.do_ocr is False
     assert fast.table_structure_options.mode == TableFormerMode.FAST
+    assert base.do_ocr is True
+    assert base.table_structure_options.mode == TableFormerMode.ACCURATE
     assert scan.do_ocr is True
-    assert scan.table_structure_options.mode == TableFormerMode.ACCURATE
+    assert scan.ocr_options.lang == ["ko", "en"]
+    assert scan.ocr_options.confidence_threshold == 0.1
+
+
+def test_scan_pdf_option_uses_pdfium_backend() -> None:
+    from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+
+    from zipsai.indexing.parse import scan_pdf_option
+
+    option = scan_pdf_option()
+
+    assert option.backend is PyPdfiumDocumentBackend
+    assert option.pipeline_options.ocr_options.lang == ["ko", "en"]
+    assert option.pipeline_options.ocr_options.confidence_threshold == 0.1
 
 
 class _Document:
@@ -89,7 +106,7 @@ class _Converter:
 def _patch_converters(monkeypatch: pytest.MonkeyPatch) -> tuple[_Converter, _Converter]:
     scan = _Converter()
     fast = _Converter()
-    monkeypatch.setattr(parse, "_converter", lambda: scan)
+    monkeypatch.setattr(parse, "_scan_converter", lambda: scan)
     monkeypatch.setattr(parse, "_fast_converter", lambda: fast)
     return scan, fast
 

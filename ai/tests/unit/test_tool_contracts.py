@@ -1,7 +1,16 @@
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from zipsai.contracts.converse import ComplaintState, RouteResult
+from zipsai.contracts.comment import CommentItem
+from zipsai.contracts.converse import (
+    ComplaintDraft,
+    ComplaintState,
+    ConverseRequest,
+    RouteResult,
+)
 from zipsai.orchestration.tool_contracts import (
     TOOL_CONTRACTS,
     BuildingDocsArgs,
@@ -72,6 +81,82 @@ def test_complaint_result_preserves_existing_reply_and_state_contract():
     assert result.result.missing_fields == ["location"]
     with pytest.raises(ValidationError):
         ComplaintTurnResult.model_validate({"reply": "위치를 알려주세요."})
+
+
+@pytest.mark.parametrize(
+    "issue_type",
+    [
+        "plumbing",
+        "heating_cooling",
+        "interior_repair",
+        "electrical",
+        "appliance",
+        "hygiene",
+        "common_area",
+        "noise",
+        "other",
+    ],
+)
+def test_complaint_draft_accepts_the_resident_maintenance_taxonomy(issue_type):
+    assert ComplaintDraft(issue_type=issue_type).issue_type == issue_type
+
+
+@pytest.mark.parametrize(
+    "issue_type",
+    ["water_supply", "drain", "leak", "heating", "electricity", "mold", "pest", "facility"],
+)
+def test_new_complaint_draft_rejects_retired_issue_types(issue_type):
+    with pytest.raises(ValidationError):
+        ComplaintDraft(issue_type=issue_type)
+
+
+@pytest.mark.parametrize(
+    "issue_type",
+    [
+        "plumbing",
+        "heating_cooling",
+        "interior_repair",
+        "electrical",
+        "appliance",
+        "hygiene",
+        "common_area",
+        "noise",
+        "other",
+        "water_supply",
+        "drain",
+        "leak",
+        "heating",
+        "electricity",
+        "mold",
+        "pest",
+        "facility",
+    ],
+)
+def test_comment_ingestion_accepts_new_and_historical_issue_types(issue_type):
+    comment = CommentItem.model_validate(
+        {
+            "complaint_detail_id": 1,
+            "building_id": 1,
+            "complaint_type": "COMPLAINT",
+            "symptom": "욕실 천장에서 물이 떨어져요",
+            "comment": "접수했습니다.",
+            "location": "욕실",
+            "issue_type": issue_type,
+            "updated_at": "2026-11-06T10:00:00+09:00",
+        }
+    )
+
+    assert comment.issue_type == issue_type
+
+
+def test_symptom_changed_request_fixture_uses_current_taxonomy():
+    payload = json.loads(
+        (Path(__file__).parents[2] / "complaint_symptom_changed_payload.json").read_text()
+    )
+
+    request = ConverseRequest.model_validate(payload)
+
+    assert request.complaint_draft.issue_type == "plumbing"
 
 
 @pytest.mark.parametrize(

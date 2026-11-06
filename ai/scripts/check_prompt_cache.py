@@ -21,13 +21,16 @@ _MESSAGES = (
 
 
 def main() -> None:
-    today = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
     for index, message in enumerate(_MESSAGES, start=1):
         system, user = COMPLAINT_PROMPT.format_messages(
-            today=today,
+            today=now.date().isoformat(),
+            current_time=now.isoformat(timespec="seconds"),
             conversation_history="",
             complaint_draft=None,
             message_text=message,
+            contextualized_message="없음",
+            image_evidence="없음",
         )
         usage: dict[str, object] = {}
         started_at = perf_counter()

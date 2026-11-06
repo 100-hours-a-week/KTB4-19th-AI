@@ -41,6 +41,45 @@ _STAGE_REASON = {
 }
 
 
+def _seconds(value: object) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 3)
+
+
+def _log_parse_stages(
+    request: IndexingJobRequest,
+    *,
+    file_type: str,
+    pages: object,
+    chars: int,
+    chunks: int,
+    chunk_s: float,
+    total_s: float,
+) -> None:
+    """색인 한 건의 파싱·청킹 시간을 한 줄로 남긴다. 본문은 넣지 않는다."""
+
+    logger.info(
+        "parse_stages",
+        extra={
+            "doc_id": request.doc_id,
+            "file_key": request.file_key,
+            "file_type": file_type,
+            "pages": len(pages),
+            "parser_route": getattr(pages, "parser_route", None),
+            "route_reason": getattr(pages, "route_reason", None),
+            "t_convert_s": _seconds(getattr(pages, "t_convert_s", None)),
+            "t_ocr_s": _seconds(getattr(pages, "t_ocr_s", None)),
+            "t_table_s": _seconds(getattr(pages, "t_table_s", None)),
+            "t_chunk_s": _seconds(chunk_s),
+            "t_total_s": _seconds(total_s),
+            "chars": chars,
+            "chunks": chunks,
+            "tables": getattr(pages, "tables_found", None),
+        },
+    )
+
+
 def run_indexing_job(
     request: IndexingJobRequest,
     *,
@@ -76,7 +115,8 @@ def run_indexing_job(
                     pages = parse_document(source)
                     page_count = len(pages)
                     step["pages"] = page_count
-                    step["chars"] = sum(len(str(page["text"])) for page in pages)
+                    char_count = sum(len(str(page["text"])) for page in pages)
+                    step["chars"] = char_count
                     step["empty_pages"] = getattr(pages, "empty_pages", None)
                     step["min_chars_per_page"] = getattr(pages, "min_chars_per_page", None)
                     step["tables_found"] = getattr(pages, "tables_found", None)
@@ -118,6 +158,15 @@ def run_indexing_job(
                     step["over_limit"] = sum(
                         1 for length in lengths if length > MAX_TEXT_CHARS
                     )
+                _log_parse_stages(
+                    request,
+                    file_type=source.suffix.lstrip(".").lower(),
+                    pages=pages,
+                    chars=char_count,
+                    chunks=chunk_count or 0,
+                    chunk_s=timings.get("chunk", 0) / 1000,
+                    total_s=(timings.get("parse", 0) + timings.get("chunk", 0)) / 1000,
+                )
 
                 cancelled = False
                 with stage("embed", logger, cold=cold) as step:

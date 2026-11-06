@@ -99,6 +99,11 @@ TOOL_REJECTIONS = Counter(
     "Tool requests rejected before execution",
     ["reason"],
 )
+TOOL_DECISIONS = Counter(
+    "zipsai_tool_decisions_total",
+    "Action decisions by route and bounded tool-selection outcome",
+    ["route", "outcome"],
+)
 GATE = Counter("zipsai_gate_decisions_total", "Retrieval gate results", ["passed"])
 FALLBACKS = Counter("zipsai_fallbacks_total", "Answer fallbacks", ["reason"])
 ASK_REPEATS = Counter(
@@ -193,6 +198,12 @@ def observe_tool_call(tool: str, outcome: str, duration_seconds: float) -> None:
 
 def observe_tool_rejection(reason: str) -> None:
     TOOL_REJECTIONS.labels(reason=reason).inc()
+
+
+def observe_tool_decision(route: str, outcome: str) -> None:
+    route_label = route if route in {"complaint", "knowledge", "clarify"} else "unknown"
+    outcome_label = outcome if outcome in {"tool_selected", "no_tool", "protocol_failure"} else "unknown"
+    TOOL_DECISIONS.labels(route=route_label, outcome=outcome_label).inc()
 
 
 def observe_gate(passed: bool) -> None:

@@ -15,6 +15,10 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 FROM dependencies AS models
 # Preserve the current prefetch behavior. Decoupling it from app imports is phase 2.
+ENV EASYOCR_MODEL_DIR=/app/.EasyOCR/model \
+    PADDLE_PDX_CACHE_HOME=/app/.paddlex \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    FLAGS_use_mkldnn=0
 COPY ai/scripts/prefetch_models.py ./scripts/prefetch_models.py
 COPY ai/src/zipsai/__init__.py ./src/zipsai/__init__.py
 COPY ai/src/zipsai/errors.py ./src/zipsai/errors.py
@@ -28,12 +32,22 @@ RUN /app/.venv/bin/python -c "import pathlib, shutil, rapidocr; target=pathlib.P
 
 FROM base AS runtime
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH" HF_HOME=/app/.cache/huggingface HF_HUB_OFFLINE=1 TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
+ENV PATH="/app/.venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface \
+    HF_HUB_OFFLINE=1 \
+    TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken \
+    EASYOCR_MODEL_DIR=/app/.EasyOCR/model \
+    PADDLE_PDX_CACHE_HOME=/app/.paddlex \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    FLAGS_use_mkldnn=0 \
+    HOME=/app
 RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
 COPY --link --from=dependencies --chown=10001:10001 /app/.venv /app/.venv
 COPY --link --from=models --chown=10001:10001 /app/.cache/huggingface /app/.cache/huggingface
 COPY --link --from=models --chown=10001:10001 /app/.cache/tiktoken /app/.cache/tiktoken
 COPY --from=models --chown=10001:10001 /model-artifacts/rapidocr-models /app/.venv/lib/python3.12/site-packages/rapidocr/models
+COPY --from=models --chown=10001:10001 /app/.EasyOCR /app/.EasyOCR
+COPY --from=models --chown=10001:10001 /app/.paddlex /app/.paddlex
 COPY --from=dependencies --chown=10001:10001 /app/pyproject.toml /app/uv.lock /app/README.md ./
 COPY --chown=10001:10001 ai/src ./src
 COPY --chown=10001:10001 ai/scripts ./scripts

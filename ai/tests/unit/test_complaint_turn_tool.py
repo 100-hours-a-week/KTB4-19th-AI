@@ -1,6 +1,7 @@
 
 import pytest
 
+import zipsai.complaint.node as node_module
 import zipsai.complaint.tool as tool_module
 from zipsai.contracts.converse import (
     ComplaintDraft,
@@ -37,7 +38,7 @@ def _request() -> ConverseRequest:
             "current_complaint_state": "collecting",
             "message": {"message_id": "message-1", "text": "세탁기 아래에서 물이 새요"},
             "conversation_history": [],
-            "complaint_draft": {"issue_type": "leak"},
+            "complaint_draft": {"issue_type": "plumbing"},
         }
     )
 
@@ -51,7 +52,7 @@ def test_process_complaint_turn_reuses_one_existing_turn_with_server_context(mon
         "reply": "어디에서 생긴 문제인가요?",
         "complaint_state": ComplaintState.COLLECTING,
         "result": RouteResult(
-            complaint_draft=ComplaintDraft(issue_type="leak", symptom="물이 샘"),
+            complaint_draft=ComplaintDraft(issue_type="plumbing", symptom="물이 샘"),
             missing_fields=["location"],
         ),
     }
@@ -74,6 +75,31 @@ def test_process_complaint_turn_reuses_one_existing_turn_with_server_context(mon
     assert calls == [
         (request, image_analysis, "세탁기 아래로 물이 새는 민원입니다.")
     ]
+
+
+def test_process_complaint_turn_keeps_missing_symptom_and_reply_in_sync(
+    monkeypatch,
+):
+    request = _request()
+    request.message.text = "욕실 누수 민원 작성해 주세요"
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda *_args, **_kwargs: node_module._TurnInterpretation(
+            ComplaintDraft(issue_type="plumbing", location="욕실")
+        ),
+    )
+
+    result = tool_module.process_complaint_turn(ComplaintTurnArgs(), request)
+
+    assert isinstance(result, ComplaintTurnResult)
+    assert result.reply == "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+    assert result.complaint_state == ComplaintState.COLLECTING
+    assert result.result.missing_fields == ["symptom"]
+    assert result.result.complaint_draft == ComplaintDraft(
+        issue_type="plumbing", location="욕실"
+    )
+    assert result.result.qa_card_draft is None
 
 
 @pytest.mark.parametrize(

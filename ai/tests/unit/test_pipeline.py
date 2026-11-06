@@ -101,6 +101,48 @@ def test_parse_log_records_parser_route(
     assert parse_logs[-1].fallback_reason is None
 
 
+def test_parse_stages_log_records_route_and_durations(
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant: QdrantClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pages = ParsedPages([{"page": 1, "text": "본문 비밀"}])
+    pages.parser_route = "docling_ocr"
+    pages.route_reason = "non_pdf"
+    pages.t_convert_s = 1.5
+    pages.t_ocr_s = None
+    pages.t_table_s = None
+    pages.tables_found = 2
+    monkeypatch.setattr(pipeline, "parse_document", lambda _source: pages)
+
+    with caplog.at_level(logging.INFO, logger="zipsai.indexing.pipeline"):
+        result = run_indexing_job(
+            make_request(),
+            download=stub_download,
+            encoder=FakeEncoder(),
+            client=qdrant,
+        )
+
+    assert result is JobStatus.SUCCEEDED
+    records = [record for record in caplog.records if record.getMessage() == "parse_stages"]
+    logged = records[-1]
+    assert logged.doc_id == "notice-001"
+    assert logged.file_key == "buildings/101/notice-001.pdf"
+    assert logged.file_type == "pdf"
+    assert logged.pages == 1
+    assert logged.parser_route == "docling_ocr"
+    assert logged.route_reason == "non_pdf"
+    assert logged.t_convert_s == 1.5
+    assert logged.t_ocr_s is None
+    assert logged.t_table_s is None
+    assert logged.t_chunk_s >= 0
+    assert logged.t_total_s >= logged.t_chunk_s
+    assert logged.chars == len("본문 비밀")
+    assert logged.chunks >= 1
+    assert logged.tables == 2
+    assert "본문 비밀" not in logged.__dict__.values()
+
+
 def test_embed_stage_counts_duplicate_texts(
     monkeypatch: pytest.MonkeyPatch,
     qdrant: QdrantClient,

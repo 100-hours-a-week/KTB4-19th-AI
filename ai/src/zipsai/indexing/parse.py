@@ -1,8 +1,11 @@
+import os
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
+    EasyOcrOptions,
     PdfPipelineOptions,
     RapidOcrOptions,
     TableFormerMode,
@@ -38,6 +41,11 @@ class ParsedPages(list[dict[str, int | str]]):
     parser: str | None = None
     fallback_reason: str | None = None
     text_layer: str | None = None
+    parser_route: str | None = None
+    route_reason: str | None = None
+    t_convert_s: float | None = None
+    t_ocr_s: float | None = None
+    t_table_s: float | None = None
 
 
 def conversion_stats(result: object, pages: list[dict[str, int | str]]) -> ParsedPages:
@@ -90,6 +98,28 @@ def fast_pipeline_options() -> PdfPipelineOptions:
     return options
 
 
+def scan_pipeline_options() -> PdfPipelineOptions:
+    """글자층 없는 PDF만. 평가 easyocr-ct01-fix와 같은 EasyOCR 설정이다."""
+
+    kwargs: dict[str, object] = {"lang": ["ko", "en"], "confidence_threshold": 0.1}
+    model_dir = os.environ.get("EASYOCR_MODEL_DIR")
+    if model_dir:
+        kwargs["model_storage_directory"] = model_dir
+    return PdfPipelineOptions(
+        do_ocr=True,
+        ocr_options=EasyOcrOptions(**kwargs),
+    )
+
+
+def scan_pdf_option() -> PdfFormatOption:
+    from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+
+    return PdfFormatOption(
+        pipeline_options=scan_pipeline_options(),
+        backend=PyPdfiumDocumentBackend,
+    )
+
+
 @lru_cache(maxsize=1)
 def _fast_converter() -> DocumentConverter:
     options = fast_pipeline_options()
@@ -103,14 +133,32 @@ def _fast_converter() -> DocumentConverter:
 @lru_cache(maxsize=1)
 def _converter() -> DocumentConverter:
     # 문서마다 새로 만들면 OCR·레이아웃 모델을 매번 다시 올린다.
+    # 글자층 PDF의 빠른 표와 모델 예열이 쓴다. 스캔 PDF는 _scan_converter다.
     options = pipeline_options()
     return DocumentConverter(
         format_options={
-            # 스캔본은 PDF, 사진으로 찍어 올린 공지는 이미지로 들어온다. 둘 다 같은 설정으로 읽는다.
             InputFormat.PDF: PdfFormatOption(pipeline_options=options),
             InputFormat.IMAGE: ImageFormatOption(pipeline_options=options),
         }
     )
+
+
+@lru_cache(maxsize=1)
+def _scan_converter() -> DocumentConverter:
+    return DocumentConverter(format_options={InputFormat.PDF: scan_pdf_option()})
+
+
+def _annotate_route(
+    parsed: ParsedPages, *, route: str, reason: str, convert_s: float
+) -> ParsedPages:
+    parsed.parser_route = route
+    parsed.route_reason = reason
+    parsed.t_convert_s = convert_s
+    # convert() 한 번이 OCR과 표 구조를 같이 끝낸다. 시간을 나누려면
+    # profile_pipeline_timings를 켜야 해서 켜지 않는다.
+    parsed.t_ocr_s = None
+    parsed.t_table_s = None
+    return parsed
 
 
 def _read_with(
@@ -120,9 +168,11 @@ def _read_with(
     parser: str,
     fallback_reason: str | None,
     text_layer: str | None,
-) -> ParsedPages:
+) -> tuple[ParsedPages, float]:
     try:
+        started = perf_counter()
         converted = converter.convert(path)
+        convert_s = perf_counter() - started
         document = converted.document
         page_numbers = sorted(document.pages)
         if not page_numbers:
@@ -138,7 +188,7 @@ def _read_with(
         parsed.parser = parser
         parsed.fallback_reason = fallback_reason
         parsed.text_layer = text_layer
-        return parsed
+        return parsed, convert_s
     except PdfParseError:
         raise
     except Exception as exc:
@@ -195,16 +245,14 @@ def parse_document(source: str | Path) -> ParsedPages:
         raise PdfParseError(f"File is unreadable: {path}") from exc
 
     if path.suffix.lower() != ".pdf":
-        return _read_with(
-            path,
-            _converter(),
-            parser="docling",
-            fallback_reason=None,
-            text_layer=None,
-        )
+        from zipsai.indexing.image_read import read_image_pages
+
+        return read_image_pages(path)
 
     try:
+        started = perf_counter()
         report = inspect_pdf(path)
+        inspect_s = perf_counter() - started
     except PdfParseError:
         raise
     except Exception as exc:
@@ -212,19 +260,36 @@ def parse_document(source: str | Path) -> ParsedPages:
 
     kind, reason, layer = _docling_route(report)
     if kind == "scan":
-        return _read_with(
+        parsed, convert_s = _read_with(
             path,
-            _converter(),
+            _scan_converter(),
             parser="docling",
             fallback_reason=reason,
             text_layer=layer,
         )
+        return _annotate_route(
+            parsed,
+            route="docling_ocr",
+            reason=reason or "text_layer_none",
+            convert_s=convert_s,
+        )
     if kind == "fast":
-        return _read_with(
+        parsed, convert_s = _read_with(
             path,
             _fast_converter(),
             parser="docling",
             fallback_reason=reason,
             text_layer=layer,
         )
-    return _from_pdfplumber(path, report, layer)
+        return _annotate_route(
+            parsed,
+            route="docling_fast",
+            reason=reason or "ragged_table",
+            convert_s=convert_s,
+        )
+    return _annotate_route(
+        _from_pdfplumber(path, report, layer),
+        route="pdfplumber",
+        reason="text_layer_ok",
+        convert_s=inspect_s,
+    )

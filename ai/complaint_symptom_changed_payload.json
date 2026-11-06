@@ -26,7 +26,7 @@
       }
     ],
     "complaint_draft": {
-      "issue_type": "leak",
+      "issue_type": "plumbing",
       "location": null,
       "symptom": "화장실에서 물이 새고 있음",
       "occurred_at": null,

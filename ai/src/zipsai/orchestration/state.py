@@ -8,7 +8,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 
-CapabilityName = Literal["search_building_docs", "process_complaint_turn"]
+ToolName = Literal["search_building_docs", "process_complaint_turn"]
 
 
 class AgentState(TypedDict):
@@ -20,11 +20,13 @@ class AgentState(TypedDict):
     image_analysis: ImageAnalysis | None
     image_analysis_failed: NotRequired[bool]
     contextualized_message: NotRequired[str | None]
-    required_capabilities: NotRequired[tuple[CapabilityName, ...]]
-    completed_capabilities: NotRequired[tuple[CapabilityName, ...]]
+    attempted_tools: NotRequired[tuple[ToolName, ...]]
+    completed_tools: NotRequired[tuple[ToolName, ...]]
     agent_messages: NotRequired[list[object]]
     pending_tool_calls: NotRequired[tuple[object, ...]]
     tool_call_count: NotRequired[int]
+    protocol_retry_count: NotRequired[int]
+    protocol_retry_pending: NotRequired[bool]
     last_tool_result: NotRequired[object]
     search_result: NotRequired[object]
     search_query: NotRequired[str]
