@@ -175,10 +175,12 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
 
     assert result.fields.location == "주방"
     assert result.fields.symptom == "싱크대 아래에 물이 고여요"
-    assert (
-        "complaint details newly stated or corrected in the current resident message"
-        in captured["system_prompt"]
-    )
+    assert "For text, use only facts newly stated or corrected" in captured[
+        "system_prompt"
+    ]
+    assert "Use history and the existing draft only to resolve references or corrections" in captured[
+        "system_prompt"
+    ]
     assert (
         "If both a place and component are stated, put the place here"
         in captured["system_prompt"]
@@ -187,6 +189,12 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
         "If only a component is stated, use null; do not infer a place"
         in captured["system_prompt"]
     )
+    assert "Resolve a direct answer to a location question from the immediate conversation" in captured[
+        "system_prompt"
+    ]
+    assert 'If the resident says they do not know or will not provide it, use "모름"' in captured[
+        "system_prompt"
+    ]
     assert (
         "Extract a stated place even when it appears in a correction or contrast"
         in captured["system_prompt"]
@@ -263,15 +271,15 @@ def test_complaint_prompt_distinguishes_null_from_other_and_includes_shared_loca
 
     prompt = captured["system_prompt"]
     assert (
-        "location: use the explicitly stated place where the problem occurs, inside the unit or in a shared area"
-        in prompt
-    )
-    assert (
-        "Use null for issue_type only when this turn provides no new classification information"
+        "location: use the stated place where the problem occurs, inside the unit or in a shared area"
         in prompt
     )
     assert (
         "other: a complaint exists, but no listed category fits or the type remains unclassifiable"
+        in prompt
+    )
+    assert (
+        "Use null when this message provides no new supported value for a field; the server preserves the existing draft value"
         in prompt
     )
     assert "common_area: any issue outside the unit" in prompt
@@ -420,9 +428,13 @@ def test_occurred_at_prompt_defines_weekday_and_time_ambiguity(
 
     assert "오늘 날짜(Asia/Seoul): 2026-11-06" in captured["user_prompt"]
     assert (
-        "A bare weekday without a week qualifier or a time of day without an onset date is ambiguous"
+        "A bare weekday without a week qualifier is ambiguous"
         in captured["system_prompt"]
     )
+    assert "A relative duration such as '한 시간 전' can be resolved from the timestamp" in captured[
+        "system_prompt"
+    ]
+    assert "A clock time without an onset date is ambiguous" in captured["system_prompt"]
     assert (
         "'이번 주' means the Monday-to-Sunday week containing today; '지난주' means the previous "
         "Monday-to-Sunday week"

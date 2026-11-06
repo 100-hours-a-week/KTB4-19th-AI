@@ -165,6 +165,9 @@ def test_complaint_extraction_prompt_receives_summary_and_ocr(
 
     assert "세탁기 조작부가 보임" in captured["user"]
     assert '"ocrText": "LE"' in captured["user"]
+    assert "Current image evidence may provide visible symptoms or relevant error codes" in captured[
+        "system"
+    ]
     assert (
         "Never infer location, onset time, or cause from an image" in captured["system"]
     )
