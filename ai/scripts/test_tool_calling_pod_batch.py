@@ -304,6 +304,28 @@ def _run_case(case: Case, stubs) -> dict[str, object]:
     }
 
 
+def _error_chain(error: Exception) -> str:
+    details, seen = [], set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(details) < 4:
+        seen.add(id(current))
+        details.append(f"{type(current).__name__}: {str(current)[:500]}")
+        current = current.__cause__ or current.__context__
+    return " <- ".join(details)
+
+
+def _has_client_error(error: Exception) -> bool:
+    current: BaseException | None = error
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int) and 400 <= status_code < 500:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def main() -> None:
     settings = _pod_settings()
     if (
@@ -322,22 +344,6 @@ def main() -> None:
     csv_path = output_dir / f"tool-calling-pod-{run_id}.csv"
     stubs = _stub_results()
     rows = []
-    print(f"provider={settings.provider} model={settings.llm_model} cases={len(CASES)}")
-    for index, case in enumerate(CASES, start=1):
-        row = _run_case(case, stubs)
-        rows.append(row)
-        status = "MATCH" if row["tools_match"] else "CHECK"
-        print(
-            f"[{index:02}/{len(CASES)}] {status} {case.case_id} expected={row['expected_tools']} actual={row['actual_tools']} latency={row['total_latency_ms']}ms"
-        )
-        for decision_index, decision in enumerate(row["model_decisions"], start=1):
-            summary = [call["name"] for call in decision.get("tool_calls", ())]
-            print(
-                f"    Qwen {decision['stage']}#{decision_index} {decision['latency_ms']}ms -> {summary or decision.get('route', 'final answer')}"
-            )
-    with jsonl_path.open("w", encoding="utf-8") as output:
-        for row in rows:
-            output.write(json.dumps(row, ensure_ascii=False) + "\n")
     fields = (
         "case_id",
         "category",
@@ -351,11 +357,42 @@ def main() -> None:
         "route",
         "reply",
         "tool_call_count",
+        "error",
     )
-    with csv_path.open("w", encoding="utf-8-sig", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=fields)
+    print(f"provider={settings.provider} model={settings.llm_model} cases={len(CASES)}")
+    with (
+        jsonl_path.open("w", encoding="utf-8") as jsonl_output,
+        csv_path.open("w", encoding="utf-8-sig", newline="") as csv_output,
+    ):
+        writer = csv.DictWriter(csv_output, fieldnames=fields)
         writer.writeheader()
-        for row in rows:
+        for index, case in enumerate(CASES, start=1):
+            try:
+                row = _run_case(case, stubs)
+                row["error"] = ""
+                status = "MATCH" if row["tools_match"] else "CHECK"
+                stop_after_row = False
+            except Exception as error:  # noqa: BLE001 keep later cases useful after a failed call
+                stop_after_row = _has_client_error(error)
+                row = {
+                    "case_id": case.case_id,
+                    "category": case.category,
+                    "prompt": case.prompt,
+                    "expected_tools": list(case.expected_tools),
+                    "actual_tools": [],
+                    "tools_match": False,
+                    "total_latency_ms": None,
+                    "model_decisions": [],
+                    "tool_events": [],
+                    "route": None,
+                    "reply": None,
+                    "tool_call_count": 0,
+                    "error": _error_chain(error),
+                }
+                status = "ERROR"
+            rows.append(row)
+            jsonl_output.write(json.dumps(row, ensure_ascii=False) + "\n")
+            jsonl_output.flush()
             writer.writerow(
                 {
                     key: json.dumps(row[key], ensure_ascii=False)
@@ -364,8 +401,27 @@ def main() -> None:
                     for key in fields
                 }
             )
+            csv_output.flush()
+            print(
+                f"[{index:02}/{len(CASES)}] {status} {case.case_id} expected={row['expected_tools']} actual={row['actual_tools']} latency={row['total_latency_ms']}ms"
+            )
+            if row["error"]:
+                print(f"    원인: {row['error']}")
+            if stop_after_row:
+                print("    HTTP 4xx 설정/요청 오류라 남은 사례는 실행하지 않습니다.")
+                break
+            for decision_index, decision in enumerate(row["model_decisions"], start=1):
+                summary = [call["name"] for call in decision.get("tool_calls", ())]
+                print(
+                    f"    Qwen {decision['stage']}#{decision_index} {decision['latency_ms']}ms -> {summary or decision.get('route', 'final answer')}"
+                )
     matches = sum(bool(row["tools_match"]) for row in rows)
-    print(f"\n예상 도구 시퀀스 일치: {matches}/{len(rows)}")
+    failures = sum(bool(row["error"]) for row in rows)
+    print(
+        f"\n예상 도구 시퀀스 일치: {matches}/{len(rows)} 실행 사례 | 실행 실패: {failures}"
+    )
+    if len(rows) < len(CASES):
+        print(f"미실행 사례: {len(CASES) - len(rows)}")
     print(f"JSONL: {jsonl_path.resolve()}\nCSV:   {csv_path.resolve()}")
     print(
         "검색/민원 backend는 가짜 결과입니다. 이 결과는 Qwen tool calling의 탐색 로그이며 정답률 평가셋은 아닙니다."
