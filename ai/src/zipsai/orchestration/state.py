@@ -8,7 +8,9 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 
-ToolName = Literal["search_building_docs", "process_complaint_turn"]
+ToolName = Literal[
+    "search_building_docs", "process_complaint_turn", "search_public_web"
+]
 
 
 class AgentState(TypedDict):
@@ -30,4 +32,5 @@ class AgentState(TypedDict):
     last_tool_result: NotRequired[object]
     search_result: NotRequired[object]
     search_query: NotRequired[str]
+    web_search_result: NotRequired[object]
     complaint_result: NotRequired[object]

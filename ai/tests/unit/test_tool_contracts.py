@@ -20,6 +20,8 @@ from zipsai.orchestration.tool_contracts import (
     SearchEvidence,
     SearchResult,
     ToolFailure,
+    WebSearchArgs,
+    WebSearchResult,
 )
 
 
@@ -27,6 +29,7 @@ def test_tool_contracts_expose_current_workflow_schemas():
     assert [contract.name for contract in TOOL_CONTRACTS] == [
         "search_building_docs",
         "process_complaint_turn",
+        "search_public_web",
     ]
     for contract in TOOL_CONTRACTS:
         tool = contract.model_spec()
@@ -188,3 +191,41 @@ def test_search_result_rejects_wrong_source(source_type, valid):
     else:
         with pytest.raises(ValidationError):
             BuildingDocsResult.model_validate(payload)
+
+
+def test_web_search_args_accepts_only_a_nonempty_query():
+    assert WebSearchArgs.model_validate({"query": "  오늘 날씨  "}).query == "오늘 날씨"
+    for payload in ({"query": "  "}, {"query": "시설", "building_id": 2}):
+        with pytest.raises(ValidationError):
+            WebSearchArgs.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("source_type", "url", "valid"),
+    [
+        ("web", "https://example.com/a", True),
+        ("web", None, False),
+        ("building_document", "https://example.com/a", False),
+    ],
+)
+def test_web_search_result_requires_public_web_citations(source_type, url, valid):
+    payload = {
+        "status": "ok",
+        "evidence": [
+            {
+                "text": "근거 내용",
+                "citation": {
+                    "source_type": source_type,
+                    "source_id": None,
+                    "title": "근거 제목",
+                    "snippet": "근거 내용",
+                    "url": url,
+                },
+            }
+        ],
+    }
+    if valid:
+        assert WebSearchResult.model_validate(payload).evidence
+    else:
+        with pytest.raises(ValidationError):
+            WebSearchResult.model_validate(payload)
