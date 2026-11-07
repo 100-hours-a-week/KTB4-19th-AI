@@ -181,7 +181,7 @@ def _patched_search_flow() -> Iterator[None]:
         ),
     )
     with (
-        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.KNOWLEDGE}),
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"]}),
         patch.object(
             graph_module,
             "generate_tool_decision",
@@ -217,7 +217,7 @@ def _patched_complaint_flow() -> Iterator[None]:
         ),
     )
     with (
-        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT}),
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT, "planned_tools": ["process_complaint_turn"]}),
         patch.object(
             graph_module,
             "generate_tool_decision",
@@ -256,7 +256,7 @@ def _patched_no_results_complaint_flow() -> Iterator[None]:
         ),
     )
     with (
-        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT}),
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT, "planned_tools": ["search_building_docs", "process_complaint_turn"]}),
         patch.object(
             graph_module,
             "generate_tool_decision",
@@ -293,7 +293,7 @@ def _patched_protocol_retry_flow() -> Iterator[None]:
         patch.object(
             graph_module,
             "classify_intent",
-            lambda _state: {"route": Route.KNOWLEDGE},
+            lambda _state: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"]},
         ),
         patch.object(
             graph_module,

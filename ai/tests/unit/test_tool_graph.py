@@ -54,6 +54,232 @@ def _decision(*, content: str | None = None, calls: tuple[ToolCall, ...] = ()):
     return ToolDecision(message=SimpleNamespace(), content=content, tool_calls=calls)
 
 
+def _plan(route: Route, *planned_tools: str) -> dict[str, object]:
+    return {
+        "route": route,
+        "planned_tools": list(planned_tools),
+        "image_analysis": None,
+    }
+
+
+def test_action_server_rejects_tool_outside_plan(monkeypatch: pytest.MonkeyPatch):
+    calls = []
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ("process_complaint_turn",),
+            "pending_tool_calls": (
+                ToolCall("call-search", "search_building_docs", {"query": "주차"}),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: (
+            calls.append("search_building_docs"), BuildingDocsResult(status="no_results")
+        )[1],
+    )
+
+    result = graph_module._run_tool(state)
+
+    assert calls == []
+    assert result["last_tool_result"].code == "invalid_arguments"
+    assert result["tool_call_count"] == 1
+
+
+def test_public_web_gate_receives_private_text_when_plan_fallback_is_knowledge(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from zipsai.knowledge import web as web_module
+
+    state = _state()
+    state["route"] = Route.KNOWLEDGE
+    state["request"] = state["request"].model_copy(
+        update={
+            "message": state["request"].message.model_copy(
+                update={"text": "안방 천장에서 물이 새고 벽지가 젖었어요"}
+            )
+        }
+    )
+    state.update(
+        {
+            "planned_tools": ["search_public_web", "process_complaint_turn"],
+            "pending_tool_calls": (
+                ToolCall(
+                    "call-web",
+                    "search_public_web",
+                    {"query": "안방 천장에서 물이 새고 벽지가 젖었어요"},
+                ),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setattr(
+        web_module,
+        "search",
+        lambda _query: pytest.fail("private complaint text reached public search"),
+    )
+
+    result = graph_module._run_tool(state)
+
+    assert result["last_tool_result"].code == "invalid_arguments"
+
+
+def test_public_web_allows_current_question_when_no_complaint_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from zipsai.knowledge import web as web_module
+
+    question = "미세먼지 정보 알려줘"
+    state = _state()
+    state["request"] = state["request"].model_copy(
+        update={
+            "message": state["request"].message.model_copy(update={"text": question})
+        }
+    )
+    state.update(
+        {
+            "planned_tools": ["search_public_web"],
+            "pending_tool_calls": (
+                ToolCall("call-web", "search_public_web", {"query": question}),
+            ),
+            "agent_messages": [],
+        }
+    )
+    queries = []
+    monkeypatch.setattr(web_module, "search", lambda query: (queries.append(query), [])[1])
+
+    result = graph_module._run_tool(state)
+
+    assert queries == [question]
+    assert result["last_tool_result"].status == "no_results"
+
+
+def test_graph_answers_a_new_public_question_and_keeps_active_complaint(monkeypatch):
+    from zipsai.knowledge import web as web_module
+
+    question = "민원은 계속 진행하고 미세먼지 정보도 알려주세요"
+    request = _request().model_copy(
+        update={
+            "current_route": Route.COMPLAINT,
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(
+                issue_type="plumbing", location="욕실", symptom="천장에서 물이 샘"
+            ),
+            "message": _request().message.model_copy(update={"text": question}),
+        }
+    )
+    web_queries = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: _plan(Route.KNOWLEDGE, "search_public_web"),
+    )
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-web", "search_public_web", {"query": "미세먼지 정보"}),)),
+            _decision(content="미세먼지 농도가 높을 때는 외출을 줄이세요."),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
+    )
+    monkeypatch.setattr(
+        web_module,
+        "search",
+        lambda query: (
+            web_queries.append(query),
+            [{"title": "미세먼지 행동요령", "url": "https://example.com/air", "content": "외출을 줄이세요."}],
+        )[1],
+    )
+
+    result = graph_module.build_graph().invoke({**_state(), "request": request})
+
+    assert web_queries == ["미세먼지 정보"]
+    assert result["completed_tools"] == ("search_public_web",)
+    assert result["route"] is Route.KNOWLEDGE
+    assert result["complaint_state"] is ComplaintState.COLLECTING
+    assert result["result"].complaint_draft == request.complaint_draft
+    assert [citation.source_type for citation in result["result"].citations] == ["web"]
+    assert result["result"].qa_card_draft is None
+
+
+def test_graph_runs_planned_tools_sequentially_after_independent_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    offered: list[list[str]] = []
+    purposes: list[str] = []
+    decisions = iter(
+        [
+            _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "누수"}),)),
+            _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),)),
+            _decision(content="민원 정보를 정리했습니다."),
+        ]
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: _plan(
+            Route.KNOWLEDGE, "search_building_docs", "process_complaint_turn"
+        ),
+    )
+
+    def decide(_messages, tools, *, purpose):
+        offered.append([tool["function"]["name"] for tool in tools])
+        purposes.append(purpose)
+        return next(decisions)
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: ToolFailure(code="permission_denied", message="검색 불가"),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_args, **_kwargs: ComplaintTurnResult(
+            reply="장소를 알려주세요.",
+            complaint_state=ComplaintState.COLLECTING,
+            result=RouteResult(missing_fields=["location"]),
+        ),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert offered == [
+        ["search_building_docs", "process_complaint_turn"],
+        ["process_complaint_turn"],
+        [],
+    ]
+    assert purposes == ["action", "action", "composer"]
+    assert result["attempted_tools"] == ("search_building_docs", "process_complaint_turn")
+    assert result["tool_call_count"] == 2
+
+
+def test_empty_plan_uses_route_fallback_and_composer(monkeypatch: pytest.MonkeyPatch):
+    offered = []
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: _plan(Route.CLARIFY),
+    )
+
+    def decide(_messages, tools, *, purpose):
+        offered.append((tools, purpose))
+        return _decision(content="어떤 도움이 필요하신가요?")
+
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["planned_tools"] == []
+    assert offered == [([], "composer")]
+    assert result["route"] is Route.CLARIFY
+
+
 def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.MonkeyPatch):
     events: list[dict[str, str]] = []
     tool_events: list[tuple[str, str, float]] = []
@@ -66,10 +292,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.KNOWLEDGE,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
     monkeypatch.setattr(graph_module, "get_stream_writer", lambda: events.append)
@@ -135,13 +358,13 @@ def test_action_prompt_marks_web_results_untrusted_and_limits_them_to_public_fac
     assert "never include resident identifiers, complaint details, or image contents" in system
 
 
-def test_action_receives_full_active_catalog_regardless_of_route(monkeypatch: pytest.MonkeyPatch):
+def test_action_receives_only_planned_tools(monkeypatch: pytest.MonkeyPatch):
     offered: list[str] = []
 
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+        lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn"),
     )
 
     def decide(_messages, tools, **_kwargs):
@@ -152,11 +375,7 @@ def test_action_receives_full_active_catalog_regardless_of_route(monkeypatch: py
 
     graph_module.build_graph().invoke(_state())
 
-    assert offered == [
-        "search_building_docs",
-        "process_complaint_turn",
-        "search_public_web",
-    ]
+    assert offered == ["process_complaint_turn"]
 
 
 def test_graph_executes_web_search_and_keeps_web_result_separate(monkeypatch):
@@ -181,6 +400,7 @@ def test_graph_executes_web_search_and_keeps_web_result_separate(monkeypatch):
             "pending_tool_calls": (
                 ToolCall("call-web", "search_public_web", {"query": "일반 안내"}),
             ),
+            "planned_tools": ["search_public_web"],
             "agent_messages": [],
         }
     )
@@ -205,6 +425,7 @@ def test_graph_does_not_retry_public_web_search_automatically(monkeypatch):
             "pending_tool_calls": (
                 ToolCall("call-web", "search_public_web", {"query": "일반 안내"}),
             ),
+            "planned_tools": ["search_public_web"],
             "agent_messages": [],
         }
     )
@@ -332,7 +553,12 @@ def test_graph_composes_building_web_and_complaint_tools_within_three_calls(monk
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+        lambda _state: _plan(
+            Route.COMPLAINT,
+            "search_building_docs",
+            "search_public_web",
+            "process_complaint_turn",
+        ),
     )
     monkeypatch.setattr(
         graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
@@ -371,10 +597,7 @@ def test_prepare_does_not_create_tool_plan_in_graph_state(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.COMPLAINT,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn"),
     )
     monkeypatch.setattr(
         graph_module,
@@ -395,10 +618,7 @@ def test_agent_prompt_allows_a_natural_reply_or_one_tool(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.COMPLAINT,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn"),
     )
 
     def decide(messages, _tools, **_kwargs):
@@ -433,7 +653,7 @@ def test_agent_records_bounded_decision_without_logging_user_input(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     decisions = iter([decision, _decision(content="검색 결과를 안내합니다.")])
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
@@ -476,10 +696,9 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.COMPLAINT,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(
+            Route.COMPLAINT, "search_building_docs", "process_complaint_turn"
+        ),
     )
     monkeypatch.setattr(
         graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions)
@@ -549,7 +768,9 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+        lambda _state: _plan(
+            Route.COMPLAINT, "search_building_docs", "process_complaint_turn"
+        ),
     )
     monkeypatch.setattr(
         graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
@@ -611,7 +832,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.COMPLAINT, "image_analysis": None},
+        lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn"),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
     monkeypatch.setattr(graph_module, "_assemble_result", assemble)
@@ -625,7 +846,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
     assert result["route"] is Route.COMPLAINT
     assert result["result"].complaint_draft == tool_result.result.complaint_draft
     assert assembly_inputs == [tool_result.reply]
-    assert purposes == ["action", "action"]
+    assert purposes == ["action", "composer"]
 
 
 @pytest.mark.parametrize(
@@ -766,10 +987,9 @@ def test_graph_uses_final_agent_reply_after_second_tool_failure(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.COMPLAINT,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(
+            Route.COMPLAINT, "search_building_docs", "process_complaint_turn"
+        ),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions))
     monkeypatch.setattr(
@@ -808,7 +1028,7 @@ def test_graph_retries_a_transient_tool_failure_once(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(
         graph_module,
@@ -842,7 +1062,7 @@ def test_graph_does_not_retry_nontransient_tool_failure(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(
         graph_module,
@@ -879,10 +1099,7 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.KNOWLEDGE,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(
         graph_module, "generate_tool_decision", lambda *_args, **_kwargs: next(decisions)
@@ -924,7 +1141,7 @@ def test_graph_rejects_parallel_tool_calls_without_executing_them(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
+        lambda _state: _plan(Route.CLARIFY),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
     monkeypatch.setattr(
@@ -966,7 +1183,7 @@ def test_graph_records_parallel_tool_call_rejection(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
+        lambda _state: _plan(Route.CLARIFY),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
     monkeypatch.setattr(
@@ -997,7 +1214,7 @@ def test_graph_stops_offering_tools_after_repeated_parallel_requests(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.CLARIFY, "image_analysis": None},
+        lambda _state: _plan(Route.CLARIFY),
     )
 
     def decide(_messages, tools, **kwargs):
@@ -1027,10 +1244,7 @@ def test_graph_returns_invalid_arguments_to_agent_without_running_search(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {
-            "route": Route.KNOWLEDGE,
-            "image_analysis": None,
-        },
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(calls))
     monkeypatch.setattr(
@@ -1056,7 +1270,7 @@ def test_graph_retries_tool_call_mimicked_as_text(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
 
     def decide(messages, tools, **kwargs):
@@ -1089,7 +1303,7 @@ def test_graph_ends_safely_after_repeated_tool_call_mimic_text(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(
         graph_module,
@@ -1121,7 +1335,7 @@ def test_graph_ends_safely_when_composer_returns_an_unoffered_tool_call(
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _state: {"route": Route.KNOWLEDGE, "image_analysis": None},
+        lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs"),
     )
     monkeypatch.setattr(
         graph_module,

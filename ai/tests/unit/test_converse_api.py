@@ -704,7 +704,7 @@ def test_converse_runs_clarify_flow_through_real_graph(monkeypatch):
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _: {"route": Route.CLARIFY},
+        lambda _: {"route": Route.CLARIFY, "planned_tools": []},
     )
     monkeypatch.setattr(
         converse_module,
@@ -734,7 +734,7 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _: {"route": Route.COMPLAINT},
+        lambda _: {"route": Route.COMPLAINT, "planned_tools": ["process_complaint_turn"]},
     )
     monkeypatch.setattr(
         converse_module,
@@ -810,7 +810,7 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     monkeypatch.setattr(
         graph_module,
         "classify_intent",
-        lambda _: {"route": Route.KNOWLEDGE},
+        lambda _: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"]},
     )
     monkeypatch.setattr(
         converse_module,
@@ -875,8 +875,10 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
     monkeypatch.setattr(
         intent_module,
         "generate_structured",
-        lambda *_args, **_kwargs: intent_module._RouteDecision(
-            route=Route.COMPLAINT, contextualized_message=None
+        lambda *_args, **_kwargs: intent_module._ToolPlan(
+            planned_tools=["process_complaint_turn"],
+            route=Route.COMPLAINT,
+            contextualized_message=None,
         ),
     )
     monkeypatch.setattr(

@@ -4,7 +4,10 @@ import pytest
 
 import zipsai.orchestration.intent as intent_module
 from zipsai.contracts.converse import (
+    ComplaintDraft,
+    ComplaintState,
     ConverseRequest,
+    HistoryTurn,
     ImageAnalysis,
     ImageObservation,
     Route,
@@ -58,9 +61,108 @@ def _build_state(
 
 def _decision(route: Route, contextualized_message: str | None = None):
     return SimpleNamespace(
+        planned_tools=[],
         route=route,
         contextualized_message=contextualized_message,
     )
+
+
+def _plan_decision(
+    planned_tools: list[str],
+    route: Route,
+    contextualized_message: str | None = None,
+):
+    return SimpleNamespace(
+        planned_tools=planned_tools,
+        route=route,
+        contextualized_message=contextualized_message,
+    )
+
+
+@pytest.mark.parametrize(
+    ("planned_tools", "route"),
+    [
+        (["process_complaint_turn"], Route.COMPLAINT),
+        (["search_building_docs"], Route.KNOWLEDGE),
+        (["search_public_web", "process_complaint_turn", "process_complaint_turn"], Route.KNOWLEDGE),
+        ([], Route.KNOWLEDGE),
+    ],
+    ids=["complaint", "building-knowledge", "mixed", "no-tool"],
+)
+def test_plan_returns_distinct_tools_and_response_route_fallback(
+    monkeypatch, planned_tools, route
+):
+    schemas = []
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda _system, _user, schema, **_kwargs: (
+            schemas.append(schema), _plan_decision(planned_tools, route)
+        )[1],
+    )
+
+    result = classify_intent(_build_state("질문 또는 민원"))
+
+    assert result["planned_tools"] == list(dict.fromkeys(planned_tools))
+    assert result["route"] is route
+    assert "planned_tools" in schemas[0].model_fields
+    assert "route" in schemas[0].model_fields
+    assert "arguments" not in schemas[0].model_fields
+
+
+def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
+    state = _build_state("욕실이요", current_route=Route.COMPLAINT)
+    state["request"] = state["request"].model_copy(
+        update={
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
+            "conversation_history": [
+                HistoryTurn(message_id="a1", role="assistant", text="어디에서 생겼나요?")
+            ],
+        }
+    )
+    prompt_inputs = []
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda system, user, *_args, **_kwargs: (
+            prompt_inputs.append((system, user)),
+            _plan_decision(["process_complaint_turn"], Route.COMPLAINT),
+        )[1],
+    )
+
+    result = classify_intent(state)
+
+    assert result["planned_tools"] == ["process_complaint_turn"]
+    system, user = prompt_inputs[0]
+    assert "continuation hints only" in system
+    assert "clear new question" in system
+    assert "현재 민원 상태 힌트: collecting" in user
+    assert '"symptom":"물이 새요"' in user
+    assert "미수집 민원 항목 힌트: location" in user
+    assert "assistant: 어디에서 생겼나요?" in user
+
+
+def test_clear_new_question_does_not_inherit_complaint_tool_plan(monkeypatch):
+    state = _build_state("주차 등록은 어떻게 하나요?", current_route=Route.COMPLAINT)
+    state["request"] = state["request"].model_copy(
+        update={
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
+        }
+    )
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda *_args, **_kwargs: _plan_decision(
+            ["search_building_docs"], Route.KNOWLEDGE
+        ),
+    )
+
+    result = classify_intent(state)
+
+    assert result["planned_tools"] == ["search_building_docs"]
+    assert result["route"] is Route.KNOWLEDGE
 
 
 def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
@@ -112,7 +214,7 @@ def test_intent_prompt_keeps_observation_and_context_rules(monkeypatch):
     assert "현재 이미지 관찰" in user
 
 
-def test_intent_prompt_classifies_route_without_planning_tools(monkeypatch):
+def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkeypatch):
     prompts = []
 
     def classify(system, user, *_args, **_kwargs):
@@ -124,7 +226,9 @@ def test_intent_prompt_classifies_route_without_planning_tools(monkeypatch):
     classify_intent(_build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘"))
 
     system, _ = prompts[0]
-    assert "route: classify the contextualized current request" in system
+    assert "planned_tools: the distinct tools needed" in system
+    assert "the list is not an execution order" in system
+    assert "route: representative response route fallback" in system
     assert "required_capabilities" not in system
 
 
@@ -146,12 +250,13 @@ def test_text_only_classifies_without_vlm(monkeypatch):
 
     assert result == {
         "route": Route.KNOWLEDGE,
+        "planned_tools": [],
         "image_analysis": None,
         "contextualized_message": "쓰레기 배출일이 언제예요?",
     }
 
 
-def test_classify_intent_does_not_return_tool_plan(monkeypatch):
+def test_classify_intent_returns_empty_plan_when_model_selects_no_tools(monkeypatch):
     monkeypatch.setattr(
         intent_module,
         "generate_structured",
@@ -165,7 +270,7 @@ def test_classify_intent_does_not_return_tool_plan(monkeypatch):
         _build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘")
     )
 
-    assert "required_capabilities" not in result
+    assert result["planned_tools"] == []
 
 
 def test_image_only_success_passes_observation_to_route_model(monkeypatch):

@@ -1,13 +1,19 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 _INTENT_SYSTEM_PROMPT = (
-    "Interpret the resident's current turn, then route it to complaint (a facility problem or "
-    "repair/registration), knowledge (a building-information question), or clarify (unclear intent). "
-    "Use the current text, relevant conversation history, image analysis, and current_route as "
-    "context. The current turn is primary: history or current_route alone must not override a clear "
-    "new request. Choose clarify when you cannot tell the user's intent or resolve what the message "
-    "refers to. Missing complaint details such as location or date do not make its intent unclear; "
-    "route it as complaint so the next step can ask for the missing detail.\n\n"
+    "Plan which tools are needed for the resident's current turn. Return a distinct list of tool names "
+    "and a response route fallback; do not choose tool order or arguments. The Action step chooses "
+    "one planned tool and its arguments at a time. Use the current text, relevant conversation "
+    "history, image analysis, current_route, complaint state, draft, and missing fields as context. "
+    "The current turn is primary: prior route and complaint state are continuation hints only and "
+    "must not override a clear new request or clear new question. A clear answer to the last complaint question or a "
+    "missing complaint field needs process_complaint_turn. A clear new building question needs "
+    "search_building_docs even when a complaint is active. A general/current public-information "
+    "question needs search_public_web. A mixed request may need multiple tools. Do not use the "
+    "complaint tool for simple information questions. Do not add resident identifiers, complaint "
+    "details, or image contents to public web queries. Choose an empty tool list when no tool is "
+    "needed; use clarify as the fallback only when intent remains ambiguous. Missing complaint "
+    "details do not make a clear facility report ambiguous.\n\n"
     "Contextualize the current turn:\n"
     "- Resolve only references, omitted topics/subjects/actions, comparisons, or corrections that "
     "the relevant recent conversation or this turn's image analysis makes clear. Do not limit this "
@@ -25,8 +31,10 @@ _INTENT_SYSTEM_PROMPT = (
     "clear context. Return the original text unchanged when no resolution is needed. For an "
     "image-only turn, return a message only when the active request is clear from history; otherwise "
     "return null.\n"
-    "route: classify the contextualized current request. Use clarify when its intent remains "
-    "ambiguous; do not guess.\n"
+    "planned_tools: the distinct tools needed for this turn; the list is not an execution order and "
+    "contains no arguments. Use an empty list for natural-language replies that need no tool.\n"
+    "route: representative response route fallback for a turn with no tool result. Use clarify when "
+    "intent remains ambiguous; do not guess.\n"
 )
 
 IMAGE_OBSERVATION_PROMPT = (
@@ -51,7 +59,10 @@ _INTENT_USER_TEMPLATE = (
     "현재 발화: {message_text}\n"
     "이미지 첨부: {image_present}\n"
     "이전 대화:\n{conversation_history}\n"
-    "현재 진행 중인 route: {current_route}"
+    "현재 route 힌트: {current_route}\n"
+    "현재 민원 상태 힌트: {current_complaint_state}\n"
+    "기존 민원 초안 힌트: {complaint_draft}\n"
+    "미수집 민원 항목 힌트: {missing_complaint_fields}"
 )
 
 INTENT_PROMPT = ChatPromptTemplate.from_messages(
