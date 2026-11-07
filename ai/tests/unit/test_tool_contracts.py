@@ -40,6 +40,29 @@ def test_tool_contracts_expose_current_workflow_schemas():
     assert all(not hasattr(contract, "terminal") for contract in TOOL_CONTRACTS)
 
 
+def test_tool_descriptions_define_use_conditions_and_exclusions():
+    descriptions = {contract.name: contract.description for contract in TOOL_CONTRACTS}
+
+    assert "건물별 정보" in descriptions["search_building_docs"]
+    assert "일반적인 공개 정보" in descriptions["search_building_docs"]
+    assert "시설 문제 신고" in descriptions["process_complaint_turn"]
+    assert "단순 정보 질문에는 사용하지 않는다" in descriptions["process_complaint_turn"]
+    assert "일반적·최신 공개 정보" in descriptions["search_public_web"]
+    assert "건물별 규정" in descriptions["search_public_web"]
+
+
+def test_public_web_query_guidance_excludes_private_complaint_details():
+    web_contract = next(
+        contract for contract in TOOL_CONTRACTS if contract.name == "search_public_web"
+    )
+    query_description = web_contract.args_model.model_json_schema()["properties"]["query"][
+        "description"
+    ]
+
+    assert "민원 세부 내용" in query_description
+    assert "개인정보" in query_description
+
+
 def test_search_args_accept_query_only():
     assert BuildingDocsArgs.model_validate({"query": "  분리수거 시간  "}).query == "분리수거 시간"
     for payload in ({"query": "  "}, {"query": "시설", "building_id": 2}):
