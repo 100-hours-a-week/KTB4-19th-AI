@@ -161,7 +161,7 @@ def _assemble_result(
         Route.COMPLAINT if complaint_result else route or Route.CLARIFY,
         complaint_result.complaint_state
         if complaint_result
-        else request.current_complaint_state if route is Route.COMPLAINT else None,
+        else request.current_complaint_state,
         result,
     )
 
@@ -170,11 +170,10 @@ def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
     complaint = state.get("complaint_result")
     if (
         isinstance(complaint, ComplaintTurnResult)
-        and complaint.result.missing_fields
         and complaint.reply.strip()
         and complaint.reply.strip() not in reply
     ):
-        reply = f"{reply.rstrip()} {complaint.reply.strip()}".strip()
+        reply = f"{reply.rstrip()}\n\n{complaint.reply.strip()}".strip()
 
     route, complaint_state, result = _assemble_result(
         state.get("route"),

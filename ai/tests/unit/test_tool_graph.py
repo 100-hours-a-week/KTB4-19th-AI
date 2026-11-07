@@ -720,7 +720,7 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
 
     assert result["route"] is Route.COMPLAINT
     assert result["reply"] == (
-        "처리 기한은 확인 중입니다. 어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+        "처리 기한은 확인 중입니다.\n\n어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
     )
     assert result["complaint_result"] == tool_result
     assert result["complaint_state"] == tool_result.complaint_state
@@ -794,6 +794,7 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
     assert result["tool_call_count"] == 2
     assert result["reply"] == (
         "건물 자료에서 처리 기한은 찾지 못했지만, 욕실 누수 민원 초안은 정리했습니다."
+        "\n\n욕실 누수 민원 초안을 정리했습니다."
     )
     assert result["result"].qa_card_draft.question == "누수 처리 기한"
     assert result["result"].complaint_draft == complaint_result.result.complaint_draft
@@ -964,6 +965,63 @@ def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure
 
     assert route is Route.COMPLAINT
     assert complaint_state is ComplaintState.COLLECTING
+
+
+def test_response_assembler_preserves_ongoing_complaint_state_on_knowledge_route():
+    request = _request().model_copy(
+        update={
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
+        }
+    )
+
+    route, complaint_state, result = graph_module._assemble_result(
+        Route.KNOWLEDGE, request, None, None, None
+    )
+
+    assert route is Route.KNOWLEDGE
+    assert complaint_state is ComplaintState.COLLECTING
+    assert result.complaint_draft == request.complaint_draft
+
+
+def test_agent_result_separates_composer_and_complaint_replies(monkeypatch):
+    complaint = ComplaintTurnResult(
+        reply="어느 장소에서 물이 새는지 알려주세요.",
+        complaint_state=ComplaintState.COLLECTING,
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(issue_type="plumbing"),
+            missing_fields=["location", "symptom"],
+        ),
+    )
+    state = _state()
+    state["complaint_result"] = complaint
+
+    result = graph_module._agent_result(state, "건물 자료에서 처리 기한을 찾지 못했습니다.")
+
+    assert result["reply"] == (
+        "건물 자료에서 처리 기한을 찾지 못했습니다.\n\n"
+        "어느 장소에서 물이 새는지 알려주세요."
+    )
+    assert result["result"].complaint_draft == complaint.result.complaint_draft
+    assert result["result"].missing_fields == ["location", "symptom"]
+
+
+def test_agent_result_includes_completed_complaint_workflow_reply():
+    complaint = ComplaintTurnResult(
+        reply="민원 초안을 정리했습니다.",
+        complaint_state=None,
+        result=RouteResult(
+            complaint_draft=ComplaintDraft(
+                issue_type="plumbing", location="욕실", symptom="물이 새요"
+            )
+        ),
+    )
+    state = _state()
+    state["complaint_result"] = complaint
+
+    result = graph_module._agent_result(state, "관련 처리 기한은 확인할 수 없었습니다.")
+
+    assert result["reply"] == "관련 처리 기한은 확인할 수 없었습니다.\n\n민원 초안을 정리했습니다."
 
 
 def test_empty_json_response_is_not_mistaken_for_tool_arguments():
