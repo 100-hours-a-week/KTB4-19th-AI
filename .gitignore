@@ -209,9 +209,6 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
-# Live Qwen/Tavily smoke-test outputs contain external search results.
-ai/.local-test-results/
-
 # Ruff stuff:
 .ruff_cache/
 
@@ -234,3 +231,5 @@ __marimo__/
 
 # 표 파서 비교 측정. 스크립트와 결과는 커밋하지 않는다.
 evals/table/
+# 스캔·이미지 OCR 비교 측정. 스크립트와 결과는 커밋하지 않는다.
+evals/scan/
