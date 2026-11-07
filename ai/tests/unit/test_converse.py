@@ -38,25 +38,29 @@ def test_converse_request_accepts_real_example():
     assert req.current_complaint_state is ComplaintState.COLLECTING
 
 
-def test_converse_request_rejects_complaint_state_for_non_complaint_route():
-    with pytest.raises(ValidationError):
-        ConverseRequest.model_validate(
-            {
-                "building_id": 1,
-                "room_no": "301",
-                "resident_id": "linda",
-                "conversation_id": "conv-001",
-                "turn_id": "turn-001",
-                "current_route": "knowledge",
-                "current_complaint_state": "collecting",
-                "message": {
-                    "message_id": "msg-001",
-                    "text": "주차는요?",
-                },
-                "conversation_history": [],
-                "complaint_draft": None,
-            }
-        )
+def test_converse_request_accepts_knowledge_route_with_active_complaint():
+    request = ConverseRequest.model_validate(
+        {
+            "building_id": 1,
+            "room_no": "301",
+            "resident_id": "linda",
+            "conversation_id": "conv-001",
+            "turn_id": "turn-001",
+            "trace_id": "trace-001",
+            "current_route": "knowledge",
+            "current_complaint_state": "collecting",
+            "message": {
+                "message_id": "msg-001",
+                "text": "주차는요?",
+            },
+            "conversation_history": [],
+            "complaint_draft": {"issue_type": "plumbing", "symptom": "물이 새요"},
+        }
+    )
+
+    assert request.current_route is Route.KNOWLEDGE
+    assert request.current_complaint_state is ComplaintState.COLLECTING
+    assert request.complaint_draft.symptom == "물이 새요"
 
 
 def test_converse_request_rejects_legacy_conversation_state_field():
@@ -139,15 +143,18 @@ def test_incoming_message_rejects_non_http_image_url(url: str):
         )
 
 
-def test_converse_data_rejects_complaint_state_for_non_complaint_route():
-    with pytest.raises(ValidationError):
-        ConverseData(
-            route=Route.KNOWLEDGE,
-            next_complaint_state=ComplaintState.COLLECTING,
-            reply="주차는 지하 주차장을 이용해 주세요.",
-            result=RouteResult(),
-            meta=Meta(model="test-model", timing_ms=1),
-        )
+def test_converse_data_accepts_knowledge_route_with_active_complaint_state():
+    response = ConverseData(
+        route=Route.KNOWLEDGE,
+        next_complaint_state=ComplaintState.COLLECTING,
+        reply="주차는 지하 주차장을 이용해 주세요.",
+        result=RouteResult(complaint_draft=ComplaintDraft(symptom="물이 새요")),
+        meta=Meta(model="test-model", timing_ms=1),
+    )
+
+    assert response.route is Route.KNOWLEDGE
+    assert response.next_complaint_state is ComplaintState.COLLECTING
+    assert response.result.complaint_draft.symptom == "물이 새요"
 
 
 def test_complaint_draft_rejects_invalid_issue_type():

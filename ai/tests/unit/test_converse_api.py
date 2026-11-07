@@ -978,24 +978,34 @@ def test_converse_rejects_empty_message_before_graph_invocation(monkeypatch):
     }
 
 
-def test_converse_returns_standard_error_for_contract_violation():
+def test_converse_returns_knowledge_route_and_preserves_active_complaint(monkeypatch):
+    complaint_draft = ComplaintDraft(issue_type="plumbing", symptom="물이 새요")
+    graph = _FakeGraph(
+        {
+            "route": Route.KNOWLEDGE,
+            "complaint_state": "collecting",
+            "reply": "주차는 지하 주차장을 이용해 주세요.",
+            "result": RouteResult(complaint_draft=complaint_draft),
+        }
+    )
+    monkeypatch.setattr(converse_module, "build_graph", lambda: graph, raising=False)
+    monkeypatch.setattr(
+        converse_module,
+        "get_settings",
+        lambda: Settings("key", None, "test-model", 30),
+        raising=False,
+    )
     payload = _payload()
     payload["current_route"] = "knowledge"
     payload["current_complaint_state"] = "collecting"
+    payload["complaint_draft"] = {"issue_type": "plumbing", "symptom": "물이 새요"}
 
     response = TestClient(app).post("/api/v3/ai/converse", json=payload)
 
-    assert response.status_code == 422
-    assert response.json() == {
-        "message": "ai_response_error",
-        "error": {
-            "code": "VALIDATION_ERROR",
-            "detail": "Request validation failed",
-            "retryable": False,
-        },
-        "turn_id": "turn-001",
-        "trace_id": "trace-001",
-    }
+    assert response.status_code == 200
+    assert response.json()["data"]["route"] == "knowledge"
+    assert response.json()["data"]["next_complaint_state"] == "collecting"
+    assert response.json()["data"]["result"]["complaint_draft"]["symptom"] == "물이 새요"
 
 
 def test_converse_returns_standard_error_for_missing_required_field():
