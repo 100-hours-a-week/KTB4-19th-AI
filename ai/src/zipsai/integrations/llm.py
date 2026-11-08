@@ -270,7 +270,7 @@ def generate_tool_decision(
                 "model": selected.llm_model,
                 "messages": messages,
                 **({"tools": tools} if tools else {}),
-                **({"tool_choice": "auto", "parallel_tool_calls": False} if tools else {}),
+                **({"tool_choice": "required", "parallel_tool_calls": False} if tools else {}),
                 **({"name": "generate-tool-decision"} if get_tracing_client() else {}),
             }
             return _get_client(

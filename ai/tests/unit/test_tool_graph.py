@@ -369,13 +369,65 @@ def test_action_receives_only_planned_tools(monkeypatch: pytest.MonkeyPatch):
 
     def decide(_messages, tools, **_kwargs):
         offered.extend(tool["function"]["name"] for tool in tools)
-        return _decision(content="요청을 확인하겠습니다.")
+        return (
+            _decision(calls=(ToolCall("call-complaint", "process_complaint_turn", {}),))
+            if tools
+            else _decision(content="요청을 확인하겠습니다.")
+        )
 
     monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
 
     graph_module.build_graph().invoke(_state())
 
     assert offered == ["process_complaint_turn"]
+
+
+def test_action_retries_when_model_skips_a_planned_tool(monkeypatch: pytest.MonkeyPatch):
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ("search_building_docs",),
+            "attempted_tools": (),
+            "agent_messages": [],
+            "protocol_retry_count": 0,
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: _decision(content="주차는 지하에 있습니다."),
+    )
+
+    result = graph_module._run_agent(state)
+
+    assert result["protocol_retry_pending"] is True
+    assert result["protocol_retry_count"] == 1
+    assert "currently offered native function tools" in result["agent_messages"][-1]["content"]
+    assert "다시 말씀해 주세요" not in result.get("reply", "")
+
+
+def test_action_fails_closed_after_repeatedly_skipping_a_planned_tool(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ("search_building_docs",),
+            "attempted_tools": (),
+            "agent_messages": [],
+            "protocol_retry_count": 1,
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "generate_tool_decision",
+        lambda *_args, **_kwargs: _decision(content="검색하지 않고 답변합니다."),
+    )
+
+    result = graph_module._run_agent(state)
+
+    assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
+    assert result["protocol_retry_pending"] is False
 
 
 def test_graph_executes_web_search_and_keeps_web_result_separate(monkeypatch):
@@ -640,8 +692,8 @@ def test_agent_prompt_allows_a_natural_reply_or_one_tool(
 @pytest.mark.parametrize(
     ("decision", "expected"),
     [
-        (_decision(content="주차 안내입니다."), ["no_tool"]),
-        (_decision(content='search_building_docs {"query":"비공개 질문"}'), ["protocol_failure", "no_tool"]),
+        (_decision(content="주차 안내입니다."), ["protocol_failure", "protocol_failure"]),
+        (_decision(content='search_building_docs {"query":"비공개 질문"}'), ["protocol_failure", "protocol_failure"]),
         (_decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "비공개 질문"}),)), ["tool_selected", "no_tool"]),
     ],
     ids=["natural-reply", "tool-call-as-text", "native-tool-call"],
@@ -1339,10 +1391,10 @@ def test_graph_retries_tool_call_mimicked_as_text(monkeypatch: pytest.MonkeyPatc
 
     result = graph_module.build_graph().invoke(_state())
 
-    assert result["reply"] == "현재 정보로 답변하겠습니다."
+    assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
     assert len(calls) == 2
     assert any(
-        isinstance(message, dict) and "native function calls" in message.get("content", "")
+        isinstance(message, dict) and "currently offered native function tools" in message.get("content", "")
         for message in calls[1][0]
     )
     assert calls[1][1]

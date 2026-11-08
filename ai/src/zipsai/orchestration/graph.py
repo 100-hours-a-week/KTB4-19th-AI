@@ -40,8 +40,8 @@ _PARALLEL_CALL_MESSAGE = "한 번에 하나의 작업만 요청할 수 있습니
 _INVALID_CALL_MESSAGE = "요청한 작업을 처리할 수 없습니다."
 _PROTOCOL_FAILURE_MESSAGE = "요청한 작업을 처리하지 못했습니다. 다시 말씀해 주세요."
 _PROTOCOL_RETRY_MESSAGE = (
-    "Use native function calls for tools. Do not write tool names or tool arguments as text. "
-    "If no tool is needed, answer naturally in Korean."
+    "A planned tool is still required for this turn. Use one of the currently offered native "
+    "function tools now; do not answer naturally or write tool names or arguments as text."
 )
 _AGENT_SYSTEM = (
     "You are a residential-building assistant. Decide whether to use a tool or reply in Korean. "
@@ -207,7 +207,7 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     route_label = route.value if route else "unknown"
     decision_outcome = (
         "protocol_failure"
-        if tool_text
+        if tool_text or (tools and not decision.tool_calls)
         else "tool_selected"
         if decision.tool_calls
         else "no_tool"
@@ -223,9 +223,10 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     )
     messages.append(decision.message)
     if not decision.tool_calls:
-        if tool_text:
+        if tool_text or tools:
             observe_tool_rejection("protocol_failure")
-            logger.warning("tool_call_protocol_failure", extra={"reason": "tool_call_as_text"})
+            reason = "tool_call_as_text" if tool_text else "planned_tool_skipped"
+            logger.warning("tool_call_protocol_failure", extra={"reason": reason})
             if state.get("protocol_retry_count", 0) < _MAX_PROTOCOL_RETRIES:
                 messages.append({"role": "system", "content": _PROTOCOL_RETRY_MESSAGE})
                 return {
