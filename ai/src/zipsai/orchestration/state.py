@@ -8,7 +8,9 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 
-ToolName = Literal["search_building_docs", "process_complaint_turn"]
+ToolName = Literal[
+    "search_building_docs", "process_complaint_turn", "search_public_web"
+]
 
 
 class AgentState(TypedDict):
@@ -20,6 +22,7 @@ class AgentState(TypedDict):
     image_analysis: ImageAnalysis | None
     image_analysis_failed: NotRequired[bool]
     contextualized_message: NotRequired[str | None]
+    planned_tools: NotRequired[list[ToolName]]
     attempted_tools: NotRequired[tuple[ToolName, ...]]
     completed_tools: NotRequired[tuple[ToolName, ...]]
     agent_messages: NotRequired[list[object]]
@@ -30,4 +33,6 @@ class AgentState(TypedDict):
     last_tool_result: NotRequired[object]
     search_result: NotRequired[object]
     search_query: NotRequired[str]
+    web_search_query: NotRequired[str]
+    web_search_result: NotRequired[object]
     complaint_result: NotRequired[object]

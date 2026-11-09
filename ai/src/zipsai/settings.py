@@ -38,6 +38,9 @@ EMBEDDING_API_URL: Final = os.getenv("EMBEDDING_API_URL", "http://embedding:8000
 AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
 # 인증을 켜지 않은 Qdrant에는 키가 없다. 필수로 두면 로컬과 테스트가 기동하지 못한다.
 QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
+# 검색 기능은 선택 사항이라 키가 없어도 서버 기동은 허용한다.
+TAVILY_API_KEY: Final = os.getenv("TAVILY_API_KEY")
+TAVILY_TIMEOUT_SECONDS: Final = float(os.getenv("TAVILY_TIMEOUT_SECONDS", "8"))
 # 마스킹 뒤 답변이 10자보다 짧으면 "처리 완료"같은 의미 없는 답으로 보고 색인하지 않는다.
 COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
 # 답변 반영·삭제가 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.

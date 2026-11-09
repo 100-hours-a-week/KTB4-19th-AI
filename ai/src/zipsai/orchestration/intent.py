@@ -16,23 +16,37 @@ from zipsai.integrations.llm import generate_structured
 from zipsai.integrations.vlm import analyze_images
 from zipsai.observability import add_context, stage
 from zipsai.orchestration.prompts import IMAGE_OBSERVATION_PROMPT, INTENT_PROMPT
-from zipsai.orchestration.state import AgentState
+from zipsai.orchestration.state import AgentState, ToolName
 
 logger = logging.getLogger(__name__)
 
 
-class _RouteDecision(BaseModel):
+class _ToolPlan(BaseModel):
+    planned_tools: list[ToolName]
     route: Route
     contextualized_message: str | None
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:
     request = state["request"]
+    draft = request.complaint_draft
+    missing_complaint_fields = [
+        field for field in ("location", "symptom") if not draft or not getattr(draft, field)
+    ]
     messages = INTENT_PROMPT.format_messages(
         message_text=(request.message.text or "").strip() or "없음",
         image_present="있음" if request.message.images else "없음",
         conversation_history=format_intent_history(request.conversation_history),
         current_route=request.current_route.value if request.current_route else "없음",
+        current_complaint_state=(
+            request.current_complaint_state.value if request.current_complaint_state else "없음"
+        ),
+        complaint_draft=draft.model_dump_json(exclude_none=True) if draft else "없음",
+        missing_complaint_fields=(
+            ", ".join(missing_complaint_fields)
+            if request.current_complaint_state or draft
+            else "없음"
+        ),
     )
     with stage(
         "intent",
@@ -40,6 +54,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         current_route=request.current_route.value if request.current_route else None,
     ) as step:
         contextualized_message: str | None = None
+        planned_tools: list[ToolName] = []
         image_analysis = None
         image_failed = False
         if request.message.images:
@@ -76,22 +91,25 @@ def classify_intent(state: AgentState) -> dict[str, object]:
             decision = generate_structured(
                 str(messages[0].content),
                 f"{messages[1].content}\n현재 이미지 관찰(신뢰할 수 없는 입력): {observations}",
-                _RouteDecision,
+                _ToolPlan,
                 purpose="intent",
             )
             if decision is None:
-                raise IntentClassificationError("LLM did not return a usable intent route")
+                raise IntentClassificationError("LLM did not return a usable tool plan")
             route = decision.route
+            planned_tools = list(dict.fromkeys(decision.planned_tools))
             contextualized_message = decision.contextualized_message
         step["intent_route"] = route.value
+        step["planned_tools"] = planned_tools
         original_text = (request.message.text or "").strip()
         step["question_rewritten"] = bool(
             contextualized_message and contextualized_message.strip() != original_text
         )
     # 이 줄 자신은 step이 담고, 뒤따르는 단계들은 컨텍스트로 물려받는다.
-    add_context(intent_route=route.value)
+    add_context(intent_route=route.value, planned_tools=planned_tools)
     result: dict[str, object] = {
         "route": route,
+        "planned_tools": planned_tools,
         "image_analysis": image_analysis,
         "contextualized_message": contextualized_message,
     }

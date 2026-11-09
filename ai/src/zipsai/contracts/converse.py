@@ -28,13 +28,6 @@ class ComplaintSwitch(str, Enum):
     ACCEPT = "accept"
 
 
-def _require_complaint_state_only_for_complaint_route(
-    route: Route | None, complaint_state: ComplaintState | None, field_name: str
-) -> None:
-    if route is not Route.COMPLAINT and complaint_state is not None:
-        raise ValueError(f"{field_name} requires route=complaint")
-
-
 IssueType = Literal[
     "plumbing",
     "heating_cooling",
@@ -139,16 +132,6 @@ class ConverseRequest(BaseModel):
     conversation_history: list[HistoryTurn]
     complaint_draft: ComplaintDraft | None
 
-    @model_validator(mode="after")
-    def validate_complaint_state(self) -> "ConverseRequest":
-        _require_complaint_state_only_for_complaint_route(
-            self.current_route,
-            self.current_complaint_state,
-            "current_complaint_state",
-        )
-        return self
-
-
 class Meta(BaseModel):
     model: str
     timing_ms: int
@@ -182,14 +165,6 @@ class ConverseData(BaseModel):
     reply: str
     result: RouteResult
     meta: Meta
-
-    @model_validator(mode="after")
-    def validate_next_complaint_state(self) -> "ConverseData":
-        _require_complaint_state_only_for_complaint_route(
-            self.route, self.next_complaint_state, "next_complaint_state"
-        )
-        return self
-
 
 class ConverseResponse(BaseModel):
     code: Literal["ai_response_success"]
