@@ -626,15 +626,21 @@ def test_search_only_composer_sees_only_search_question_and_results(
 
 
 @pytest.mark.parametrize(
-    "order, complaint_reply",
+    "order, no_evidence_reply, complaint_reply, qa_question",
     [
-        (("search_building_docs",), None),
-        (("process_complaint_turn", "search_building_docs"), "어디에서 생긴 문제인가요?"),
+        (("search_building_docs",), NO_EVIDENCE_REPLY, None, "방문 차량 등록 방법"),
+        # 대화 하나에 카드 하나: 이번 턴에 민원이 처리되면 민원을 우선하고 QA 카드는 만들지 않는다.
+        (
+            ("process_complaint_turn", "search_building_docs"),
+            graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY,
+            "어디에서 생긴 문제인가요?",
+            None,
+        ),
     ],
     ids=["search-only", "complaint-and-search"],
 )
-def test_building_no_results_uses_fixed_qa_card_reply_without_composer(
-    monkeypatch: pytest.MonkeyPatch, order, complaint_reply
+def test_building_no_results_uses_fixed_reply_without_composer(
+    monkeypatch: pytest.MonkeyPatch, order, no_evidence_reply, complaint_reply, qa_question
 ):
     composer_messages: list[list[object]] = []
 
@@ -645,12 +651,12 @@ def test_building_no_results_uses_fixed_qa_card_reply_without_composer(
         composer_messages,
     )
 
-    # 백엔드가 이 고정 문구로 QA 카드를 저장하므로 LLM이 바꿔 쓰지 않게 한다.
     assert composer_messages == []
     assert result["reply"] == "\n\n".join(
-        part for part in (NO_EVIDENCE_REPLY, complaint_reply) if part
+        part for part in (no_evidence_reply, complaint_reply) if part
     )
-    assert result["result"].qa_card_draft.question == "방문 차량 등록 방법"
+    qa_card = result["result"].qa_card_draft
+    assert (qa_card.question if qa_card else None) == qa_question
 
 
 def test_building_no_results_reply_is_added_after_web_answer(monkeypatch: pytest.MonkeyPatch):
@@ -1177,11 +1183,12 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
 
     assert result["route"] is Route.COMPLAINT
     assert result["reply"] == (
-        f"{NO_EVIDENCE_REPLY}\n\n어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+        f"{graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY}\n\n"
+        "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
     )
     assert result["complaint_result"] == tool_result
     assert result["complaint_state"] == tool_result.complaint_state
-    assert result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert result["result"].qa_card_draft is None
     assert result["result"].complaint_draft == tool_result.result.complaint_draft
     assert result["result"].missing_fields == ["symptom"]
     assert result["result"].has_sufficient_evidence is False
@@ -1250,9 +1257,9 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
     assert executed == ["complaint", "search"]
     assert result["tool_call_count"] == 2
     assert result["reply"] == (
-        f"{NO_EVIDENCE_REPLY}\n\n욕실 누수 민원 초안을 정리했습니다."
+        f"{graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY}\n\n욕실 누수 민원 초안을 정리했습니다."
     )
-    assert result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert result["result"].qa_card_draft is None
     assert result["result"].complaint_draft == complaint_result.result.complaint_draft
     assert result["completed_tools"] == (
         "process_complaint_turn",
@@ -1345,7 +1352,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
                 result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing")),
             ),
             False,
-            True,
+            False,
             True,
         ),
         (

@@ -371,16 +371,16 @@ def main(*, live: bool = False) -> int:
 
     with _patched_no_results_complaint_flow():
         combined_result = _run(
-            "3. 검색 no_results + 민원 초안: 두 구조화 결과 함께 조립",
+            "3. 검색 no_results + 민원 초안: 대화 하나에 카드 하나라 민원 우선",
             _request("누수 처리 기한도 알려주고, 욕실 누수 민원도 작성해 주세요."),
         )
-    assert combined_result["result"].qa_card_draft.question == "누수 처리 기한"
+    assert combined_result["result"].qa_card_draft is None
     assert combined_result["result"].complaint_draft.location == "욕실"
     assert combined_result["completed_tools"] == (
         "search_building_docs",
         "process_complaint_turn",
     )
-    print("  시나리오 검증: PASS (QA 초안 + 민원 초안 동시 보존)")
+    print("  시나리오 검증: PASS (민원 초안 보존, QA 카드 없음)")
 
     with _patched_protocol_retry_flow():
         protocol_result = _run(

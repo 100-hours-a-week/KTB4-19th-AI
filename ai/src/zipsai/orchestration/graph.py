@@ -46,6 +46,8 @@ _PROTOCOL_RETRY_MESSAGE = (
     "A planned tool is still required for this turn. Use one of the currently offered native "
     "function tools now; do not answer naturally or write tool names or arguments as text."
 )
+# 대화 하나에 카드 하나: 이번 턴에 민원이 처리되면 QA 카드를 만들지 않으므로 전달했다고 말하지 않는다.
+_NO_EVIDENCE_WITHOUT_CARD_REPLY = "건물 문서에서 근거를 찾지 못해 답변드리기 어렵습니다."
 _SEARCH_COMPOSER_SYSTEM = (
     "Answer the resident's question in Korean using only the search results below. "
     "If a result is no_results or error, say the information was not found and suggest asking the "
@@ -159,11 +161,13 @@ def _assemble_result(
             update={
                 "citations": [*result.citations, *(item.citation for item in evidence)],
                 "has_sufficient_evidence": any(item.status == "ok" for item in evidence_results),
+                # 대화 하나에 카드 하나: 이번 턴에 민원이 처리됐으면 민원 카드를 우선한다.
                 "qa_card_draft": (
                     QaCardDraft(question=search_query)
                     if building_result
                     and building_result.status == "no_results"
                     and search_query
+                    and not complaint_result
                     else result.qa_card_draft
                 ),
             }
@@ -180,6 +184,12 @@ def _assemble_result(
         else request.current_complaint_state,
         result,
     )
+
+
+def _no_evidence_reply(state: AgentState) -> str:
+    if isinstance(state.get("complaint_result"), ComplaintTurnResult):
+        return _NO_EVIDENCE_WITHOUT_CARD_REPLY
+    return NO_EVIDENCE_REPLY
 
 
 def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
@@ -244,7 +254,7 @@ def _run_agent(state: AgentState) -> dict[str, object]:
         if result is not None
     ]
     building = state.get("search_result")
-    # 건물 문서 무근거는 QA 카드로 이어진다. 백엔드가 고정 문구로 카드를 저장하므로 LLM에 맡기지 않는다.
+    # 건물 문서 무근거는 고정 문구로 답한다. LLM이 없는 답을 지어내거나 전달 여부를 바꿔 말하지 않게 한다.
     no_evidence = (
         not tools and isinstance(building, BuildingDocsResult) and building.status == "no_results"
     )
@@ -256,7 +266,7 @@ def _run_agent(state: AgentState) -> dict[str, object]:
             return {
                 "agent_messages": messages,
                 "protocol_retry_pending": False,
-                **_agent_result(state, NO_EVIDENCE_REPLY),
+                **_agent_result(state, _no_evidence_reply(state)),
             }
     if (
         not tools
@@ -316,7 +326,7 @@ def _run_agent(state: AgentState) -> dict[str, object]:
             "protocol_retry_pending": False,
             **_agent_result(
                 state,
-                f"{(decision.content or '').rstrip()}\n\n{NO_EVIDENCE_REPLY}".strip()
+                f"{(decision.content or '').rstrip()}\n\n{_no_evidence_reply(state)}".strip()
                 if no_evidence
                 else decision.content or "",
             ),

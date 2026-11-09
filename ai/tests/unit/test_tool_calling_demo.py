@@ -11,8 +11,7 @@ def test_demo_shows_no_results_and_complaint_result_together(capsys):
     assert "3. 검색 no_results + 민원 초안" in output
     assert "[LOG] agent_decision route=complaint outcome=tool_selected tool_call_count=0" in output
     assert "[LOG] tool_call_completed tool=search_building_docs outcome=success" in output
-    assert '"qa_card_draft": {' in output
-    assert '"question": "누수 처리 기한"' in output
+    assert '"qa_card_draft": null' in output
     assert '"complaint_draft": {' in output
     assert '"issue_type": "plumbing"' in output
     assert "시나리오 검증: PASS" in output
