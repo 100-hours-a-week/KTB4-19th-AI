@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from zipsai.complaint.tool import process_complaint_turn
 from zipsai.contracts.converse import QaCardDraft, Route, RouteResult
+from zipsai.errors import LlmInvalidToolCallError
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
 from zipsai.knowledge.node import NO_EVIDENCE_REPLY
@@ -209,6 +210,26 @@ def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
     )
 
 
+def _protocol_failure(
+    state: AgentState, messages: list[object], reason: str
+) -> dict[str, object]:
+    """도구 호출 형식 오류를 한 번 재시도하고, 다시 실패하면 안전한 문구로 끝낸다."""
+    observe_tool_rejection("protocol_failure")
+    logger.warning("tool_call_protocol_failure", extra={"reason": reason})
+    if state.get("protocol_retry_count", 0) < _MAX_PROTOCOL_RETRIES:
+        messages.append({"role": "system", "content": _PROTOCOL_RETRY_MESSAGE})
+        return {
+            "agent_messages": messages,
+            "protocol_retry_count": state.get("protocol_retry_count", 0) + 1,
+            "protocol_retry_pending": True,
+        }
+    return {
+        "agent_messages": messages,
+        "protocol_retry_pending": False,
+        **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
+    }
+
+
 def _run_agent(state: AgentState) -> dict[str, object]:
     messages = list(state.get("agent_messages") or _initial_messages(state))
     tools = [contract.model_spec() for contract in _available_tool_contracts(state)]
@@ -258,9 +279,14 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                 ),
             },
         ]
-    decision = generate_tool_decision(
-        call_messages, tools, purpose="action" if tools else "composer"
-    )
+    try:
+        decision = generate_tool_decision(
+            call_messages, tools, purpose="action" if tools else "composer"
+        )
+    except LlmInvalidToolCallError:
+        # 인자 JSON이 깨진 tool call은 형식 오류다. 턴 전체를 실패시키지 않고 재시도한다.
+        # 깨진 assistant 메시지는 대화에 넣지 않는다(짝이 되는 tool 결과를 만들 수 없다).
+        return _protocol_failure(state, messages, "invalid_tool_arguments_json")
     tool_text = not decision.tool_calls and _is_tool_text(decision.content)
     route = state.get("route")
     route_label = route.value if route else "unknown"
@@ -283,21 +309,8 @@ def _run_agent(state: AgentState) -> dict[str, object]:
     messages.append(decision.message)
     if not decision.tool_calls:
         if tool_text or tools:
-            observe_tool_rejection("protocol_failure")
             reason = "tool_call_as_text" if tool_text else "planned_tool_skipped"
-            logger.warning("tool_call_protocol_failure", extra={"reason": reason})
-            if state.get("protocol_retry_count", 0) < _MAX_PROTOCOL_RETRIES:
-                messages.append({"role": "system", "content": _PROTOCOL_RETRY_MESSAGE})
-                return {
-                    "agent_messages": messages,
-                    "protocol_retry_count": state.get("protocol_retry_count", 0) + 1,
-                    "protocol_retry_pending": True,
-                }
-            return {
-                "agent_messages": messages,
-                "protocol_retry_pending": False,
-                **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
-            }
+            return _protocol_failure(state, messages, reason)
         return {
             "agent_messages": messages,
             "protocol_retry_pending": False,
@@ -468,7 +481,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             _emit_status("건물 문서를 확인하고 있습니다.")
             args = BuildingDocsArgs.model_validate(call.arguments)
             execute = lambda: search_building_docs(args, request)
-            updates: dict[str, object] = {"search_query": call.arguments["query"]}
+            updates: dict[str, object] = {"search_query": args.query}
         elif call.name == "process_complaint_turn":
             _emit_status("민원 내용을 정리하고 있습니다.")
             if call.arguments:
@@ -545,6 +558,9 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             result = _invalid_result()
             updates = {}
     except ValidationError:
+        # 실행 실패와 구분되도록 거절로 남긴다. 인자 값은 민원·검색 내용일 수 있어 남기지 않는다.
+        observe_tool_rejection("invalid_arguments")
+        logger.info("tool_call_rejected", extra={"reason": "invalid_arguments", "tool": call.name})
         result = _invalid_result()
         updates = {}
     else:

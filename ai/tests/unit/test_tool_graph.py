@@ -12,6 +12,7 @@ from zipsai.contracts.converse import (
     Route,
     RouteResult,
 )
+from zipsai.errors import LlmInvalidToolCallError
 from zipsai.integrations.llm import ToolCall, ToolDecision
 from zipsai.knowledge.node import NO_EVIDENCE_REPLY
 from zipsai.orchestration.state import AgentState
@@ -89,6 +90,100 @@ def test_action_server_rejects_tool_outside_plan(monkeypatch: pytest.MonkeyPatch
     assert calls == []
     assert result["last_tool_result"].code == "invalid_arguments"
     assert result["tool_call_count"] == 1
+
+
+def test_invalid_tool_arguments_are_logged_and_counted_as_rejection(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    rejections: list[str] = []
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ["search_building_docs"],
+            "pending_tool_calls": (
+                ToolCall("call-search", "search_building_docs", {"query": "   "}),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setattr(graph_module, "observe_tool_rejection", rejections.append)
+
+    with caplog.at_level("INFO", logger="zipsai.orchestration.graph"):
+        result = graph_module._run_tool(state)
+
+    assert result["last_tool_result"].code == "invalid_arguments"
+    assert rejections == ["invalid_arguments"]
+    rejected = [r for r in caplog.records if r.getMessage() == "tool_call_rejected"]
+    assert rejected and rejected[0].reason == "invalid_arguments"
+    assert rejected[0].tool == "search_building_docs"
+
+
+def _invalid_json_then(monkeypatch, *outcomes):
+    """첫 Action 응답은 인자 JSON이 깨진 tool call, 이후는 주어진 결정을 차례로 돌려준다."""
+    sent: list[list[object]] = []
+    queue = iter([LlmInvalidToolCallError("LLM returned invalid tool arguments"), *outcomes])
+
+    def decide(messages, _tools, *, purpose):
+        sent.append(list(messages))
+        item = next(queue)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(
+        graph_module, "classify_intent", lambda _state: _plan(Route.KNOWLEDGE, "search_building_docs")
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+    monkeypatch.setattr(graph_module, "search_building_docs", lambda *_a: _building_ok())
+    return sent
+
+
+def test_invalid_tool_json_is_retried_once_instead_of_failing_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    sent = _invalid_json_then(
+        monkeypatch,
+        _decision(calls=(ToolCall("call-search", "search_building_docs", {"query": "방문 차량"}),)),
+        _decision(content="앱에서 등록합니다."),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert sent[1][-1] == {"role": "system", "content": graph_module._PROTOCOL_RETRY_MESSAGE}
+    assert result["completed_tools"] == ("search_building_docs",)
+    assert result["reply"] == "앱에서 등록합니다."
+
+
+def test_repeated_invalid_tool_json_ends_with_protocol_failure(monkeypatch: pytest.MonkeyPatch):
+    _invalid_json_then(monkeypatch, LlmInvalidToolCallError("LLM returned invalid tool arguments"))
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
+    assert result["tool_call_count"] == 0
+
+
+def test_building_search_query_for_qa_card_is_the_validated_query(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ["search_building_docs"],
+            "pending_tool_calls": (
+                ToolCall("call-search", "search_building_docs", {"query": "  방문 차량 등록  "}),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setattr(
+        graph_module, "search_building_docs", lambda *_args: BuildingDocsResult(status="no_results")
+    )
+
+    result = graph_module._run_tool(state)
+
+    # QA 카드 질문은 검증된(공백 제거된) query를 쓴다.
+    assert result["search_query"] == "방문 차량 등록"
 
 
 def test_complaint_tool_runs_even_when_model_fills_arguments(

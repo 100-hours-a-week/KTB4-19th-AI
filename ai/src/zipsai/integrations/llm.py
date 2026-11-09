@@ -22,6 +22,7 @@ from openai import (
 from pydantic import BaseModel
 
 from zipsai.errors import (
+    LlmInvalidToolCallError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -310,7 +311,7 @@ def generate_tool_decision(
                     raise ValueError("invalid tool call")
             except (ValueError, TypeError, AttributeError) as error:
                 err_code = "DEPENDENCY_NOT_READY"
-                raise LlmUnavailableError("LLM returned invalid tool arguments") from error
+                raise LlmInvalidToolCallError("LLM returned invalid tool arguments") from error
             parsed.append(ToolCall(item.id, item.function.name, arguments))
         if not message.content and not parsed:
             err_code = "DEPENDENCY_NOT_READY"
