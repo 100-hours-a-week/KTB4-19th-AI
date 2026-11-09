@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -29,7 +30,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         extra={
             "duration_ms": int((time.perf_counter() - started) * 1000),
             "model": MODEL_ID,
-            "device": "cpu",
+            "device": os.getenv("EMBEDDING_DEVICE", "cpu"),
         },
     )
     encoder.start()
@@ -54,9 +55,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="embedding", lifespan=lifespan)
-app.add_middleware(
-    AccessLogMiddleware, record_http=finish_http, start_http=start_http
-)
+app.add_middleware(AccessLogMiddleware, record_http=finish_http, start_http=start_http)
 app.include_router(health_router)
 
 

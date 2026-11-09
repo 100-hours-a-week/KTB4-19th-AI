@@ -1,0 +1,82 @@
+workload: ai-api
+environment: prod
+component: ai
+image:
+  repository: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com/zipsai-ai-api
+  tag: ''
+command: []
+args:
+- --timeout-graceful-shutdown
+- '140'
+replicaCount: 2
+containerPort: 8000
+service:
+  enabled: true
+  port: 8000
+  annotations: {}
+env:
+  AWS_REGION: ap-northeast-2
+  AWS_DEFAULT_REGION: ap-northeast-2
+  QDRANT_URL: http://qdrant.prod.zipsai.internal:6333
+  QDRANT_COLLECTION: documents
+  S3_BUCKET: zipsai-prod-uploads
+  EMBEDDING_API_URL: http://embedding-service.prod.svc.cluster.local:8000
+  LANGFUSE_TRACING_ENABLED: 'false'
+externalSecret:
+  enabled: true
+  forceSync: '1'
+  parameters:
+    ACTIVE_MODEL_PROVIDER: ai-api/active-model-provider
+    SERVERLESS_API_KEY: ai-api/serverless-api-key
+    SERVERLESS_BASE_URL: ai-api/serverless-base-url
+    SERVERLESS_MODEL: ai-api/serverless-model
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '2'
+    memory: 2Gi
+nodeSelector:
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+  environment: prod
+  role: general
+tolerations: []
+spread:
+  enabled: true
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 70
+pdb:
+  enabled: true
+  minAvailable: 1
+rollingUpdate:
+  maxSurge: 1
+  maxUnavailable: 0
+terminationGracePeriodSeconds: 150
+preStopSeconds: 0
+probes:
+  startup:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  readiness:
+    httpGet:
+      path: /readiness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3

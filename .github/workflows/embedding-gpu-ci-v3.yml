@@ -1,0 +1,114 @@
+name: Embedding GPU CI V3
+
+on:
+  pull_request:
+    branches: [staging, main]
+    paths:
+      - 'embedding/**'
+      - 'docker/embedding-gpu/**'
+      - '.github/workflows/embedding-gpu-ci-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com
+  ECR_REPOSITORY: zipsai-embedding
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check CPU and GPU dependency declarations match
+        run: |
+          python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          cpu = tomllib.loads(Path('embedding/pyproject.toml').read_text())
+          gpu = tomllib.loads(Path('docker/embedding-gpu/pyproject.toml').read_text())
+          cpu_dependencies = {d for d in cpu['project']['dependencies'] if d != 'torch'}
+          gpu_dependencies = {d for d in gpu['project']['dependencies'] if not d.startswith('torch==')}
+          if cpu_dependencies != gpu_dependencies or cpu['build-system'] != gpu['build-system']:
+              raise SystemExit('Sync the GPU project dependencies with embedding/pyproject.toml.')
+          PY
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate Linux amd64 GPU image build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/embedding-gpu
+          file: docker/embedding-gpu/Dockerfile
+          build-contexts: embedding-src=./embedding
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=embedding-gpu-v3
+          cache-to: type=gha,mode=min,scope=embedding-gpu-v3
+
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: embedding-gpu-publish-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Require staging branch
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/staging ]]; then
+            echo 'Run this workflow from the staging branch.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_AI_CI_V2_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve immutable GPU tag
+        id: image
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_SHA::7}-gpu"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="$tag" > /dev/null 2> ecr-error.txt; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          elif grep -q ImageNotFoundException ecr-error.txt; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          else
+            cat ecr-error.txt >&2
+            exit 1
+          fi
+      - uses: docker/setup-buildx-action@v3
+        if: steps.image.outputs.build == 'true'
+      - uses: aws-actions/amazon-ecr-login@v2
+        if: steps.image.outputs.build == 'true'
+      - name: Build and publish GPU image
+        if: steps.image.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/embedding-gpu
+          file: docker/embedding-gpu/Dockerfile
+          build-contexts: embedding-src=./embedding
+          platforms: linux/amd64
+          push: true
+          tags: '${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}'
+          build-args: ZIPSAI_VERSION=${{ steps.image.outputs.tag }}
+          labels: 'org.opencontainers.image.revision=${{ github.sha }}'
+          cache-from: type=gha,scope=embedding-gpu-v3
+          cache-to: type=gha,mode=min,scope=embedding-gpu-v3
+      - name: Record published digest
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)"
+          printf '`%s/%s:%s` → `%s`\n' "$ECR_REGISTRY" "$ECR_REPOSITORY" "$IMAGE_TAG" "$digest" >> "$GITHUB_STEP_SUMMARY"
