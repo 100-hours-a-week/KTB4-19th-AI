@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.integrations.llm import ToolCall, ToolDecision
+from zipsai.knowledge.node import NO_EVIDENCE_REPLY
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
     BuildingDocsResult,
@@ -304,7 +306,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         graph_module,
         "search_building_docs",
-        lambda _args, _request: BuildingDocsResult(status="no_results"),
+        lambda _args, _request: _building_ok(),
     )
 
     result = graph_module.build_graph().invoke(_state())
@@ -347,6 +349,199 @@ def test_action_prompt_treats_complaint_context_as_hint_not_route_lock():
     assert "A clear new question may take another route" in system
     assert "ask for clarification when intent is ambiguous" in system
     assert "previous route is context and does not force a tool call" in system
+
+
+def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
+    system = graph_module._AGENT_SYSTEM
+
+    # _agent_result가 민원 reply를 붙이고 draft는 result로 내려가므로 Composer가 반복하면 중복된다.
+    assert "include the complaint tool's follow-up reply" not in system
+    assert "the app appends the complaint tool's reply and returns the draft separately" in system
+    assert "Do not restate the draft, its fields, or its follow-up question" in system
+
+
+def _composite_graph(monkeypatch, order, search_results, composer_messages):
+    calls = {
+        "process_complaint_turn": ToolCall("call-complaint", "process_complaint_turn", {}),
+        "search_building_docs": ToolCall("call-search", "search_building_docs", {"query": "방문 차량 등록 방법"}),
+        "search_public_web": ToolCall("call-web", "search_public_web", {"query": "전입신고 준비물"}),
+    }
+    decisions = iter(
+        [*(_decision(calls=(calls[name],)) for name in order), _decision(content="검색 답변입니다.")]
+    )
+
+    def decide(messages, _tools, *, purpose):
+        if purpose == "composer":
+            composer_messages.append(list(messages))
+        return next(decisions)
+
+    monkeypatch.setattr(
+        graph_module, "classify_intent", lambda _state: _plan(Route.COMPLAINT, *order)
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_args, **_kwargs: ComplaintTurnResult(
+            reply="어디에서 생긴 문제인가요?",
+            complaint_state=ComplaintState.COLLECTING,
+            result=RouteResult(
+                complaint_draft=ComplaintDraft(issue_type="plumbing", symptom="천장 누수"),
+                missing_fields=["location"],
+            ),
+        ),
+    )
+    monkeypatch.setattr(graph_module, "search_building_docs", lambda *_a: search_results["building"])
+    monkeypatch.setattr(graph_module, "search_public_web", lambda *_a, **_kw: search_results["web"])
+    state = _state()
+    payload = state["request"].model_dump()
+    payload["message"]["text"] = "누수 민원 만들고 방문 차량 등록도 알려줘"
+    state["request"] = ConverseRequest.model_validate(payload)
+    return graph_module.build_graph().invoke(state)
+
+
+def _building_ok() -> BuildingDocsResult:
+    return BuildingDocsResult(
+        status="ok",
+        evidence=[
+            {
+                "text": "방문 차량은 관리사무소 앱에서 등록한다.",
+                "citation": {
+                    "source_type": "building_document",
+                    "source_id": "doc-1",
+                    "title": "주차 안내",
+                    "snippet": "앱에서 등록",
+                    "url": None,
+                },
+            }
+        ],
+    )
+
+
+def test_composite_composer_sees_only_search_question_and_results(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    composer_messages: list[list[object]] = []
+
+    result = _composite_graph(
+        monkeypatch,
+        ("process_complaint_turn", "search_building_docs"),
+        {"building": _building_ok(), "web": None},
+        composer_messages,
+    )
+
+    sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
+    assert composer_messages[0][0] == {"role": "system", "content": graph_module._SEARCH_COMPOSER_SYSTEM}
+    assert "방문 차량 등록 방법" in sent
+    assert "관리사무소 앱에서 등록" in sent
+    for complaint_text in ("천장 누수", "어디에서 생긴 문제인가요?", "누수 민원 만들고"):
+        assert complaint_text not in sent
+    assert result["reply"] == "검색 답변입니다.\n\n어디에서 생긴 문제인가요?"
+
+
+def test_search_only_composer_sees_only_search_question_and_results(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    composer_messages: list[list[object]] = []
+
+    result = _composite_graph(
+        monkeypatch,
+        ("search_building_docs",),
+        {"building": _building_ok(), "web": None},
+        composer_messages,
+    )
+
+    assert composer_messages[0][0] == {"role": "system", "content": graph_module._SEARCH_COMPOSER_SYSTEM}
+    assert "누수 민원 만들고" not in json.dumps(composer_messages[0], ensure_ascii=False, default=str)
+    assert result["reply"] == "검색 답변입니다."
+
+
+@pytest.mark.parametrize(
+    "order, complaint_reply",
+    [
+        (("search_building_docs",), None),
+        (("process_complaint_turn", "search_building_docs"), "어디에서 생긴 문제인가요?"),
+    ],
+    ids=["search-only", "complaint-and-search"],
+)
+def test_building_no_results_uses_fixed_qa_card_reply_without_composer(
+    monkeypatch: pytest.MonkeyPatch, order, complaint_reply
+):
+    composer_messages: list[list[object]] = []
+
+    result = _composite_graph(
+        monkeypatch,
+        order,
+        {"building": BuildingDocsResult(status="no_results"), "web": None},
+        composer_messages,
+    )
+
+    # 백엔드가 이 고정 문구로 QA 카드를 저장하므로 LLM이 바꿔 쓰지 않게 한다.
+    assert composer_messages == []
+    assert result["reply"] == "\n\n".join(
+        part for part in (NO_EVIDENCE_REPLY, complaint_reply) if part
+    )
+    assert result["result"].qa_card_draft.question == "방문 차량 등록 방법"
+
+
+def test_building_no_results_reply_is_added_after_web_answer(monkeypatch: pytest.MonkeyPatch):
+    composer_messages: list[list[object]] = []
+    web = WebSearchResult(
+        status="ok",
+        evidence=[
+            {
+                "text": "신분증을 준비한다.",
+                "citation": {
+                    "source_type": "web",
+                    "source_id": None,
+                    "title": "정부24",
+                    "snippet": "신분증",
+                    "url": "https://example.com/move-in",
+                },
+            }
+        ],
+    )
+
+    result = _composite_graph(
+        monkeypatch,
+        ("search_public_web", "search_building_docs"),
+        {"building": BuildingDocsResult(status="no_results"), "web": web},
+        composer_messages,
+    )
+
+    sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
+    assert "전입신고 준비물" in sent
+    assert "방문 차량 등록 방법" not in sent
+    assert result["reply"] == f"검색 답변입니다.\n\n{NO_EVIDENCE_REPLY}"
+
+
+def test_web_search_before_complaint_still_gets_composed(monkeypatch: pytest.MonkeyPatch):
+    composer_messages: list[list[object]] = []
+    web = WebSearchResult(
+        status="ok",
+        evidence=[
+            {
+                "text": "신분증을 준비한다.",
+                "citation": {
+                    "source_type": "web",
+                    "source_id": None,
+                    "title": "정부24",
+                    "snippet": "신분증",
+                    "url": "https://example.com/move-in",
+                },
+            }
+        ],
+    )
+
+    result = _composite_graph(
+        monkeypatch,
+        ("search_public_web", "process_complaint_turn"),
+        {"building": None, "web": web},
+        composer_messages,
+    )
+
+    assert "전입신고 준비물" in json.dumps(composer_messages[0], ensure_ascii=False, default=str)
+    assert result["reply"] == "검색 답변입니다.\n\n어디에서 생긴 문제인가요?"
 
 
 def test_action_prompt_marks_web_results_untrusted_and_limits_them_to_public_facts():
@@ -466,7 +661,7 @@ def test_graph_executes_web_search_and_keeps_web_result_separate(monkeypatch):
     result = graph_module._run_tool(state)
 
     assert result["web_search_result"] == web_result
-    assert result["route"] is Route.KNOWLEDGE
+    assert "route" not in result  # 대표 route는 응답 조립에서 결과로 정한다
     assert calls[0][0] == "일반 안내"
 
 
@@ -712,7 +907,7 @@ def test_agent_records_bounded_decision_without_logging_user_input(
     monkeypatch.setattr(
         graph_module,
         "search_building_docs",
-        lambda *_args: BuildingDocsResult(status="no_results"),
+        lambda *_args: _building_ok(),
     )
     monkeypatch.setattr(
         graph_module,
@@ -725,6 +920,47 @@ def test_agent_records_bounded_decision_without_logging_user_input(
 
     assert observed == [("knowledge", outcome) for outcome in expected]
     assert "비공개 질문" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("search_building_docs", "process_complaint_turn"),
+        ("process_complaint_turn", "search_building_docs"),
+    ],
+    ids=["search-then-failed-complaint", "failed-complaint-then-search"],
+)
+def test_route_comes_from_results_not_last_called_tool(
+    monkeypatch: pytest.MonkeyPatch, order
+):
+    calls = [
+        _decision(calls=(ToolCall(f"call-{name}", name, {"query": "누수"} if name == "search_building_docs" else {}),))
+        for name in order
+    ]
+    decisions = iter([*calls, _decision(content="검색 결과를 안내합니다.")])
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: _plan(Route.COMPLAINT, *order),
+    )
+    monkeypatch.setattr(
+        graph_module, "generate_tool_decision", lambda *_a, **_kw: next(decisions)
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: BuildingDocsResult(status="no_results"),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_args, **_kwargs: ToolFailure(code="upstream_error", message="민원 처리 실패"),
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert result["attempted_tools"] == order
+    assert result["route"] is Route.KNOWLEDGE
 
 
 def test_graph_runs_search_then_complaint_before_final_agent_reply(
@@ -772,7 +1008,7 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
 
     assert result["route"] is Route.COMPLAINT
     assert result["reply"] == (
-        "처리 기한은 확인 중입니다.\n\n어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
+        f"{NO_EVIDENCE_REPLY}\n\n어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
     )
     assert result["complaint_result"] == tool_result
     assert result["complaint_state"] == tool_result.complaint_state
@@ -845,8 +1081,7 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
     assert executed == ["complaint", "search"]
     assert result["tool_call_count"] == 2
     assert result["reply"] == (
-        "건물 자료에서 처리 기한은 찾지 못했지만, 욕실 누수 민원 초안은 정리했습니다."
-        "\n\n욕실 누수 민원 초안을 정리했습니다."
+        f"{NO_EVIDENCE_REPLY}\n\n욕실 누수 민원 초안을 정리했습니다."
     )
     assert result["result"].qa_card_draft.question == "누수 처리 기한"
     assert result["result"].complaint_draft == complaint_result.result.complaint_draft
@@ -1116,7 +1351,10 @@ def test_graph_uses_final_agent_reply_after_second_tool_failure(
     result = graph_module.build_graph().invoke(_state())
 
     assert result["tool_call_count"] == 2
-    assert result["reply"] == "민원 처리는 현재 실패했지만, 처리 기한은 관리자에게 확인해 주세요."
+    # 실패 안내는 전체 맥락 Composer가, QA 카드 고정 문구는 앱이 붙인다.
+    assert result["reply"] == (
+        f"민원 처리는 현재 실패했지만, 처리 기한은 관리자에게 확인해 주세요.\n\n{NO_EVIDENCE_REPLY}"
+    )
     assert result["completed_tools"] == ("search_building_docs",)
     assert "process_complaint_turn" in result["attempted_tools"]
 
@@ -1219,7 +1457,7 @@ def test_graph_rejects_repeated_completed_tool_without_running_it_again(
         "search_building_docs",
         lambda args, _request: (
             search_calls.append(args.query),
-            BuildingDocsResult(status="no_results"),
+            _building_ok(),
         )[-1],
     )
 
@@ -1455,7 +1693,7 @@ def test_graph_ends_safely_when_composer_returns_an_unoffered_tool_call(
     monkeypatch.setattr(
         graph_module,
         "search_building_docs",
-        lambda *_args, **_kwargs: BuildingDocsResult(status="no_results"),
+        lambda *_args, **_kwargs: _building_ok(),
     )
     monkeypatch.setattr(
         graph_module,

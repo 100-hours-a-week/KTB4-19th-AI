@@ -859,7 +859,23 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     monkeypatch.setattr(
         graph_module,
         "search_building_docs",
-        lambda *_args: BuildingDocsResult(status="no_results"),
+        lambda *_args: BuildingDocsResult.model_validate(
+            {
+                "status": "ok",
+                "evidence": [
+                    {
+                        "text": "세탁실은 22시까지입니다.",
+                        "citation": {
+                            "source_type": "building_document",
+                            "source_id": "doc-1",
+                            "title": "세탁실 이용",
+                            "snippet": "세탁실은 22시까지입니다.",
+                            "url": None,
+                        },
+                    }
+                ],
+            }
+        ),
     )
 
     response = TestClient(app).post("/api/v3/ai/converse", json=_payload())
