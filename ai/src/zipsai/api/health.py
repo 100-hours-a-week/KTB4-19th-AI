@@ -33,7 +33,7 @@ def _vector_store_ready() -> bool:
 def _models_ready() -> bool:
     try:
         response = httpx.get(
-            f"{EMBEDDING_API_URL}/health", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
+            f"{EMBEDDING_API_URL}/readiness", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
         )
         return response.status_code == 200
     except httpx.HTTPError:
@@ -46,6 +46,11 @@ def _llm_ready() -> bool:
         return True
     except LlmUnavailableError:
         return False
+
+
+@router.get("/liveness")
+def liveness() -> dict[str, str]:
+    return {"message": "ok"}
 
 
 @router.get("/health", response_model=None)
@@ -64,3 +69,8 @@ def health() -> dict[str, object] | JSONResponse:
     if vector_store_ready and models_ready and llm_ready:
         return {"message": "ok", "data": data}
     return JSONResponse(status_code=503, content={"message": "not_ready", "data": data})
+
+
+@router.get("/readiness", response_model=None)
+def readiness() -> dict[str, object] | JSONResponse:
+    return health()

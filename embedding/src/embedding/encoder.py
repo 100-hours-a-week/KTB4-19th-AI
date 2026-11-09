@@ -105,10 +105,19 @@ class BgeM3Encoder:
     def load(self) -> None:
         # 환경변수가 없으면 스레드를 건드리지 않는다. 잘못된 값이면 모델을 올리기 전에 죽는다.
         configure_torch_threads()
-        # CPU 전용 컨테이너라 fp16을 쓰지 않는다.
+        device = os.getenv("EMBEDDING_DEVICE", "cpu")
+        if device not in {"cpu", "cuda"}:
+            raise RuntimeError("EMBEDDING_DEVICE must be 'cpu' or 'cuda'")
+        if device == "cuda":
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "EMBEDDING_DEVICE=cuda was requested but CUDA is unavailable"
+                )
         from FlagEmbedding import BGEM3FlagModel
 
-        self._model = BGEM3FlagModel(self.model_id, use_fp16=False)
+        self._model = BGEM3FlagModel(self.model_id, devices=device, use_fp16=False)
         logger.info("embed_runtime", extra=thread_snapshot())
 
     def start(self) -> None:

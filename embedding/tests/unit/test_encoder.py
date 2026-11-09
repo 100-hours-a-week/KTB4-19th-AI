@@ -1,5 +1,8 @@
+import sys
 import threading
 from concurrent.futures import CancelledError, Future, wait
+from importlib.machinery import ModuleSpec
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -348,6 +351,61 @@ def test_start_is_idempotent_and_stop_makes_the_encoder_unavailable(
 def test_encode_without_a_loaded_model_raises() -> None:
     with pytest.raises(ModelNotLoadedError):
         BgeM3Encoder().encode(["x"])
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_load_passes_configured_device_to_flag_embedding(
+    monkeypatch: pytest.MonkeyPatch, device: str
+) -> None:
+    captured = {}
+    monkeypatch.setenv("EMBEDDING_DEVICE", device)
+    monkeypatch.delenv("EMBEDDING_TORCH_THREADS", raising=False)
+    torch = ModuleType("torch")
+    torch.__spec__ = ModuleSpec("torch", loader=None)
+    torch.cuda = SimpleNamespace(is_available=lambda: True)
+    torch.get_num_threads = lambda: 1
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    flag_embedding = ModuleType("FlagEmbedding")
+    flag_embedding.BGEM3FlagModel = lambda model_id, **kwargs: (
+        captured.update(model_id=model_id, **kwargs) or object()
+    )
+    monkeypatch.setitem(sys.modules, "FlagEmbedding", flag_embedding)
+
+    BgeM3Encoder().load()
+
+    assert captured["devices"] == device
+    assert captured["use_fp16"] is False
+
+
+def test_load_fails_clearly_when_cuda_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_DEVICE", "cuda")
+    monkeypatch.delenv("EMBEDDING_TORCH_THREADS", raising=False)
+    torch = ModuleType("torch")
+    torch.__spec__ = ModuleSpec("torch", loader=None)
+    torch.cuda = SimpleNamespace(is_available=lambda: False)
+    torch.get_num_threads = lambda: 1
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    flag_embedding = ModuleType("FlagEmbedding")
+    flag_embedding.BGEM3FlagModel = lambda *args, **kwargs: object()
+    monkeypatch.setitem(sys.modules, "FlagEmbedding", flag_embedding)
+
+    with pytest.raises(
+        RuntimeError, match="EMBEDDING_DEVICE=cuda.*CUDA is unavailable"
+    ):
+        BgeM3Encoder().load()
+
+
+def test_load_rejects_unknown_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_DEVICE", "gpu")
+    monkeypatch.delenv("EMBEDDING_TORCH_THREADS", raising=False)
+    flag_embedding = ModuleType("FlagEmbedding")
+    flag_embedding.BGEM3FlagModel = lambda *args, **kwargs: object()
+    monkeypatch.setitem(sys.modules, "FlagEmbedding", flag_embedding)
+
+    with pytest.raises(RuntimeError, match="EMBEDDING_DEVICE must be 'cpu' or 'cuda'"):
+        BgeM3Encoder().load()
 
 
 def test_normalize_converts_numpy_outputs_to_python_types() -> None:
