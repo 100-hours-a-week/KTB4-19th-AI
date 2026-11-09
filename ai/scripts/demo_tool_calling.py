@@ -384,12 +384,12 @@ def main(*, live: bool = False) -> int:
 
     with _patched_protocol_retry_flow():
         protocol_result = _run(
-            "4. Action 형식 오류: text → retry → 안전한 자연어 답변",
+            "4. Action 형식 오류: text → retry → 안전한 종료",
             _request("주차는 어디에 하나요?"),
         )
     assert protocol_result["tool_call_count"] == 0
-    assert protocol_result["reply"] == "주차는 지하 1층에서 하실 수 있습니다."
-    print("  시나리오 검증: PASS (실행 0회, 재시도 답변)")
+    assert protocol_result["reply"] == "요청한 작업을 처리하지 못했습니다. 다시 말씀해 주세요."
+    print("  시나리오 검증: PASS (도구 실행 없이 실패 닫힘)")
     return 0
 
 
