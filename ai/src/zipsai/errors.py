@@ -55,6 +55,10 @@ class LlmUnavailableError(RuntimeError):
     """Raised when an LLM request cannot be completed."""
 
 
+class LlmInvalidToolCallError(LlmUnavailableError):
+    """Raised when the model returns a tool call whose arguments are not a JSON object."""
+
+
 class LlmRateLimitedError(RuntimeError):
     """Raised when the LLM provider rate-limits the request."""
 

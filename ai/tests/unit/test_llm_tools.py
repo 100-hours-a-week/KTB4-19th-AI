@@ -6,7 +6,7 @@ import httpx
 import pytest
 from openai import APIStatusError, OpenAI
 
-from zipsai.errors import LlmUnavailableError
+from zipsai.errors import LlmInvalidToolCallError, LlmUnavailableError
 from zipsai.integrations import llm
 from zipsai.orchestration.tool_contracts import TOOL_CONTRACTS
 from zipsai.settings import Settings
@@ -67,7 +67,7 @@ def test_tool_decision_replays_assistant_and_tool_result(monkeypatch):
     assert second.content == "주차 규정입니다"
     assert second.tool_calls == ()
     assert calls[0]["tools"] == calls[1]["tools"] == specs
-    assert calls[0]["tool_choice"] == calls[1]["tool_choice"] == "auto"
+    assert calls[0]["tool_choice"] == calls[1]["tool_choice"] == "required"
     assert calls[0]["parallel_tool_calls"] is calls[1]["parallel_tool_calls"] is False
     assert len(calls[0]["messages"]) == 1
     assert calls[1]["messages"][-2] is first.message
@@ -238,7 +238,7 @@ def test_tool_decision_rejects_invalid_arguments(monkeypatch, arguments):
         llm, "get_settings", lambda provider=None: Settings("key", None, "model", 30)
     )
 
-    with pytest.raises(LlmUnavailableError, match="invalid tool arguments"):
+    with pytest.raises(LlmInvalidToolCallError, match="invalid tool arguments"):
         llm.generate_tool_decision(
             [{"role": "user", "content": "질문"}], [TOOL_CONTRACTS[0].model_spec()]
         )
@@ -283,7 +283,7 @@ def test_tool_decision_rejects_non_function_call(monkeypatch):
         llm, "get_settings", lambda provider=None: Settings("key", None, "model", 30)
     )
 
-    with pytest.raises(LlmUnavailableError, match="invalid tool arguments"):
+    with pytest.raises(LlmInvalidToolCallError, match="invalid tool arguments"):
         llm.generate_tool_decision(
             [{"role": "user", "content": "질문"}], [TOOL_CONTRACTS[0].model_spec()]
         )

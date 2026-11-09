@@ -7,7 +7,7 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest
 from zipsai.indexing.reasons import RETRYABLE
 
 SERVICE = "ai-api"
-_TOOL_LABELS = frozenset({"search_building_docs", "process_complaint_turn"})
+_TOOL_LABELS = frozenset({"search_building_docs", "process_complaint_turn", "search_public_web"})
 
 BUILD_INFO = Gauge(
     "zipsai_build_info",
