@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "workload",
+    "environment",
+    "component",
+    "image",
+    "resources",
+    "nodeSelector",
+    "externalSecret",
+    "env"
+  ],
+  "properties": {
+    "workload": {
+      "type": "string",
+      "enum": [
+        "embedding-service"
+      ]
+    },
+    "environment": {
+      "type": "string",
+      "enum": [
+        "staging",
+        "prod"
+      ]
+    },
+    "component": {
+      "type": "string",
+      "minLength": 1
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}(-cpu|-gpu)?$"
+        }
+      }
+    },
+    "externalSecret": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "forceSync",
+        "parameters"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "forceSync": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^(shared|resident-api|manager-api|chat-consumer|complaint-feedback-batch|ai-api|embedding-service)/[a-z0-9][a-z0-9-]*$"
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "requests",
+        "limits"
+      ],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": [
+            "cpu",
+            "memory"
+          ]
+        },
+        "limits": {
+          "type": "object",
+          "required": [
+            "cpu",
+            "memory"
+          ]
+        }
+      }
+    },
+    "hpa": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+workload: ''
+environment: ''
+component: ai
+image:
+  repository: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com/zipsai-ai-api
+  tag: ''
+command: []
+args:
+- --timeout-graceful-shutdown
+- '140'
+replicaCount: 1
+containerPort: 8000
+service:
+  enabled: true
+  port: 8000
+  annotations: {}
+env: {}
+externalSecret:
+  enabled: true
+  forceSync: '1'
+  parameters: {}
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '2'
+    memory: 2Gi
+nodeSelector:
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+  environment: staging
+  role: general
+tolerations: []
+spread:
+  enabled: false
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 70
+pdb:
+  enabled: false
+  minAvailable: 1
+rollingUpdate:
+  maxSurge: 1
+  maxUnavailable: 0
+terminationGracePeriodSeconds: 150
+preStopSeconds: 0
+probes:
+  startup:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  readiness:
+    httpGet:
+      path: /readiness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
