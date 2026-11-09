@@ -48,6 +48,11 @@ def _llm_ready() -> bool:
         return False
 
 
+@router.get("/liveness")
+def liveness() -> dict[str, str]:
+    return {"message": "ok"}
+
+
 @router.get("/health", response_model=None)
 def health() -> dict[str, object] | JSONResponse:
     vector_store_ready = _vector_store_ready()
@@ -64,3 +69,8 @@ def health() -> dict[str, object] | JSONResponse:
     if vector_store_ready and models_ready and llm_ready:
         return {"message": "ok", "data": data}
     return JSONResponse(status_code=503, content={"message": "not_ready", "data": data})
+
+
+@router.get("/readiness", response_model=None)
+def readiness() -> dict[str, object] | JSONResponse:
+    return health()
