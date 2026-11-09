@@ -25,7 +25,9 @@ class WebSearchArgs(BaseModel):
 
 
 class ComplaintTurnArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # 민원 문맥은 서버가 주입하므로 모델이 채운 필드는 버린다. 거절하면 민원 턴 전체가 막힌다.
+    # 모델에게는 여전히 "입력 없음"(additionalProperties: false)으로 보여 준다.
+    model_config = ConfigDict(extra="ignore", json_schema_extra={"additionalProperties": False})
 
 
 class SearchEvidence(BaseModel):

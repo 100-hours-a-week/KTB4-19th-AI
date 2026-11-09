@@ -237,6 +237,13 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                 "protocol_retry_pending": False,
                 **_agent_result(state, NO_EVIDENCE_REPLY),
             }
+    if (
+        not tools
+        and isinstance(state.get("last_tool_result"), ComplaintTurnResult)
+        and not searched
+    ):
+        # 민원 reply가 곧 최종 답변이다(_run_tool에서 이미 조립). 버릴 Composer 호출을 하지 않는다.
+        return {"agent_messages": messages, "protocol_retry_pending": False}
     call_messages = messages
     if not tools and searched and not tool_failed:
         # Composer에는 검색 질문과 결과만 준다. 민원 답변은 _agent_result가 붙이며, 대화·민원 맥락을
@@ -291,11 +298,6 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                 "protocol_retry_pending": False,
                 **_agent_result(state, _PROTOCOL_FAILURE_MESSAGE),
             }
-        if (
-            isinstance(state.get("last_tool_result"), ComplaintTurnResult)
-            and not searched
-        ):
-            return {"agent_messages": messages, "protocol_retry_pending": False}
         return {
             "agent_messages": messages,
             "protocol_retry_pending": False,
@@ -469,6 +471,12 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             updates: dict[str, object] = {"search_query": call.arguments["query"]}
         elif call.name == "process_complaint_turn":
             _emit_status("민원 내용을 정리하고 있습니다.")
+            if call.arguments:
+                # 값은 민원 내용이라 남기지 않고, 모델이 어떤 키를 채웠는지만 남긴다.
+                logger.info(
+                    "tool_arguments_ignored",
+                    extra={"tool": call.name, "ignored_keys": ",".join(sorted(call.arguments))},
+                )
             args = ComplaintTurnArgs.model_validate(call.arguments)
             execute = lambda: process_complaint_turn(
                 args,

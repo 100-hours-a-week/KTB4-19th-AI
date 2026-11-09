@@ -91,6 +91,45 @@ def test_action_server_rejects_tool_outside_plan(monkeypatch: pytest.MonkeyPatch
     assert result["tool_call_count"] == 1
 
 
+def test_complaint_tool_runs_even_when_model_fills_arguments(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    complaint = ComplaintTurnResult(
+        reply="민원 정보를 확인했습니다.",
+        complaint_state=None,
+        result=RouteResult(),
+    )
+    calls: list[ComplaintTurnArgs] = []
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ["process_complaint_turn"],
+            "pending_tool_calls": (
+                ToolCall(
+                    "call-complaint",
+                    "process_complaint_turn",
+                    {"location": "301호", "symptom": "천장 누수"},
+                ),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda args, *_a, **_kw: (calls.append(args), complaint)[1],
+    )
+
+    with caplog.at_level("INFO", logger="zipsai.orchestration.graph"):
+        result = graph_module._run_tool(state)
+
+    assert calls == [ComplaintTurnArgs()]
+    assert result["complaint_result"] == complaint
+    ignored = [r for r in caplog.records if r.getMessage() == "tool_arguments_ignored"]
+    assert ignored and ignored[0].ignored_keys == "location,symptom"
+    assert "301호" not in caplog.text
+
+
 def test_tool_call_and_result_messages_are_logged_when_enabled(
     caplog, monkeypatch: pytest.MonkeyPatch
 ):
@@ -1169,7 +1208,7 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
     assert result["route"] is Route.COMPLAINT
     assert result["result"].complaint_draft == tool_result.result.complaint_draft
     assert assembly_inputs == [tool_result.reply]
-    assert purposes == ["action", "composer"]
+    assert purposes == ["action"]  # 민원 reply가 최종 답변이라 Composer LLM을 부르지 않는다
 
 
 @pytest.mark.parametrize(

@@ -78,10 +78,15 @@ def test_search_args_accept_query_only():
             BuildingDocsArgs.model_validate(payload)
 
 
-def test_complaint_args_reject_model_supplied_server_state():
+def test_complaint_args_drop_model_supplied_server_state():
+    # 민원 문맥은 서버가 주입한다. 모델이 초안을 인자로 채워도 쓰지 않고 버린다(거절하면 민원 턴이 통째로 막힌다).
     assert ComplaintTurnArgs.model_validate({}).model_dump() == {}
-    with pytest.raises(ValidationError):
-        ComplaintTurnArgs.model_validate({"complaint_draft": {}})
+    assert (
+        ComplaintTurnArgs.model_validate(
+            {"complaint_draft": {}, "location": "301호", "symptom": "누수"}
+        ).model_dump()
+        == {}
+    )
 
 
 def test_search_result_distinguishes_evidence_no_results_and_error():
