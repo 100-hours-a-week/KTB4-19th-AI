@@ -46,6 +46,7 @@ def _request(
     current_route: str | None = None,
     complaint_state: str | None = None,
     complaint_draft: dict[str, object] | None = None,
+    history: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
         "building_id": 101,
@@ -57,7 +58,7 @@ def _request(
         "current_route": current_route,
         "current_complaint_state": complaint_state,
         "message": {"message_id": f"{trace_id}-message", "text": text},
-        "conversation_history": [],
+        "conversation_history": history or [],
         "complaint_draft": complaint_draft,
     }
 
@@ -319,6 +320,25 @@ def main() -> int:
             "request": _request(
                 "우리 아파트 분리수거 배출 요일을 알려주세요.",
                 trace_id=f"pipeline-building-only-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_building_docs"},
+            "expected_route": "knowledge",
+        },
+        {
+            "title": "이전 답변이 있는 후속 건물 질문: 다시 검색",
+            "request": _request(
+                "음식물 쓰레기는?",
+                trace_id=f"pipeline-follow-up-{uuid4().hex[:8]}",
+                current_route="knowledge",
+                history=[
+                    {"message_id": "h1", "role": "user", "text": "쓰레기 어떻게 버려"},
+                    {
+                        "message_id": "h2",
+                        "role": "assistant",
+                        "text": "일반 쓰레기는 화·목·토, 재활용품은 월·금, 음식물은 매일 "
+                        "저녁 8시부터 새벽 2시까지 골목 입구 공동 집하장에 배출해 주세요.",
+                    },
+                ],
             ),
             "expected_tools": {"search_building_docs"},
             "expected_route": "knowledge",

@@ -426,3 +426,19 @@ def test_image_only_failure_routes_to_clarify_without_text_fallback(monkeypatch,
     assert result["route"] is Route.CLARIFY
     assert result["image_analysis"] is None
     assert result["image_analysis_failed"] is True
+
+
+def test_intent_prompt_searches_again_for_follow_up_questions(monkeypatch):
+    prompts = []
+
+    def classify(system, user, *_args, **_kwargs):
+        prompts.append(system)
+        return _decision(Route.KNOWLEDGE)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+
+    classify_intent(_build_state("음식물 쓰레기는?"))
+
+    system = prompts[0]
+    assert "A follow-up question still needs its search tool" in system
+    assert "never answer from conversation history" in system
