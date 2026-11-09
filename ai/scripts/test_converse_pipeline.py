@@ -91,11 +91,14 @@ def _docker_logs(since: int, trace_id: str) -> list[dict[str, object]]:
     return events
 
 
-def _show_logs(events: list[dict[str, object]]) -> set[str]:
+def _show_logs(events: list[dict[str, object]]) -> tuple[set[str], set[str], set[str]]:
+    planned: set[str] = set()
     selected: set[str] = set()
+    failed: set[str] = set()
     for event in events:
         name = event.get("event")
         if name == "stage_done" and event.get("stage") == "intent":
+            planned.update(event.get("planned_tools", []))
             print(
                 f"  INTENT plan={json.dumps(event.get('planned_tools', []), ensure_ascii=False)} "
                 f"route={event.get('intent_route')}"
@@ -112,6 +115,8 @@ def _show_logs(events: list[dict[str, object]]) -> set[str]:
         elif name in {"tool_call_message", "tool_result_message"}:
             print(f"  {name.upper()} {event.get('tool_message')}")
         elif name == "tool_call_completed":
+            if event.get("outcome") == "failure":
+                failed.add(str(event.get("tool")))
             print(
                 f"  TOOL result={event.get('tool')} outcome={event.get('outcome')} "
                 f"duration_ms={event.get('duration_ms')}"
@@ -123,12 +128,12 @@ def _show_logs(events: list[dict[str, object]]) -> set[str]:
                 if key in {"reason", "tool", "attempt", "requested_count"}
             }
             print(f"  TOOL guard event={name} details={json.dumps(details, ensure_ascii=False)}")
-    return selected
+    return planned, selected, failed
 
 
 def _run_with_messages(
     request: dict[str, object],
-) -> tuple[int, dict[str, object], set[str]] | None:
+) -> tuple[int, dict[str, object], set[str], set[str], set[str]] | None:
     """Run the same API handler in the API container and print its in-memory LLM/tool messages."""
     payload = json.dumps(request, ensure_ascii=False)
     source = f'''\
@@ -173,8 +178,8 @@ print("RESPONSE", response.text)
         if event.get("event") in _LOG_EVENTS:
             events.append(event)
     print("PIPELINE LOGS:")
-    names = _show_logs(events)
-    return int(match.group(1)), body, names
+    planned, selected, failed = _show_logs(events)
+    return int(match.group(1)), body, planned, selected, failed
 
 
 def _run_case(
@@ -196,7 +201,7 @@ def _run_case(
         if result is None:
             print("In-container message capture failed; check that the Compose service is running.")
             return False
-        status_code, body, selected_tools = result
+        status_code, body, planned_tools, selected_tools, failed_tools = result
         print("RESPONSE JSON:")
         print(json.dumps(body, ensure_ascii=False, indent=2))
     else:
@@ -220,14 +225,19 @@ def _run_case(
             print(f"\nLOGS unavailable: {error}")
             return False
         print("PIPELINE LOGS:")
-        selected_tools = _show_logs(events)
+        planned_tools, selected_tools, failed_tools = _show_logs(events)
 
     data = body.get("data") if isinstance(body, dict) else None
     result = data.get("result") if isinstance(data, dict) else None
     route = data.get("route") if isinstance(data, dict) else None
     next_state = data.get("next_complaint_state") if isinstance(data, dict) else None
-    missing_tools = expected_tools - selected_tools
-    passed = status_code < 400 and route == expected_route and not missing_tools
+    passed = (
+        status_code < 400
+        and route == expected_route
+        and planned_tools == expected_tools
+        and selected_tools == expected_tools
+        and not failed_tools
+    )
     if preserve_complaint:
         sent_state = request["current_complaint_state"]
         sent_draft = request["complaint_draft"]
@@ -241,10 +251,13 @@ def _run_case(
             f"STATE check expected={sent_state}, got={next_state}; "
             f"draft_preserved={draft_preserved}"
         )
-    if missing_tools:
-        print(f"FAIL missing expected tool calls: {sorted(missing_tools)}; saw {sorted(selected_tools)}")
-    else:
-        print(f"Tool calls observed: {sorted(selected_tools)}")
+    if planned_tools != expected_tools:
+        print(f"FAIL plan expected={sorted(expected_tools)} got={sorted(planned_tools)}")
+    if selected_tools != expected_tools:
+        print(f"FAIL action expected={sorted(expected_tools)} got={sorted(selected_tools)}")
+    if failed_tools:
+        print(f"FAIL tool execution failed: {sorted(failed_tools)}")
+    print(f"ROUTE expected={expected_route}, got={route}; state={next_state}")
     print("CASE PASS" if passed else "CASE FAIL")
     return passed
 
@@ -261,6 +274,12 @@ def main() -> int:
         "issue_type": "plumbing",
         "location": "욕실",
         "symptom": "천장에서 물이 떨어짐",
+        "attachment_ids": [],
+    }
+    incomplete_complaint = {
+        "issue_type": "plumbing",
+        "location": None,
+        "symptom": "욕실 천장에서 물이 떨어짐",
         "attachment_ids": [],
     }
     cases = [
@@ -294,6 +313,58 @@ def main() -> int:
             ),
             "expected_tools": {"process_complaint_turn", "search_building_docs"},
             "expected_route": "complaint",
+        },
+        {
+            "title": "건물 질문 단독",
+            "request": _request(
+                "우리 아파트 분리수거 배출 요일을 알려주세요.",
+                trace_id=f"pipeline-building-only-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_building_docs"},
+            "expected_route": "knowledge",
+        },
+        {
+            "title": "일반 공개 정보 질문 단독",
+            "request": _request(
+                "오늘 서울 미세먼지 상황을 알려주세요.",
+                trace_id=f"pipeline-public-web-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_public_web"},
+            "expected_route": "knowledge",
+        },
+        {
+            "title": "진행 중 민원에서 무관한 공개 정보 질문",
+            "request": _request(
+                "오늘 서울 미세먼지 상황도 알려주세요.",
+                trace_id=f"pipeline-active-public-{uuid4().hex[:8]}",
+                current_route="complaint",
+                complaint_state="collecting",
+                complaint_draft=complaint,
+            ),
+            "expected_tools": {"search_public_web"},
+            "expected_route": "knowledge",
+            "preserve_complaint": True,
+        },
+        {
+            "title": "진행 중 민원에 빠진 위치 정보 제공",
+            "request": _request(
+                "301호 욕실 천장에서 물이 떨어지고 있어요.",
+                trace_id=f"pipeline-complaint-followup-{uuid4().hex[:8]}",
+                current_route="complaint",
+                complaint_state="collecting",
+                complaint_draft=incomplete_complaint,
+            ),
+            "expected_tools": {"process_complaint_turn"},
+            "expected_route": "complaint",
+        },
+        {
+            "title": "문맥 없는 모호한 질문",
+            "request": _request(
+                "그거 어떻게 하면 되나요?",
+                trace_id=f"pipeline-ambiguous-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": set(),
+            "expected_route": "clarify",
         },
     ]
     print(f"Converse endpoint: {os.getenv('AI_CONVERSE_URL', DEFAULT_URL)}")
