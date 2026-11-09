@@ -51,6 +51,14 @@ def test_tool_descriptions_define_use_conditions_and_exclusions():
     assert "건물별 규정" in descriptions["search_public_web"]
 
 
+def test_building_questions_route_to_building_docs_not_public_web():
+    descriptions = {contract.name: contract.description for contract in TOOL_CONTRACTS}
+
+    assert "우리 아파트" in descriptions["search_building_docs"]
+    assert "문서에 답이 없을 것 같아도 이 도구를 사용한다" in descriptions["search_building_docs"]
+    assert "이 건물·단지에 관한 질문에는 사용하지 않고" in descriptions["search_public_web"]
+
+
 def test_public_web_query_guidance_excludes_private_complaint_details():
     web_contract = next(
         contract for contract in TOOL_CONTRACTS if contract.name == "search_public_web"

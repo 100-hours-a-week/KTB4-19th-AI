@@ -135,8 +135,8 @@ def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
 
     assert result["planned_tools"] == ["process_complaint_turn"]
     system, user = prompt_inputs[0]
-    assert "continuation hints only" in system
-    assert "clear new question" in system
+    assert "only show whether this turn continues a complaint" in system
+    assert "An active complaint alone does not require process_complaint_turn" in system
     assert "현재 민원 상태 힌트: collecting" in user
     assert '"symptom":"물이 새요"' in user
     assert "미수집 민원 항목 힌트: location" in user
@@ -226,10 +226,32 @@ def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkey
     classify_intent(_build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘"))
 
     system, _ = prompts[0]
-    assert "planned_tools: the distinct tools needed" in system
-    assert "the list is not an execution order" in system
-    assert "route: representative response route fallback" in system
+    assert "planned_tools = the distinct union" in system
+    assert "Do not answer the resident or choose tool order or arguments" in system
+    assert "route (used only when no tool runs)" in system
     assert "required_capabilities" not in system
+
+
+def test_intent_prompt_uses_tool_contract_descriptions_and_prefers_building_docs(
+    monkeypatch,
+):
+    from zipsai.orchestration.tool_contracts import TOOL_CONTRACTS
+
+    prompts = []
+
+    def classify(system, user, *_args, **_kwargs):
+        prompts.append(system)
+        return _decision(Route.KNOWLEDGE)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+
+    classify_intent(_build_state("관리비 납부일 알려줘"))
+
+    system = prompts[0]
+    for contract in TOOL_CONTRACTS:
+        assert f"- {contract.name}: {contract.description}" in system
+    assert "If unsure between building and public information, choose search_building_docs" in system
+    assert "a new building question during it still needs search_building_docs" in system
 
 
 def test_text_only_classifies_without_vlm(monkeypatch):
