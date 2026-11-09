@@ -33,7 +33,7 @@ def _vector_store_ready() -> bool:
 def _models_ready() -> bool:
     try:
         response = httpx.get(
-            f"{EMBEDDING_API_URL}/readiness", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
+            f"{EMBEDDING_API_URL}/health", timeout=HEALTH_CHECK_TIMEOUT_SECONDS
         )
         return response.status_code == 200
     except httpx.HTTPError:

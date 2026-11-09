@@ -94,7 +94,7 @@ def test_health_uses_available_provider_without_network(monkeypatch, ready, stat
     assert "proxy.runpod.net" not in response.text
 
 
-def test_embedding_readiness_probe_uses_readiness_path(monkeypatch):
+def test_embedding_readiness_probe_keeps_health_path(monkeypatch):
     requested = []
 
     class Response:
@@ -107,4 +107,4 @@ def test_embedding_readiness_probe_uses_readiness_path(monkeypatch):
     monkeypatch.setattr(health.httpx, "get", get)
 
     assert health._models_ready()
-    assert requested == [f"{health.EMBEDDING_API_URL}/readiness"]
+    assert requested == [f"{health.EMBEDDING_API_URL}/health"]
