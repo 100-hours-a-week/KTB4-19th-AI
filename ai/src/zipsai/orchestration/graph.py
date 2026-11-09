@@ -20,6 +20,7 @@ from zipsai.metrics import (
     observe_tool_decision,
     observe_tool_rejection,
 )
+from zipsai.observability import tool_message_logging_enabled
 from zipsai.orchestration.intent import classify_intent
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
@@ -351,6 +352,44 @@ def _invalid_result() -> ToolFailure:
     return ToolFailure(code="invalid_arguments", message=_INVALID_CALL_MESSAGE)
 
 
+def _log_tool_call_message(call: ToolCall) -> None:
+    if tool_message_logging_enabled():
+        message = {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments},
+                }
+            ],
+        }
+        logger.info(
+            "tool_call_message",
+            extra={
+                "tool": call.name,
+                "tool_message": json.dumps(message, ensure_ascii=False),
+            },
+        )
+
+
+def _log_tool_result_message(call: ToolCall, result: object) -> None:
+    if tool_message_logging_enabled():
+        message = {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "name": call.name,
+            "content": result.model_dump(mode="json"),
+        }
+        logger.info(
+            "tool_result_message",
+            extra={
+                "tool": call.name,
+                "tool_message": json.dumps(message, ensure_ascii=False),
+            },
+        )
+
+
 def _run_tool(state: AgentState) -> dict[str, object]:
     calls = tuple(state.get("pending_tool_calls") or ())
     messages = list(state.get("agent_messages") or [])
@@ -376,6 +415,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
         }
 
     call = calls[0]
+    _log_tool_call_message(call)
     if state.get("tool_call_count", 0) >= _MAX_TOOL_CALLS:
         observe_tool_rejection("max_calls")
         logger.info(
@@ -383,6 +423,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             extra={"reason": "max_calls", "tool": call.name},
         )
         result = _invalid_result()
+        _log_tool_result_message(call, result)
         return {
             "agent_messages": [*messages, _tool_message(call, result)],
             "pending_tool_calls": (),
@@ -406,6 +447,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             extra={"reason": rejection, "tool": call.name},
         )
         result = _invalid_result()
+        _log_tool_result_message(call, result)
         return {
             "agent_messages": [*messages, _tool_message(call, result)],
             "pending_tool_calls": (),
@@ -513,6 +555,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
             updates["web_search_result"] = result
 
     outcome = "failure" if isinstance(result, ToolFailure) else "success"
+    _log_tool_result_message(call, result)
     duration = time.perf_counter() - started
     observe_tool_call(call.name, outcome, duration)
     logger.info(

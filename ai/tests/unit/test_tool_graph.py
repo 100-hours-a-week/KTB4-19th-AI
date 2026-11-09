@@ -91,6 +91,41 @@ def test_action_server_rejects_tool_outside_plan(monkeypatch: pytest.MonkeyPatch
     assert result["tool_call_count"] == 1
 
 
+def test_tool_call_and_result_messages_are_logged_when_enabled(
+    caplog, monkeypatch: pytest.MonkeyPatch
+):
+    query = "방문 차량 등록 절차"
+    state = _state()
+    state.update(
+        {
+            "planned_tools": ["search_building_docs"],
+            "pending_tool_calls": (
+                ToolCall("call-search", "search_building_docs", {"query": query}),
+            ),
+            "agent_messages": [],
+        }
+    )
+    monkeypatch.setenv("AI_LOG_TOOL_MESSAGES", "true")
+    monkeypatch.setattr(
+        graph_module,
+        "search_building_docs",
+        lambda *_args: BuildingDocsResult(status="no_results"),
+    )
+
+    with caplog.at_level("INFO", logger="zipsai.orchestration.graph"):
+        graph_module._run_tool(state)
+
+    messages = {
+        record.getMessage(): record.tool_message
+        for record in caplog.records
+        if record.name == "zipsai.orchestration.graph"
+        and hasattr(record, "tool_message")
+    }
+    assert '"name": "search_building_docs"' in messages["tool_call_message"]
+    assert query in messages["tool_call_message"]
+    assert '"status": "no_results"' in messages["tool_result_message"]
+
+
 def test_public_web_gate_receives_private_text_when_plan_fallback_is_knowledge(
     monkeypatch: pytest.MonkeyPatch,
 ):

@@ -119,6 +119,10 @@ def runtime_version() -> str | None:
     return os.getenv("ZIPSAI_VERSION") or None
 
 
+def tool_message_logging_enabled() -> bool:
+    return os.getenv("AI_LOG_TOOL_MESSAGES", "").lower() == "true"
+
+
 def current_stage() -> str | None:
     return _stage_name.get()
 
@@ -165,6 +169,8 @@ def scrub_text(value: str) -> tuple[str, bool]:
 
 
 def scrub_value(key: str, value: Any) -> tuple[Any, bool]:
+    if key == "tool_message" and tool_message_logging_enabled():
+        return value, False
     # 키 이름이 민감해도 건수는 남긴다. 본문 문자열·목록·객체만 통째로 가린다.
     if key in _SENSITIVE_KEYS and isinstance(value, (str, list, dict)):
         return _REDACTED, True

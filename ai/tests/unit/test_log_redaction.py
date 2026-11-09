@@ -105,6 +105,17 @@ def test_formatter_keeps_a_numeric_count_on_a_sensitive_key() -> None:
     assert "물이 새요" not in json.dumps(payload, ensure_ascii=False)
 
 
+def test_tool_message_is_visible_only_when_explicitly_enabled(monkeypatch) -> None:
+    message = json.dumps({"role": "tool", "query": _SENTENCE}, ensure_ascii=False)
+
+    hidden = _line("tool_result_message", tool_message=message)
+    assert _SENTENCE not in json.dumps(hidden, ensure_ascii=False)
+
+    monkeypatch.setenv("AI_LOG_TOOL_MESSAGES", "true")
+    visible = _line("tool_result_message", tool_message=message)
+    assert visible["tool_message"] == message
+
+
 def _access(caplog) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == "zipsai.access"]
 
