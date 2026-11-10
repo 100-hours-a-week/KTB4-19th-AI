@@ -23,6 +23,10 @@ class Chunk:
     text: str
     page: int
     section: str | None
+    # 표 청크의 행마다 따로 색인하는 쪽지 글. 검색은 쪽지로 하고 근거는 이 청크를 넘긴다.
+    rows: tuple[str, ...] = ()
+    # 쪽지일 때 부모 청크가 with_row_notes 결과 목록에서 차지하는 자리.
+    parent: int | None = None
 
 
 @dataclass(frozen=True)
@@ -247,7 +251,7 @@ def _pack_table(
     start: int,
     end: int,
     section: str | None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, tuple[str, ...]]]:
     rows = [
         (line.start, line.content.strip())
         for line in lines
@@ -275,9 +279,9 @@ def _pack_table(
     fmt = _table_format()
     if not body:
         text = _render_piece(labels, header_lines, header_cells, [], fmt)
-        return [(text, rows[0][0])] if text.strip() else []
+        return [(text, rows[0][0], ())] if text.strip() else []
 
-    pieces: list[tuple[str, int]] = []
+    pieces: list[tuple[str, int, tuple[str, ...]]] = []
     current: list[tuple[int, str]] = []
 
     def render(chosen: list[tuple[int, str]]) -> str:
@@ -289,15 +293,23 @@ def _pack_table(
             fmt,
         )
 
+    def notes(chosen: list[tuple[int, str]]) -> tuple[str, ...]:
+        if fmt != "fields" or not header_cells:
+            return ()
+        return tuple(
+            "\n".join([*labels, _fields_line(header_cells, content)])
+            for _, content in chosen
+        )
+
     for row in body:
         trial = current + [row]
         if current and len(render(trial)) > TABLE_CHUNK_CHARS:
-            pieces.append((render(current), current[0][0]))
+            pieces.append((render(current), current[0][0], notes(current)))
             current = [row]
         else:
             current = trial
     if current:
-        pieces.append((render(current), current[0][0]))
+        pieces.append((render(current), current[0][0], notes(current)))
     return pieces
 
 
@@ -402,9 +414,11 @@ def _group_ranges(
             # 표 조각은 앞뒤 본문 50자를 붙이지 않는다. 머리행을 반복하기 때문이다.
             if _table_format() == "fields" or len(table_text) > TABLE_CHUNK_CHARS:
                 flush()
-                for piece, pos in _pack_table(lines, atom_start, atom_end, section):
+                for piece, pos, notes in _pack_table(
+                    lines, atom_start, atom_end, section
+                ):
                     if piece.strip():
-                        ranges.append(("piece", piece, pos))
+                        ranges.append(("piece", piece, pos, notes))
                 continue
             if current_start is not None and (
                 current_end - current_start + atom_end - atom_start > capacity
@@ -500,7 +514,7 @@ def chunk_pages(pages: list[dict[str, int | str]]) -> list[Chunk]:
             )
             for index, item in enumerate(items):
                 if item[0] == "piece":
-                    _, piece, pos = item
+                    _, piece, pos, notes = item
                     if not str(piece).strip():
                         continue
                     chunks.append(
@@ -508,6 +522,7 @@ def chunk_pages(pages: list[dict[str, int | str]]) -> list[Chunk]:
                             text=str(piece),
                             page=_page_for(text, page_map, pos, pos + 1),
                             section=section,
+                            rows=notes,
                         )
                     )
                     # 다음 본문이 표 끝을 겹쳐 가져가지 않게 비운다.
@@ -538,3 +553,15 @@ def chunk_pages(pages: list[dict[str, int | str]]) -> list[Chunk]:
                 previous_text = chunk_text
                 section_chunk_count += 1
     return chunks
+
+
+def with_row_notes(chunks: list[Chunk]) -> list[Chunk]:
+    """공백 청크를 빼고, 표 청크마다 행 쪽지 청크를 뒤에 붙인다. 쪽지의 parent는 이 목록의 자리다."""
+    parents = [chunk for chunk in chunks if chunk.text.strip()]
+    notes = [
+        Chunk(text=note, page=chunk.page, section=chunk.section, parent=index)
+        for index, chunk in enumerate(parents)
+        for note in chunk.rows
+        if note.strip()
+    ]
+    return parents + notes
