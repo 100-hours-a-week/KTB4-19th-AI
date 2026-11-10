@@ -228,7 +228,7 @@ def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkey
     system, _ = prompts[0]
     assert "planned_tools = the distinct union" in system
     assert "Do not answer the resident or choose tool order or arguments" in system
-    assert "route (used only when no tool runs)" in system
+    assert "route = the core intent this turn must resolve" in system
     assert "required_capabilities" not in system
 
 
@@ -250,7 +250,11 @@ def test_intent_prompt_uses_tool_contract_descriptions_and_prefers_building_docs
     system = prompts[0]
     for contract in TOOL_CONTRACTS:
         assert f"- {contract.name}: {contract.description}" in system
-    assert "If unsure between building and public information, choose search_building_docs" in system
+    assert "choose search_building_docs when the answer could differ by building" in system
+    # 고장 신고가 질문 문장 안에 있어도 민원이다.
+    assert "is a facility report even when phrased as a question" in system
+    # 분리배출 방법처럼 건물마다 같은 질문은 관리인 질문이 아니다.
+    assert "분리배출 방법" in system
     assert "a new building question during it still needs search_building_docs" in system
 
 
