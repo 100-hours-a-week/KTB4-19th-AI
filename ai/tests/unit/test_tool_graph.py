@@ -1508,6 +1508,28 @@ def test_route_follows_core_intent_unless_complaint_completed(
     assert route is expected
 
 
+@pytest.mark.parametrize(
+    ("draft", "search", "expected_missing"),
+    [
+        (ComplaintDraft(issue_type="plumbing", symptom="물이 새요"), None, ["location"]),
+        (ComplaintDraft(issue_type="plumbing", symptom="물이 새요"), _NO_RESULTS, ["location"]),
+        (None, None, ["location", "symptom"]),
+    ],
+    ids=["failed-with-draft", "failed-with-search", "failed-without-draft"],
+)
+def test_incomplete_complaint_route_reports_missing_fields(draft, search, expected_missing):
+    # 민원 도구가 실패해도 route가 complaint이면 BE가 완성 민원으로 오인하지 않게 빈 항목을 알린다.
+    request = _request().model_copy(update={"complaint_draft": draft})
+
+    route, _, result = graph_module._assemble_result(
+        Route.COMPLAINT, request, search, "주차 등록 방법", _FAILED
+    )
+
+    assert route is Route.COMPLAINT
+    assert result.missing_fields == expected_missing
+    assert result.complaint_draft == draft
+
+
 def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure():
     request = _request().model_copy(
         update={

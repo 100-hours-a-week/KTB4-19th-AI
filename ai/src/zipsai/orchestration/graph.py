@@ -9,8 +9,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
+from zipsai.complaint.node import _missing_fields
 from zipsai.complaint.tool import process_complaint_turn
 from zipsai.contracts.converse import (
+    ComplaintDraft,
     CompletedComplaintDraft,
     QaCardDraft,
     Route,
@@ -207,6 +209,11 @@ def _assemble_result(
         route = Route.COMPLAINT
     elif searched:
         route = Route.KNOWLEDGE
+    if route is Route.COMPLAINT and not complaint_result:
+        # 민원 도구 결과가 없는 complaint 턴을 BE가 완성 민원으로 오인하지 않게 빈 항목을 알린다.
+        result = result.model_copy(
+            update={"missing_fields": _missing_fields(request.complaint_draft or ComplaintDraft())}
+        )
     return (
         route or Route.CLARIFY,
         complaint_result.complaint_state
