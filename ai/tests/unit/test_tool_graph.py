@@ -529,7 +529,9 @@ def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
     assert "Do not restate the draft, its fields, or its follow-up question" in system
 
 
-def _composite_graph(monkeypatch, order, search_results, composer_messages):
+def _composite_graph(
+    monkeypatch, order, search_results, composer_messages, text="누수 민원 만들고 방문 차량 등록도 알려줘"
+):
     calls = {
         "process_complaint_turn": ToolCall("call-complaint", "process_complaint_turn", {}),
         "search_building_docs": ToolCall("call-search", "search_building_docs", {"query": "방문 차량 등록 방법"}),
@@ -564,7 +566,7 @@ def _composite_graph(monkeypatch, order, search_results, composer_messages):
     monkeypatch.setattr(graph_module, "search_public_web", lambda *_a, **_kw: search_results["web"])
     state = _state()
     payload = state["request"].model_dump()
-    payload["message"]["text"] = "누수 민원 만들고 방문 차량 등록도 알려줘"
+    payload["message"]["text"] = text
     state["request"] = ConverseRequest.model_validate(payload)
     return graph_module.build_graph().invoke(state)
 
@@ -632,7 +634,7 @@ def test_search_only_composer_sees_only_search_question_and_results(
         # 대화 하나에 카드 하나: 이번 턴에 민원이 처리되면 민원을 우선하고 QA 카드는 만들지 않는다.
         (
             ("process_complaint_turn", "search_building_docs"),
-            graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY,
+            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.",
             "어디에서 생긴 문제인가요?",
             None,
         ),
@@ -1056,7 +1058,7 @@ def test_agent_prompt_allows_a_natural_reply_or_one_tool(
     graph_module.build_graph().invoke(_state())
 
     assert any("Use an offered tool when needed" in message for message in seen_system_messages)
-    assert any("reply naturally in Korean" in message for message in seen_system_messages)
+    assert any("otherwise reply naturally" in message for message in seen_system_messages)
 
 
 @pytest.mark.parametrize(
@@ -1183,7 +1185,7 @@ def test_graph_runs_search_then_complaint_before_final_agent_reply(
 
     assert result["route"] is Route.COMPLAINT
     assert result["reply"] == (
-        f"{graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY}\n\n"
+        "'누수 처리 기한' 내용은 건물 문서에서 찾지 못했어요.\n\n"
         "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?"
     )
     assert result["complaint_result"] == tool_result
@@ -1257,7 +1259,7 @@ def test_graph_runs_search_after_complaint_when_agent_selects_it(
     assert executed == ["complaint", "search"]
     assert result["tool_call_count"] == 2
     assert result["reply"] == (
-        f"{graph_module._NO_EVIDENCE_WITHOUT_CARD_REPLY}\n\n욕실 누수 민원 초안을 정리했습니다."
+        "'누수 처리 기한' 내용은 건물 문서에서 찾지 못했어요.\n\n욕실 누수 민원 초안을 정리했습니다."
     )
     assert result["result"].qa_card_draft is None
     assert result["result"].complaint_draft == complaint_result.result.complaint_draft
@@ -1888,3 +1890,43 @@ def test_graph_ends_safely_when_composer_returns_an_unoffered_tool_call(
 
     assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
     assert "process_complaint_turn" not in result["reply"]
+
+
+def test_no_evidence_reply_does_not_claim_the_question_was_sent():
+    # QA 카드는 입주민이 [질문 전달]을 눌러야 전달된다.
+    assert "전달해 두었습니다" not in NO_EVIDENCE_REPLY
+    assert "관리자에게 보낼 질문" in NO_EVIDENCE_REPLY
+
+
+def test_agent_system_handles_usage_questions_out_of_scope_and_echo():
+    system = graph_module._AGENT_SYSTEM
+    assert "If asked how to use this assistant" in system
+    # 사용법 안내는 실제 서비스 사실만 말하고 처리 기간·메일·양식 같은 것을 지어내지 않는다.
+    assert "[민원] 메뉴" in system
+    assert "Do not mention processing times" in system
+    assert "requests unrelated to the building or complaints" in system
+    assert "Do not repeat the resident's words" in system
+    assert "Reply in the resident's language" in system
+
+
+@pytest.mark.parametrize(
+    "text, expects_hint",
+    [("Which days can I put out recycling?", True), ("분리수거 요일 알려줘", False)],
+    ids=["english", "korean"],
+)
+def test_search_composer_gets_language_hint_only_for_non_korean_message(
+    monkeypatch: pytest.MonkeyPatch, text, expects_hint
+):
+    composer_messages: list[list[object]] = []
+
+    _composite_graph(
+        monkeypatch,
+        ("search_building_docs",),
+        {"building": _building_ok(), "web": None},
+        composer_messages,
+        text=text,
+    )
+
+    sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
+    assert ("Reply in the same language as this resident message" in sent) is expects_hint
+    assert (text in sent) is expects_hint
