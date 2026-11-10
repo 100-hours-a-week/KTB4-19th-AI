@@ -442,3 +442,24 @@ def test_intent_prompt_searches_again_for_follow_up_questions(monkeypatch):
     system = prompts[0]
     assert "A follow-up question still needs its search tool" in system
     assert "never answer from conversation history" in system
+
+
+def test_intent_prompt_routes_small_talk_usage_and_out_of_scope_to_clarify(monkeypatch):
+    prompts = []
+
+    def classify(system, user, *_args, **_kwargs):
+        prompts.append(system)
+        return _decision(Route.CLARIFY)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+
+    classify_intent(_build_state("안녕하세요"))
+
+    system = prompts[0]
+    # 도구 없는 턴의 route는 BE가 대화 종료를 판단하는 신호다. 잡담·범위 밖은 업무가 아니므로 clarify.
+    assert "knowledge for information or small talk" not in system
+    assert "clarify for greetings, thanks, small talk" in system
+    assert "questions about using this assistant" in system
+    assert "requests unrelated to the building or complaints" in system
+    assert "Asking how to file or check a complaint through this assistant needs no tool" in system
+    assert "use route clarify" in system
