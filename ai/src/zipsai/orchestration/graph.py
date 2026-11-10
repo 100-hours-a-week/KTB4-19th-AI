@@ -10,7 +10,12 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
 from zipsai.complaint.tool import process_complaint_turn
-from zipsai.contracts.converse import QaCardDraft, Route, RouteResult
+from zipsai.contracts.converse import (
+    CompletedComplaintDraft,
+    QaCardDraft,
+    Route,
+    RouteResult,
+)
 from zipsai.errors import LlmInvalidToolCallError
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
@@ -56,7 +61,9 @@ _SEARCH_COMPOSER_SYSTEM = (
 )
 _AGENT_SYSTEM = (
     "You are a residential-building assistant that helps residents report facility problems and ask "
-    "about their building. Decide whether to use a tool or reply. Reply in the resident's language; "
+    "about their building. Help only with this building, living in it, and facility complaints; "
+    "for any other request (e.g. translating a word, general trivia), never answer its content. "
+    "Decide whether to use a tool or reply. Reply in the resident's language; "
     "default to Korean. "
     "Use search_building_docs before answering questions about the current building. "
     "Use process_complaint_turn for facility complaints or an existing complaint draft. "
@@ -147,6 +154,14 @@ def _available_tool_contracts(state: AgentState):
     )
 
 
+def _has_complaint(request: object, complaint: object) -> bool:
+    # 대화 하나에 카드 하나: 이번 턴이나 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다.
+    draft = request.complaint_draft
+    return isinstance(complaint, ComplaintTurnResult) or bool(
+        draft and draft.model_dump(exclude_defaults=True)
+    )
+
+
 def _assemble_result(
     route: Route | None,
     request: object,
@@ -170,21 +185,27 @@ def _assemble_result(
             update={
                 "citations": [*result.citations, *(item.citation for item in evidence)],
                 "has_sufficient_evidence": any(item.status == "ok" for item in evidence_results),
-                # 대화 하나에 카드 하나: 이번 턴에 민원이 처리됐으면 민원 카드를 우선한다.
                 "qa_card_draft": (
                     QaCardDraft(question=search_query)
                     if building_result
                     and building_result.status == "no_results"
                     and search_query
-                    and not complaint_result
+                    and not _has_complaint(request, complaint)
                     else result.qa_card_draft
                 ),
             }
         )
-    # 대표 route는 실행 순서가 아니라 결과로 정한다: 민원 성공 > 검색 시도 > Plan fallback.
-    if complaint_result:
+    # route는 Plan이 본 핵심 의도다. 민원이 완성된 턴은 카드가 떠야 하므로 complaint로 올리고,
+    # Plan과 실행한 도구가 어긋나면 도구로 보정한다.
+    searched = search is not None or web_search is not None
+    completed = complaint_result and isinstance(
+        result.complaint_draft, CompletedComplaintDraft
+    )
+    if completed or (
+        complaint is not None and (route is Route.COMPLAINT or not searched)
+    ):
         route = Route.COMPLAINT
-    elif search is not None or web_search is not None:
+    elif searched:
         route = Route.KNOWLEDGE
     return (
         route or Route.CLARIFY,
@@ -196,8 +217,8 @@ def _assemble_result(
 
 
 def _no_evidence_reply(state: AgentState) -> str:
-    # 대화 하나에 카드 하나: 이번 턴에 민원이 처리되면 QA 카드가 없으므로 무엇을 못 찾았는지만 알린다.
-    if isinstance(state.get("complaint_result"), ComplaintTurnResult):
+    # 민원이 진행된 대화에는 QA 카드가 없으므로 무엇을 못 찾았는지만 알린다.
+    if _has_complaint(state["request"], state.get("complaint_result")):
         return f"'{state.get('search_query')}' 내용은 건물 문서에서 찾지 못했어요."
     return NO_EVIDENCE_REPLY
 
