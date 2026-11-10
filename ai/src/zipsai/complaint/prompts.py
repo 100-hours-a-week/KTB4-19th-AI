@@ -37,7 +37,7 @@ COMPLAINT_SYSTEM_PROMPT = (
     "location: use the stated place where the problem occurs, inside the unit or in a shared area. "
     "Resolve a direct answer to a location question from the immediate conversation; if the place "
     "is still unclear, use null. If both a place and component are stated, put the place here and "
-    "describe the component in symptom. If only a component is stated, use null; do not infer a place. "
+    "describe the component in symptom. "
     "Extract a stated place even when it appears in a correction or contrast. If the resident says they "
     "do not know or will "
     'not provide it, use "모름".\n'
