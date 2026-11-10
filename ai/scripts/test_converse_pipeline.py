@@ -190,6 +190,7 @@ def _run_case(
     expected_tools: set[str],
     expected_route: str,
     preserve_complaint: bool = False,
+    allow_qa_card: bool = True,
     show_messages: bool = False,
 ) -> bool:
     url = os.getenv("AI_CONVERSE_URL", DEFAULT_URL)
@@ -252,6 +253,15 @@ def _run_case(
             f"STATE check expected={sent_state}, got={next_state}; "
             f"draft_preserved={draft_preserved}"
         )
+    # QA 카드는 관리인에게 가는 질문이다. 관리인 질문이 아닌 턴에는 없어야 하고, 있으면 한국어여야 한다.
+    qa_card = result.get("qa_card_draft") if isinstance(result, dict) else None
+    qa_question = qa_card.get("question", "") if isinstance(qa_card, dict) else None
+    if qa_question is not None and not allow_qa_card:
+        print(f"FAIL unexpected QA card: {qa_question}")
+        passed = False
+    if qa_question is not None and not re.search(r"[가-힣]", qa_question):
+        print(f"FAIL QA card question is not Korean: {qa_question}")
+        passed = False
     if planned_tools != expected_tools:
         print(f"FAIL plan expected={sorted(expected_tools)} got={sorted(planned_tools)}")
     if selected_tools != expected_tools:
@@ -292,6 +302,7 @@ def main() -> int:
             ),
             "expected_tools": {"process_complaint_turn"},
             "expected_route": "complaint",
+            "allow_qa_card": False,
         },
         {
             "title": "진행 중 민원에서 새 건물 질문: 상태와 초안 보존",
@@ -304,6 +315,7 @@ def main() -> int:
             ),
             "expected_tools": {"search_building_docs"},
             "expected_route": "knowledge",
+            "allow_qa_card": False,
             "preserve_complaint": True,
         },
         {
@@ -314,6 +326,7 @@ def main() -> int:
             ),
             "expected_tools": {"process_complaint_turn", "search_building_docs"},
             "expected_route": "complaint",
+            "allow_qa_card": False,
         },
         {
             "title": "건물 질문 단독",
@@ -351,6 +364,7 @@ def main() -> int:
             ),
             "expected_tools": {"search_public_web"},
             "expected_route": "knowledge",
+            "allow_qa_card": False,
         },
         {
             "title": "진행 중 민원에서 무관한 공개 정보 질문",
@@ -363,6 +377,7 @@ def main() -> int:
             ),
             "expected_tools": {"search_public_web"},
             "expected_route": "knowledge",
+            "allow_qa_card": False,
             "preserve_complaint": True,
         },
         {
@@ -376,6 +391,7 @@ def main() -> int:
             ),
             "expected_tools": {"process_complaint_turn"},
             "expected_route": "complaint",
+            "allow_qa_card": False,
         },
         {
             "title": "인사: 도구 없이 clarify",
@@ -385,6 +401,7 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
         },
         {
             "title": "감사: 도구 없이 clarify",
@@ -394,6 +411,7 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
         },
         {
             "title": "범위 밖 요청: 도구 없이 clarify",
@@ -403,6 +421,7 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
         },
         {
             "title": "서비스 사용법 질문: 도구 없이 clarify",
@@ -412,6 +431,7 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
         },
         {
             "title": "프롬프트 주입: 도구 없이 clarify",
@@ -421,6 +441,7 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
         },
         {
             "title": "문맥 없는 모호한 질문",
@@ -430,6 +451,65 @@ def main() -> int:
             ),
             "expected_tools": set(),
             "expected_route": "clarify",
+            "allow_qa_card": False,
+        },
+        {
+            "title": "생활 공공 정보: 웹서치, QA 카드 없음",
+            "request": _request(
+                "전입신고는 어떻게 해요?",
+                trace_id=f"pipeline-public-service-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_public_web"},
+            "expected_route": "knowledge",
+            "allow_qa_card": False,
+        },
+        {
+            "title": "분리배출 방법: 건물마다 같으므로 웹서치",
+            "request": _request(
+                "페트병은 라벨 떼고 버려야 하나요?",
+                trace_id=f"pipeline-recycling-howto-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_public_web"},
+            "expected_route": "knowledge",
+            "allow_qa_card": False,
+        },
+        {
+            "title": "건물 규칙과 공공 규칙이 함께 걸린 질문",
+            "request": _request(
+                "우리 건물 음식물 쓰레기는 어디에 버리고, 종량제 봉투는 어디서 사요?",
+                trace_id=f"pipeline-building-and-public-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_building_docs", "search_public_web"},
+            "expected_route": "knowledge",
+        },
+        {
+            "title": "질문 형태의 고장 신고: 민원",
+            "request": _request(
+                "복도 전등이 나갔는데 보통 교체는 언제 해줘요?",
+                trace_id=f"pipeline-complaint-as-question-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"process_complaint_turn", "search_building_docs"},
+            "expected_route": "complaint",
+            "allow_qa_card": False,
+        },
+        {
+            "title": "외국어 건물 질문: QA 카드 질문은 한국어",
+            "request": _request(
+                "What time does the gym open?",
+                trace_id=f"pipeline-foreign-language-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": {"search_building_docs"},
+            "expected_route": "knowledge",
+        },
+        {
+            "title": "범위 밖 상식 질문: QA 카드 없음",
+            "request": _request(
+                "돼지가 영어로 뭐야?",
+                trace_id=f"pipeline-trivia-{uuid4().hex[:8]}",
+            ),
+            "expected_tools": set(),
+            "expected_route": "clarify",
+            "allow_qa_card": False,
         },
     ]
     print(f"Converse endpoint: {os.getenv('AI_CONVERSE_URL', DEFAULT_URL)}")
