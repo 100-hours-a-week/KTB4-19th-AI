@@ -43,12 +43,14 @@ def test_tool_contracts_expose_current_workflow_schemas():
 def test_tool_descriptions_define_use_conditions_and_exclusions():
     descriptions = {contract.name: contract.description for contract in TOOL_CONTRACTS}
 
-    assert "건물별 정보" in descriptions["search_building_docs"]
-    assert "일반적인 공개 정보" in descriptions["search_building_docs"]
+    assert "관리인만 답할 수 있는 정보" in descriptions["search_building_docs"]
+    assert (
+        "건물마다 답이 달라지지 않는 질문에는 사용하지 않는다"
+        in descriptions["search_building_docs"]
+    )
     assert "시설 문제 신고" in descriptions["process_complaint_turn"]
     assert "단순 정보 질문에는 사용하지 않는다" in descriptions["process_complaint_turn"]
-    assert "일반적·최신 공개 정보" in descriptions["search_public_web"]
-    assert "건물별 규정" in descriptions["search_public_web"]
+    assert "생활 관련 공개 정보" in descriptions["search_public_web"]
 
 
 def test_building_questions_route_to_building_docs_not_public_web():
@@ -56,7 +58,15 @@ def test_building_questions_route_to_building_docs_not_public_web():
 
     assert "우리 아파트" in descriptions["search_building_docs"]
     assert "문서에 답이 없을 것 같아도 이 도구를 사용한다" in descriptions["search_building_docs"]
-    assert "이 건물·단지에 관한 질문에는 사용하지 않고" in descriptions["search_public_web"]
+    assert "이 건물·단지의 규정·운영은 search_building_docs로" in descriptions["search_public_web"]
+
+
+def test_building_query_is_written_in_korean_for_the_manager():
+    # 검색어는 문서에 답이 없을 때 관리인에게 가는 QA 카드 질문이 된다.
+    query_description = BuildingDocsArgs.model_json_schema()["properties"]["query"]["description"]
+
+    assert "한국어" in query_description
+    assert "관리인" in query_description
 
 
 def test_public_web_query_guidance_excludes_private_complaint_details():

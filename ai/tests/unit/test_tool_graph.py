@@ -7,6 +7,7 @@ import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
     ComplaintDraft,
     ComplaintState,
+    CompletedComplaintDraft,
     ConverseRequest,
     HistoryTurn,
     Route,
@@ -530,7 +531,12 @@ def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
 
 
 def _composite_graph(
-    monkeypatch, order, search_results, composer_messages, text="누수 민원 만들고 방문 차량 등록도 알려줘"
+    monkeypatch,
+    order,
+    search_results,
+    composer_messages,
+    text="누수 민원 만들고 방문 차량 등록도 알려줘",
+    complaint_draft=None,
 ):
     calls = {
         "process_complaint_turn": ToolCall("call-complaint", "process_complaint_turn", {}),
@@ -567,6 +573,7 @@ def _composite_graph(
     state = _state()
     payload = state["request"].model_dump()
     payload["message"]["text"] = text
+    payload["complaint_draft"] = complaint_draft
     state["request"] = ConverseRequest.model_validate(payload)
     return graph_module.build_graph().invoke(state)
 
@@ -659,6 +666,42 @@ def test_building_no_results_uses_fixed_reply_without_composer(
     )
     qa_card = result["result"].qa_card_draft
     assert (qa_card.question if qa_card else None) == qa_question
+
+
+@pytest.mark.parametrize(
+    "complaint_draft, no_evidence_reply, qa_question",
+    [
+        (None, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
+        # 빈 초안은 민원 이력이 아니다.
+        ({}, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
+        # 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다. QA 카드를 만들지 않는다.
+        (
+            {"issue_type": "plumbing", "symptom": "천장 누수"},
+            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.",
+            None,
+        ),
+    ],
+    ids=["no-draft", "empty-draft", "earlier-complaint"],
+)
+def test_no_qa_card_once_conversation_has_complaint_draft(
+    monkeypatch: pytest.MonkeyPatch, complaint_draft, no_evidence_reply, qa_question
+):
+    result = _composite_graph(
+        monkeypatch,
+        ("search_building_docs",),
+        {"building": BuildingDocsResult(status="no_results"), "web": None},
+        [],
+        text="방문 차량 등록은 어떻게 해요?",
+        complaint_draft=complaint_draft,
+    )
+
+    assert result["reply"] == no_evidence_reply
+    qa_card = result["result"].qa_card_draft
+    assert (qa_card.question if qa_card else None) == qa_question
+    # 민원 초안은 그대로 돌려줘 다음 턴에 이어 쓸 수 있게 한다.
+    assert result["result"].complaint_draft == (
+        ComplaintDraft.model_validate(complaint_draft) if complaint_draft is not None else None
+    )
 
 
 def test_building_no_results_reply_is_added_after_web_answer(monkeypatch: pytest.MonkeyPatch):
@@ -1368,11 +1411,12 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
             False,
             True,
         ),
+        # 민원 도구가 실패해도 대화에 민원 초안이 있으므로 QA 카드는 만들지 않는다.
         (
             BuildingDocsResult(status="no_results"),
             ToolFailure(code="timeout", message="민원 처리가 지연됐습니다."),
             False,
-            True,
+            False,
             True,
         ),
         (
@@ -1399,7 +1443,8 @@ def test_response_assembler_preserves_only_successful_tool_results(
         complaint,
     )
 
-    assert route is (Route.COMPLAINT if isinstance(complaint, ComplaintTurnResult) else Route.KNOWLEDGE)
+    # 민원이 완성되지 않았고 Plan의 핵심 의도가 질문이면 route는 knowledge다.
+    assert route is Route.KNOWLEDGE
     assert bool(result.citations) is expected_citation
     assert (result.qa_card_draft is not None) is expected_qa
     assert (result.complaint_draft is not None) is expected_draft
@@ -1409,6 +1454,80 @@ def test_response_assembler_preserves_only_successful_tool_results(
     else:
         assert result.complaint_draft == existing_draft
         assert complaint_state is None
+
+
+_COLLECTING = ComplaintTurnResult(
+    reply="어느 장소인가요?",
+    complaint_state="collecting",
+    result=RouteResult(
+        complaint_draft=ComplaintDraft(issue_type="plumbing"),
+        missing_fields=["location"],
+    ),
+)
+_COMPLETED = ComplaintTurnResult(
+    reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
+    complaint_state=None,
+    result=RouteResult(
+        complaint_draft=CompletedComplaintDraft(
+            issue_type="plumbing", location="욕실", symptom="천장 누수"
+        )
+    ),
+)
+_FAILED = ToolFailure(code="timeout", message="민원 처리가 지연됐습니다.")
+_NO_RESULTS = BuildingDocsResult(status="no_results")
+
+
+@pytest.mark.parametrize(
+    ("plan_route", "search", "complaint", "expected"),
+    [
+        (Route.KNOWLEDGE, _NO_RESULTS, _COMPLETED, Route.COMPLAINT),
+        (Route.COMPLAINT, _NO_RESULTS, _COLLECTING, Route.COMPLAINT),
+        (Route.COMPLAINT, _NO_RESULTS, _FAILED, Route.COMPLAINT),
+        (Route.KNOWLEDGE, _NO_RESULTS, _COLLECTING, Route.KNOWLEDGE),
+        (Route.CLARIFY, _NO_RESULTS, None, Route.KNOWLEDGE),
+        (Route.KNOWLEDGE, None, _COLLECTING, Route.COMPLAINT),
+        (Route.CLARIFY, None, None, Route.CLARIFY),
+    ],
+    ids=[
+        "completed-wins",
+        "complaint-intent",
+        "complaint-intent-tool-failed",
+        "question-intent-with-complaint",
+        "search-corrects-plan",
+        "complaint-only-corrects-plan",
+        "no-tool-uses-plan",
+    ],
+)
+def test_route_follows_core_intent_unless_complaint_completed(
+    plan_route, search, complaint, expected
+):
+    route, _, _ = graph_module._assemble_result(
+        plan_route, _request(), search, "주차 등록 방법", complaint
+    )
+
+    assert route is expected
+
+
+@pytest.mark.parametrize(
+    ("draft", "search", "expected_missing"),
+    [
+        (ComplaintDraft(issue_type="plumbing", symptom="물이 새요"), None, ["location"]),
+        (ComplaintDraft(issue_type="plumbing", symptom="물이 새요"), _NO_RESULTS, ["location"]),
+        (None, None, ["location", "symptom"]),
+    ],
+    ids=["failed-with-draft", "failed-with-search", "failed-without-draft"],
+)
+def test_incomplete_complaint_route_reports_missing_fields(draft, search, expected_missing):
+    # 민원 도구가 실패해도 route가 complaint이면 BE가 완성 민원으로 오인하지 않게 빈 항목을 알린다.
+    request = _request().model_copy(update={"complaint_draft": draft})
+
+    route, _, result = graph_module._assemble_result(
+        Route.COMPLAINT, request, search, "주차 등록 방법", _FAILED
+    )
+
+    assert route is Route.COMPLAINT
+    assert result.missing_fields == expected_missing
+    assert result.complaint_draft == draft
 
 
 def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure():
