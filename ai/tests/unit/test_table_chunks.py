@@ -155,3 +155,18 @@ def test_packed_table_stays_within_512_bge_m3_tokens() -> None:
     for chunk in chunks:
         tokens = tokenizer.encode(chunk.text, add_special_tokens=True)
         assert len(tokens) <= 512
+
+
+def test_drops_only_unpaired_openers_inside_table_cells() -> None:
+    text = (
+        "세탁 요금\n| 항목 | 구분 | 요금 | 비고 |\n| --- | --- | --- | --- |\n"
+        "| 세탁기 | 이불 | [3,500원 | (최대 8kg |\n"
+        "| 건조기 | 일반 | 2,800원 | (60분) 기준 [참고] |"
+    )
+
+    chunk = chunk_pages([{"page": 1, "text": text}])[0].text
+
+    assert "요금: 3,500원" in chunk
+    assert "비고: 최대 8kg" in chunk
+    assert "비고: (60분) 기준 [참고]" in chunk
+    assert "[3,500" not in chunk

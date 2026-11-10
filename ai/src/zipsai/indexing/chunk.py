@@ -82,9 +82,23 @@ def _table_format() -> str:
     return "markdown"
 
 
+def _drop_unpaired_openers(cell: str) -> str:
+    # OCR이 "[3,500원"처럼 여는 기호만 남기는 일이 잦다. 닫는 짝이 없는 [ ( 만 지운다.
+    drop: set[int] = set()
+    for opener, closer in (("[", "]"), ("(", ")")):
+        stack: list[int] = []
+        for index, char in enumerate(cell):
+            if char == opener:
+                stack.append(index)
+            elif char == closer and stack:
+                stack.pop()
+        drop.update(stack)
+    return "".join(char for index, char in enumerate(cell) if index not in drop)
+
+
 def _split_cells(line: str) -> list[str]:
     raw = line.strip().removeprefix("|").removesuffix("|")
-    return [cell.strip() for cell in raw.split("|")]
+    return [_drop_unpaired_openers(cell.strip()).strip() for cell in raw.split("|")]
 
 
 def _fold_cell(cell: str) -> str:
