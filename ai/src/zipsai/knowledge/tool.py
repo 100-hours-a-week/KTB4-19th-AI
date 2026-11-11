@@ -1,7 +1,7 @@
 from zipsai.contracts.converse import ConverseRequest
 from zipsai.errors import EmbeddingError, VectorStoreError
 from zipsai.integrations.qdrant import get_client
-from zipsai.knowledge.evidence import evidence
+from zipsai.knowledge.evidence import citations, evidence
 from zipsai.knowledge.retrieve import encode_question, query_encoder, search_chunks
 from zipsai.orchestration.tool_contracts import (
     BuildingDocsArgs,
@@ -29,4 +29,4 @@ def search_building_docs(
     results = evidence(chunks)
     if not results:
         return BuildingDocsResult(status="no_results")
-    return BuildingDocsResult(status="ok", evidence=results)
+    return BuildingDocsResult(status="ok", evidence=results, citations=citations(chunks))

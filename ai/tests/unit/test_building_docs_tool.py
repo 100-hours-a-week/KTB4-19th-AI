@@ -28,8 +28,8 @@ def _request(building_id: int = 101) -> ConverseRequest:
     )
 
 
-def _chunk(payload: dict[str, object]) -> models.ScoredPoint:
-    return models.ScoredPoint(id=1, version=0, score=0.9, payload=payload)
+def _chunk(payload: dict[str, object], point_id: int = 1) -> models.ScoredPoint:
+    return models.ScoredPoint(id=point_id, version=0, score=0.9, payload=payload)
 
 
 def _stub_encoder(monkeypatch):
@@ -132,3 +132,38 @@ def test_search_building_docs_returns_unavailable_for_embedding_failure(monkeypa
     result = tool_module.search_building_docs(BuildingDocsArgs(query="주차"), _request())
 
     assert result == ToolFailure(code="unavailable", message="건물 문서를 검색할 수 없습니다.")
+
+
+def test_search_building_docs_keeps_each_chunk_of_the_same_document(monkeypatch):
+    _stub_encoder(monkeypatch)
+    monkeypatch.setattr(
+        tool_module,
+        "search_chunks",
+        lambda *_args, **_kwargs: [
+            _chunk({"doc_id": "laundry", "title": "세탁실", "text": "세탁기 1호기 2,500원"}, 1),
+            _chunk({"doc_id": "laundry", "title": "세탁실", "text": "건조기 60분 2,800원"}, 2),
+            _chunk({"doc_id": "laundry", "title": "세탁실", "text": "건조기 60분 2,800원"}, 2),
+        ],
+    )
+
+    result = tool_module.search_building_docs(BuildingDocsArgs(query="건조기"), _request())
+
+    assert [item.text for item in result.evidence] == ["세탁기 1호기 2,500원", "건조기 60분 2,800원"]
+    assert [citation.source_id for citation in result.citations] == ["laundry"]
+
+
+def test_search_building_docs_gives_the_model_400_chars_and_the_screen_200(monkeypatch):
+    _stub_encoder(monkeypatch)
+    monkeypatch.setattr(
+        tool_module,
+        "search_chunks",
+        lambda *_args, **_kwargs: [
+            _chunk({"doc_id": "d", "title": "문서", "text": "가" * 500})
+        ],
+    )
+
+    result = tool_module.search_building_docs(BuildingDocsArgs(query="질문"), _request())
+
+    assert len(result.evidence[0].text) == 400
+    assert len(result.citations[0].snippet) == 200
+    assert "citations" not in result.model_dump(mode="json")
