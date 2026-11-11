@@ -467,3 +467,21 @@ def test_intent_prompt_routes_small_talk_usage_and_out_of_scope_to_clarify(monke
     assert "requests unrelated to the building or complaints" in system
     assert "Asking how to file or check a complaint through this assistant needs no tool" in system
     assert "use route clarify" in system
+
+
+def test_intent_prompt_continues_complaint_when_reply_fills_missing_field(monkeypatch):
+    prompts = []
+
+    def classify(system, user, *_args, **_kwargs):
+        prompts.append(system)
+        return _decision(Route.COMPLAINT)
+
+    monkeypatch.setattr(intent_module, "generate_structured", classify)
+
+    classify_intent(_build_state("안방이에요"))
+
+    system = prompts[0]
+    # 다른 질문을 거친 뒤에도 빈 민원 항목을 채우는 답이면 민원을 이어간다.
+    assert "reply to the last complaint question" not in system
+    assert "a reply that fills a missing complaint field" in system
+    assert "even if other questions came in between" in system
