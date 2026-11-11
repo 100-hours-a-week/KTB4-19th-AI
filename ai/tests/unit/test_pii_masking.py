@@ -105,3 +105,39 @@ def test_detections_carry_the_kind_so_the_log_can_count_them() -> None:
 
     counts = Counter(detection.kind.value for detection in result.detections)
     assert counts == {"이메일": 2}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("08바17291", "[차량번호]"),
+        ("12713456 차량은", "[차량번호] 차량은"),
+        ("차량 54146789는", "차량 [차량번호]는"),
+        ("08비7291", "[차량번호]"),
+        ("08 바 7291", "[차량번호]"),
+        ("12가3456", "[차량번호]"),
+        ("56라9012", "[차량번호]"),
+        ("0101234567 차량", "[전화번호] 차량"),
+    ],
+)
+def test_masks_ocr_misread_car_plates(text: str, expected: str) -> None:
+    result = mask_pages([{"page": 1, "text": text}])
+
+    assert result.pages == [{"page": 1, "text": expected}]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026년 9월 20일",
+        "15,000원",
+        "30호실에 12면",
+        "접수번호 12345678",
+        "201호 2026년 공지",
+        "15층 1234",
+    ],
+)
+def test_leaves_car_plate_lookalikes_unchanged(text: str) -> None:
+    pages = [{"page": 1, "text": text}]
+
+    assert mask_pages(pages).pages == pages
