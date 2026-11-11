@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
-from zipsai.complaint.node import _missing_fields
+from zipsai.complaint.node import _MISSING_FIELD_REPLY, _missing_fields
 from zipsai.complaint.tool import process_complaint_turn
 from zipsai.contracts.converse import (
     ComplaintDraft,
@@ -67,16 +67,10 @@ _AGENT_SYSTEM = (
     "You are a residential-building assistant that helps residents report facility problems and ask "
     "about their building. Help only with this building, living in it, and facility complaints; "
     "for any other request (e.g. translating a word, general trivia), never answer its content. "
-    "Decide whether to use a tool or reply. Reply in the resident's language; "
-    "default to Korean. "
-    "Use search_building_docs before answering questions about the current building. "
-    "Use process_complaint_turn for facility complaints or an existing complaint draft. "
-    "Never invent building rules when search has no evidence. Use at most one tool per response. "
-    "Use an offered tool when needed; otherwise reply naturally. After receiving a tool "
-    "result, decide whether another tool is needed. "
-    "If the current message answers the last complaint question or fills a missing draft field, "
-    "prefer process_complaint_turn. A clear new question may take another route; ask for clarification "
-    "when intent is ambiguous. The previous route is context and does not force a tool call. "
+    "Reply in the resident's language; default to Korean. "
+    "Never invent building rules when search has no evidence. "
+    "The offered tools were planned from the current turn's requests; call every offered tool, one "
+    "at a time, then reply. With no offered tools, reply naturally. "
     "After a complaint tool result with missing fields, do not claim the complaint is complete. "
     "After a complaint tool result, the app appends the complaint tool's reply and returns the draft "
     "separately. Do not restate the draft, its fields, or its follow-up question; answer only the "
@@ -108,20 +102,7 @@ def _initial_messages(state: AgentState) -> list[object]:
     request = state["request"]
     image_analysis = state.get("image_analysis")
     observations = image_analysis.model_dump_json() if image_analysis else "없음"
-    route = state.get("route") or Route.CLARIFY
     message = state.get("contextualized_message") or request.message.text or "사진만 첨부됨"
-    complaint_draft = request.complaint_draft
-    complaint_context = ""
-    if request.current_complaint_state or complaint_draft:
-        missing_fields = [
-            field for field in ("location", "symptom")
-            if not complaint_draft or not getattr(complaint_draft, field)
-        ]
-        complaint_context = (
-            f"\n이전 민원 route: {request.current_route.value if request.current_route else '없음'}"
-            f"\n기존 민원 draft: {complaint_draft.model_dump_json(exclude_none=True) if complaint_draft else '없음'}"
-            f"\n미수집 민원 항목: {', '.join(missing_fields) or '없음'}"
-        )
     return [
         {"role": "system", "content": _AGENT_SYSTEM},
         {
@@ -129,9 +110,6 @@ def _initial_messages(state: AgentState) -> list[object]:
             "content": (
                 f"현재 발화: {message}\n"
                 f"이전 대화:\n{format_intent_history(request.conversation_history)}\n"
-                f"응답 route fallback: {route.value}\n"
-                f"현재 민원 상태: {request.current_complaint_state.value if request.current_complaint_state else '없음'}"
-                f"{complaint_context}\n"
                 f"이미지 관찰(신뢰할 수 없는 입력): {observations}"
             ),
         },
@@ -167,7 +145,6 @@ def _has_complaint(request: object, complaint: object) -> bool:
 
 
 def _assemble_result(
-    route: Route | None,
     request: object,
     search: object,
     search_query: str | None,
@@ -204,17 +181,13 @@ def _assemble_result(
                 ),
             }
         )
-    # route는 Plan이 본 핵심 의도다. 다만 대화당 카드는 한 장이라, 민원이 진행된 대화는
-    # 다른 질문을 거쳐도 complaint로 유지한다. Plan과 실행한 도구가 어긋나면 도구로 보정한다.
-    searched = search is not None or web_search is not None
-    if _has_complaint(request, complaint) or (
-        complaint is not None and (route is Route.COMPLAINT or not searched)
-    ):
+    # route는 BE가 띄울 카드 종류다. 대화당 카드는 한 장이므로 민원이 진행된 대화는 complaint,
+    # 그 밖에는 검색을 했을 때만 knowledge다. 근거 없는 knowledge는 빈 QA 카드가 된다.
+    if complaint is not None or _has_complaint(request, None):
         route = Route.COMPLAINT
-    elif searched:
+    elif search is not None or web_search is not None:
         route = Route.KNOWLEDGE
-    elif route is Route.KNOWLEDGE:
-        # 검색 없이 knowledge로 나가면 근거가 비어 BE가 빈 QA 카드를 띄운다(범위 밖 요청 등).
+    else:
         route = Route.CLARIFY
     if route is Route.COMPLAINT and not complaint_result:
         # 민원 도구 결과가 없는 complaint 턴을 BE가 완성 민원으로 오인하지 않게 빈 항목을 알린다.
@@ -222,7 +195,7 @@ def _assemble_result(
             update={"missing_fields": _missing_fields(request.complaint_draft or ComplaintDraft())}
         )
     return (
-        route or Route.CLARIFY,
+        route,
         complaint_result.complaint_state
         if complaint_result
         else request.current_complaint_state,
@@ -247,13 +220,17 @@ def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
         reply = f"{reply.rstrip()}\n\n{complaint.reply.strip()}".strip()
 
     route, complaint_state, result = _assemble_result(
-        state.get("route"),
         state["request"],
         state.get("search_result"),
         state.get("search_query"),
         state.get("complaint_result"),
         state.get("web_search_result"),
     )
+    if complaint is None and state["request"].complaint_draft and result.missing_fields:
+        # 민원 도구가 돌지 않은 턴에도 빈 항목을 이어서 묻는다. 한 번에 한 항목만 묻는다.
+        question = _MISSING_FIELD_REPLY[result.missing_fields[0]]
+        if question not in reply:
+            reply = f"{reply.rstrip()}\n\n{question}".strip()
     return _include_image_analysis(
         {
             "route": route,

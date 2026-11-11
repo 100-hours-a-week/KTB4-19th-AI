@@ -1,6 +1,6 @@
 import asyncio
 import importlib.util
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -83,8 +83,11 @@ def _make_request(
 
 
 def _interpretation_output(**updates: object) -> node_module._InterpretationOutput:
+    switch = updates.get("complaint_switch", "same")
     return node_module._InterpretationOutput(
-        complaint_switch=updates.get("complaint_switch", "same"),
+        takes_back_existing=False,
+        reports_other_problem=switch == "ask",
+        agrees_to_switch=switch == "accept",
         issue_type=updates.get("issue_type"),
         location=updates.get("location"),
         symptom=updates.get("symptom"),
@@ -299,9 +302,55 @@ def test_complaint_prompt_accepts_only_an_explicit_reply_to_a_switch_question(
     _interpret_turn(_make_request("네"))
 
     assert (
-        "Return accept only when the immediately preceding assistant message asked whether to switch"
+        "agrees_to_switch: the immediately preceding assistant message asked whether to switch"
         in captured["system_prompt"]
     )
+
+
+def test_complaint_prompt_decides_switch_by_the_broken_thing_not_the_wording(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("아 그리고 현관 도어락도 고장났어요"))
+
+    system = captured["system_prompt"]
+    # 모델은 사실만 적고 전환 여부는 코드가 정한다(_switch_from).
+    assert "takes_back_existing: the current turn withdraws the existing complaint's problem" in system
+    assert "reports_other_problem: the current turn reports a problem that would need its own repair" in system
+    assert "complaint_switch" not in system
+    assert "clearly describes a different problem" not in system
+
+
+@pytest.mark.parametrize(
+    ("takes_back", "other", "agrees", "expected"),
+    [
+        (False, False, False, "same"),  # 위치 답변·같은 대상 세부
+        (False, True, False, "ask"),  # 그리고 현관 도어락도
+        (True, True, False, "same"),  # 창문 말고 방충망: 기존을 거둬들인 정정
+        (True, False, False, "same"),
+        (False, False, True, "accept"),  # 전환 질문에 동의
+        (False, True, True, "accept"),
+    ],
+)
+def test_switch_is_decided_by_code_from_the_reported_facts(takes_back, other, agrees, expected):
+    parsed = node_module._InterpretationOutput(
+        takes_back_existing=takes_back,
+        reports_other_problem=other,
+        agrees_to_switch=agrees,
+        issue_type=None,
+        location=None,
+        symptom=None,
+        occurred_at=None,
+    )
+
+    assert node_module._switch_from(parsed).value == expected
 
 
 def test_complaint_prompt_routes_unresolved_door_lock_to_other(
@@ -719,7 +768,7 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
         ).model_dump()
     )
     assert outcome["result"].complaint_draft.representative_attachment_id is None
-    assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+    assert outcome["reply"] == node_module._COMPLETE_REPLY + node_module._ONSET_INVITE
 
 
 def test_handle_complaint_uses_fixed_reply_for_the_decided_missing_field(
@@ -811,7 +860,7 @@ def test_handle_complaint_skips_finalizer_for_complete_single_symptom(
     outcome = handle_complaint(_make_request("화장실에서 물이 새요"))
 
     assert outcome["result"].complaint_draft.symptom == "물이 새요"
-    assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+    assert outcome["reply"] == node_module._COMPLETE_REPLY + node_module._ONSET_INVITE
 
 
 def test_handle_complaint_clears_state_when_fields_complete(
@@ -1249,3 +1298,41 @@ def test_ready_for_card_keeps_null_urgency_on_assessment_failure(
 
     assert result.complaint_draft.urgency_score is None
     assert result.complaint_draft.is_urgent is None
+
+
+def test_complete_reply_invites_onset_only_when_it_is_missing(monkeypatch: pytest.MonkeyPatch):
+    # 시점은 필수 항목이 아니다. 따로 묻지 않고(한 번에 한 항목 원칙) 카드와 함께 한 번 권한다.
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: node_module._TurnInterpretation(
+            ComplaintDraft(
+                location="화장실",
+                symptom="물이 새요",
+                occurred_at=datetime(2026, 11, 10, tzinfo=UTC),
+            )
+        ),
+    )
+
+    outcome = handle_complaint(_make_request("어제부터 화장실에서 물이 새요"))
+
+    assert outcome["reply"] == node_module._COMPLETE_REPLY
+    assert "언제부터" in node_module._ONSET_INVITE
+
+
+def test_onset_invite_is_not_repeated_once_it_was_offered(monkeypatch: pytest.MonkeyPatch):
+    # "아침부터요"처럼 날짜 없는 답은 시점이 비어 남는다. 그래도 같은 권유를 매 턴 반복하지 않는다.
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: node_module._TurnInterpretation(
+            ComplaintDraft(location="화장실", symptom="물이 새요")
+        ),
+    )
+    history = [
+        {"message_id": "a1", "role": "assistant", "text": node_module._COMPLETE_REPLY + node_module._ONSET_INVITE},
+    ]
+
+    outcome = handle_complaint(_make_request("아침부터요", conversation_history=history))
+
+    assert outcome["reply"] == node_module._COMPLETE_REPLY

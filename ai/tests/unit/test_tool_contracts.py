@@ -275,3 +275,11 @@ def test_web_search_result_requires_public_web_citations(source_type, url, valid
     else:
         with pytest.raises(ValidationError):
             WebSearchResult.model_validate(payload)
+
+
+def test_building_docs_query_is_a_question_a_manager_can_read():
+    # 문서에 답이 없으면 query가 그대로 QA 카드 질문이 된다. 키워드면 관리인이 읽을 수 없다.
+    description = BuildingDocsArgs.model_fields["query"].description
+
+    assert "완결된 질문 문장" in description
+    assert "키워드" in description

@@ -746,7 +746,9 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "generate_structured",
         lambda *, response_format, **_: (
             complaint_node._InterpretationOutput(
-                complaint_switch="same",
+                takes_back_existing=False,
+                reports_other_problem=False,
+                agrees_to_switch=False,
                 issue_type=None,
                 location=None,
                 symptom=None,
@@ -892,8 +894,7 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
         intent_module,
         "generate_structured",
         lambda *_args, **_kwargs: intent_module._ToolPlan(
-            planned_tools=["process_complaint_turn"],
-            route=Route.COMPLAINT,
+            requests=[{"text": "욕실이요", "kind": "complaint"}],
             contextualized_message=None,
         ),
     )
@@ -907,7 +908,9 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
         "generate_structured",
         lambda *, response_format, **_: (
             complaint_node._InterpretationOutput(
-                complaint_switch="same",
+                takes_back_existing=False,
+                reports_other_problem=False,
+                agrees_to_switch=False,
                 issue_type=None,
                 location=None,
                 symptom=None,

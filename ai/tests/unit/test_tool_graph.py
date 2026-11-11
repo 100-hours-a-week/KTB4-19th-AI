@@ -492,7 +492,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert tool_events[0][2] >= 0
 
 
-def test_action_context_includes_active_complaint_draft_missing_fields_and_last_question():
+def test_action_context_leaves_complaint_state_to_the_plan_and_complaint_node():
     request = _request().model_copy(
         update={
             "current_route": Route.COMPLAINT,
@@ -507,19 +507,25 @@ def test_action_context_includes_active_complaint_draft_missing_fields_and_last_
     messages = graph_module._initial_messages({**_state(), "request": request})
     context = messages[-1]["content"]
 
-    assert "현재 민원 상태: collecting" in context
-    assert '"issue_type":"plumbing"' in context
-    assert "미수집 민원 항목: location" in context
+    # 민원 상태는 Plan과 민원 노드가 본다. Action이 보면 초안·재질문을 되풀이한다.
+    assert "route" not in context
+    assert "미수집 민원 항목" not in context
+    assert '"issue_type":"plumbing"' not in context
     assert "assistant: 어느 장소에서 발생했나요?" in context
 
 
-def test_action_prompt_treats_complaint_context_as_hint_not_route_lock():
+def test_action_prompt_leaves_tool_choice_to_the_plan():
     system = graph_module._AGENT_SYSTEM
 
-    assert "answers the last complaint question" in system
-    assert "A clear new question may take another route" in system
-    assert "ask for clarification when intent is ambiguous" in system
-    assert "previous route is context and does not force a tool call" in system
+    # 도구 선택은 Plan이 이번 턴의 요청에서 끝냈다. Action이 상태로 다시 고르면 질문을 건너뛴다.
+    assert "offered tools were planned from the current turn's requests" in system
+    assert "or an existing complaint draft" not in system
+    assert "answers the last complaint question" not in system
+    assert "ask for clarification when intent is ambiguous" not in system
+    # 도구를 쓸지·무엇을 쓸지 고르게 하는 문장은 Plan과 충돌한다.
+    assert "Decide whether to use a tool" not in system
+    assert "Use search_building_docs before" not in system
+    assert "Use process_complaint_turn for" not in system
 
 
 def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
@@ -675,10 +681,11 @@ def test_building_no_results_uses_fixed_reply_without_composer(
         (None, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
         # 빈 초안은 민원 이력이 아니다.
         ({}, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
-        # 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다. QA 카드를 만들지 않는다.
+        # 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다. QA 카드를 만들지 않고
+        # 비어 있는 민원 항목을 이어서 묻는다.
         (
             {"issue_type": "plumbing", "symptom": "천장 누수"},
-            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.",
+            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.\n\n어디에서 생긴 문제인가요?",
             None,
         ),
     ],
@@ -916,7 +923,7 @@ def test_web_search_response_adds_web_citations_without_qa_card():
     web_result = WebSearchResult(status="no_results")
 
     _, _, result = graph_module._assemble_result(
-        Route.KNOWLEDGE, _request(), None, None, None, web_result
+        _request(), None, None, None, web_result
     )
 
     assert result.citations == []
@@ -957,7 +964,7 @@ def test_response_assembler_combines_building_and_web_citations():
     )
 
     _, _, result = graph_module._assemble_result(
-        Route.KNOWLEDGE, _request(), building, "건물 안내", None, web
+        _request(), building, "건물 안내", None, web
     )
 
     assert [citation.source_type for citation in result.citations] == [
@@ -1101,8 +1108,8 @@ def test_agent_prompt_allows_a_natural_reply_or_one_tool(
 
     graph_module.build_graph().invoke(_state())
 
-    assert any("Use an offered tool when needed" in message for message in seen_system_messages)
-    assert any("otherwise reply naturally" in message for message in seen_system_messages)
+    assert any("call every offered tool, one at a time" in message for message in seen_system_messages)
+    assert any("With no offered tools, reply naturally" in message for message in seen_system_messages)
 
 
 @pytest.mark.parametrize(
@@ -1331,9 +1338,9 @@ def test_single_complaint_uses_pipeline_reply_without_composer(monkeypatch: pyte
     assembly_inputs: list[str] = []
     original_assembler = graph_module._assemble_result
 
-    def assemble(route, request, search, search_query, complaint, web_search=None):
+    def assemble(request, search, search_query, complaint, web_search=None):
         assembly_inputs.append(complaint.reply if isinstance(complaint, ComplaintTurnResult) else "")
-        return original_assembler(route, request, search, search_query, complaint, web_search)
+        return original_assembler(request, search, search_query, complaint, web_search)
 
     def decide(*_args, **kwargs):
         purposes.append(kwargs["purpose"])
@@ -1437,7 +1444,6 @@ def test_response_assembler_preserves_only_successful_tool_results(
     request = _request().model_copy(update={"complaint_draft": existing_draft})
 
     route, complaint_state, result = graph_module._assemble_result(
-        Route.KNOWLEDGE,
         request,
         search,
         "주차장 위치",
@@ -1479,50 +1485,43 @@ _NO_RESULTS = BuildingDocsResult(status="no_results")
 
 
 @pytest.mark.parametrize(
-    ("plan_route", "search", "complaint", "expected"),
+    ("search", "complaint", "expected"),
     [
-        (Route.KNOWLEDGE, _NO_RESULTS, _COMPLETED, Route.COMPLAINT),
-        (Route.COMPLAINT, _NO_RESULTS, _COLLECTING, Route.COMPLAINT),
-        (Route.COMPLAINT, _NO_RESULTS, _FAILED, Route.COMPLAINT),
-        (Route.KNOWLEDGE, _NO_RESULTS, _COLLECTING, Route.COMPLAINT),
-        (Route.CLARIFY, _NO_RESULTS, None, Route.KNOWLEDGE),
-        (Route.KNOWLEDGE, None, _COLLECTING, Route.COMPLAINT),
-        (Route.CLARIFY, None, None, Route.CLARIFY),
-        (Route.KNOWLEDGE, None, None, Route.CLARIFY),
+        (_NO_RESULTS, _COMPLETED, Route.COMPLAINT),
+        (_NO_RESULTS, _COLLECTING, Route.COMPLAINT),
+        (_NO_RESULTS, _FAILED, Route.COMPLAINT),
+        (None, _COLLECTING, Route.COMPLAINT),
+        (_NO_RESULTS, None, Route.KNOWLEDGE),
+        (None, None, Route.CLARIFY),
     ],
     ids=[
-        "completed-wins",
-        "complaint-intent",
-        "complaint-intent-tool-failed",
-        "question-intent-with-complaint",
-        "search-corrects-plan",
-        "complaint-only-corrects-plan",
-        "no-tool-uses-plan",
-        "knowledge-without-search-is-clarify",
+        "completed-complaint",
+        "complaint-with-search",
+        "complaint-tool-failed",
+        "complaint-only",
+        "search-only",
+        "no-tool",
     ],
 )
-def test_route_follows_core_intent_unless_complaint_completed(
-    plan_route, search, complaint, expected
-):
+def test_route_comes_from_executed_tools_and_complaint_draft(search, complaint, expected):
+    # route는 BE가 띄울 카드 종류다. Plan의 판단이 아니라 실행 결과와 진행 중 민원으로 정한다.
     route, _, _ = graph_module._assemble_result(
-        plan_route, _request(), search, "주차 등록 방법", complaint
+        _request(), search, "주차 등록 방법", complaint
     )
 
     assert route is expected
 
 
 @pytest.mark.parametrize(
-    ("plan_route", "search", "web_search"),
+    ("search", "web_search"),
     [
-        (Route.KNOWLEDGE, _NO_RESULTS, None),
-        (Route.KNOWLEDGE, None, WebSearchResult(status="no_results")),
-        (Route.CLARIFY, None, None),
+        (_NO_RESULTS, None),
+        (None, WebSearchResult(status="no_results")),
+        (None, None),
     ],
     ids=["building-question", "public-question", "no-tool"],
 )
-def test_conversation_with_complaint_draft_stays_on_complaint_route(
-    plan_route, search, web_search
-):
+def test_conversation_with_complaint_draft_stays_on_complaint_route(search, web_search):
     # 대화당 카드는 한 장이라, 민원이 시작된 대화는 다른 질문을 거쳐도 민원 흐름을 유지한다.
     request = _request().model_copy(
         update={
@@ -1532,13 +1531,34 @@ def test_conversation_with_complaint_draft_stays_on_complaint_route(
     )
 
     route, complaint_state, result = graph_module._assemble_result(
-        plan_route, request, search, "헬스장 운영 시간", None, web_search
+        request, search, "헬스장 운영 시간", None, web_search
     )
 
     assert route is Route.COMPLAINT
     assert complaint_state is ComplaintState.COLLECTING
     assert result.missing_fields == ["location"]
     assert result.qa_card_draft is None
+
+
+@pytest.mark.parametrize(
+    ("draft", "complaint", "asks_location"),
+    [
+        (ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 새요"), None, True),
+        (ComplaintDraft(location="욕실", symptom="천장에서 물이 새요"), None, False),
+        (None, None, False),
+        (ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 새요"), _FAILED, False),
+    ],
+    ids=["missing-location", "complete-draft", "no-complaint", "tool-failed"],
+)
+def test_turn_without_complaint_tool_asks_the_missing_field_again(draft, complaint, asks_location):
+    # 민원 도구가 돌지 않은 턴(질문·인사)에도 빈 항목이 남아 있으면 이어서 묻는다. 안 물으면 수집이 멈춘다.
+    request = _request().model_copy(update={"complaint_draft": draft})
+    state = {**_state(), "request": request, "complaint_result": complaint}
+
+    reply = graph_module._agent_result(state, "헬스장은 06시에 엽니다.")["reply"]
+
+    assert reply.startswith("헬스장은 06시에 엽니다.")
+    assert ("어디에서 생긴 문제인가요?" in reply) is asks_location
 
 
 @pytest.mark.parametrize(
@@ -1555,7 +1575,7 @@ def test_incomplete_complaint_route_reports_missing_fields(draft, search, expect
     request = _request().model_copy(update={"complaint_draft": draft})
 
     route, _, result = graph_module._assemble_result(
-        Route.COMPLAINT, request, search, "주차 등록 방법", _FAILED
+        request, search, "주차 등록 방법", _FAILED
     )
 
     assert route is Route.COMPLAINT
@@ -1573,7 +1593,6 @@ def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure
     )
 
     route, complaint_state, _ = graph_module._assemble_result(
-        Route.COMPLAINT,
         request,
         None,
         None,
@@ -1593,7 +1612,7 @@ def test_response_assembler_preserves_ongoing_complaint_state_without_tools():
     )
 
     route, complaint_state, result = graph_module._assemble_result(
-        Route.KNOWLEDGE, request, None, None, None
+        request, None, None, None
     )
 
     assert route is Route.COMPLAINT
@@ -2058,7 +2077,7 @@ def test_response_assembler_uses_document_level_citations_for_building_search():
     )
 
     _, _, result = graph_module._assemble_result(
-        Route.KNOWLEDGE, _state()["request"], search, "질문", None
+        _state()["request"], search, "질문", None
     )
 
     assert result.citations == [citation]

@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -21,10 +22,30 @@ from zipsai.orchestration.state import AgentState, ToolName
 logger = logging.getLogger(__name__)
 
 
+RequestKind = Literal["complaint", "building_question", "public_question", "other"]
+_KIND_TOOLS: dict[str, ToolName] = {
+    "complaint": "process_complaint_turn",
+    "building_question": "search_building_docs",
+    "public_question": "search_public_web",
+}
+
+
+class _Request(BaseModel):
+    text: str
+    kind: RequestKind
+
+
 class _ToolPlan(BaseModel):
-    planned_tools: list[ToolName]
-    route: Route
+    # 필드 순서대로 생성된다. 이번 턴의 요청을 먼저 적게 해야 대화 상태가 요청을 덮어쓰지 않는다.
+    requests: list[_Request]
     contextualized_message: str | None
+
+
+def _plan_route(request: object, planned_tools: list[ToolName]) -> Route:
+    # 실행 전 예상 route다. 실패 응답과 로그에만 쓰고, 최종 route는 graph가 실행 결과로 정한다.
+    if "process_complaint_turn" in planned_tools or request.complaint_draft:
+        return Route.COMPLAINT
+    return Route.KNOWLEDGE if planned_tools else Route.CLARIFY
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:
@@ -37,7 +58,6 @@ def classify_intent(state: AgentState) -> dict[str, object]:
         message_text=(request.message.text or "").strip() or "없음",
         image_present="있음" if request.message.images else "없음",
         conversation_history=format_intent_history(request.conversation_history),
-        current_route=request.current_route.value if request.current_route else "없음",
         current_complaint_state=(
             request.current_complaint_state.value if request.current_complaint_state else "없음"
         ),
@@ -96,8 +116,12 @@ def classify_intent(state: AgentState) -> dict[str, object]:
             )
             if decision is None:
                 raise IntentClassificationError("LLM did not return a usable tool plan")
-            route = decision.route
-            planned_tools = list(dict.fromkeys(decision.planned_tools))
+            planned_tools = list(
+                dict.fromkeys(
+                    _KIND_TOOLS[item.kind] for item in decision.requests if item.kind in _KIND_TOOLS
+                )
+            )
+            route = _plan_route(request, planned_tools)
             contextualized_message = decision.contextualized_message
         step["intent_route"] = route.value
         step["planned_tools"] = planned_tools

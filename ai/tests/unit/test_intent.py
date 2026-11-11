@@ -59,55 +59,60 @@ def _build_state(
     }
 
 
-def _decision(route: Route, contextualized_message: str | None = None):
+def _plan(*kinds: str, contextualized_message: str | None = None):
     return SimpleNamespace(
-        planned_tools=[],
-        route=route,
-        contextualized_message=contextualized_message,
-    )
-
-
-def _plan_decision(
-    planned_tools: list[str],
-    route: Route,
-    contextualized_message: str | None = None,
-):
-    return SimpleNamespace(
-        planned_tools=planned_tools,
-        route=route,
+        requests=[SimpleNamespace(text="요청", kind=kind) for kind in kinds],
         contextualized_message=contextualized_message,
     )
 
 
 @pytest.mark.parametrize(
-    ("planned_tools", "route"),
+    ("kinds", "planned_tools", "route"),
     [
-        (["process_complaint_turn"], Route.COMPLAINT),
-        (["search_building_docs"], Route.KNOWLEDGE),
-        (["search_public_web", "process_complaint_turn", "process_complaint_turn"], Route.KNOWLEDGE),
-        ([], Route.KNOWLEDGE),
+        (["complaint"], ["process_complaint_turn"], Route.COMPLAINT),
+        (["building_question"], ["search_building_docs"], Route.KNOWLEDGE),
+        (
+            ["public_question", "complaint", "complaint"],
+            ["search_public_web", "process_complaint_turn"],
+            Route.COMPLAINT,
+        ),
+        (["other"], [], Route.CLARIFY),
+        ([], [], Route.CLARIFY),
     ],
-    ids=["complaint", "building-knowledge", "mixed", "no-tool"],
+    ids=["complaint", "building-question", "mixed", "other", "empty"],
 )
-def test_plan_returns_distinct_tools_and_response_route_fallback(
-    monkeypatch, planned_tools, route
-):
+def test_plan_derives_tools_and_route_from_request_kinds(monkeypatch, kinds, planned_tools, route):
     schemas = []
     monkeypatch.setattr(
         intent_module,
         "generate_structured",
-        lambda _system, _user, schema, **_kwargs: (
-            schemas.append(schema), _plan_decision(planned_tools, route)
-        )[1],
+        lambda _system, _user, schema, **_kwargs: (schemas.append(schema), _plan(*kinds))[1],
     )
 
     result = classify_intent(_build_state("질문 또는 민원"))
 
-    assert result["planned_tools"] == list(dict.fromkeys(planned_tools))
+    assert result["planned_tools"] == planned_tools
     assert result["route"] is route
-    assert "planned_tools" in schemas[0].model_fields
-    assert "route" in schemas[0].model_fields
-    assert "arguments" not in schemas[0].model_fields
+    # 모델은 이번 턴의 요청을 먼저 적고, 도구와 route는 코드가 정한다.
+    assert list(schemas[0].model_fields) == ["requests", "contextualized_message"]
+
+
+def test_question_during_complaint_searches_and_keeps_complaint_route(monkeypatch):
+    state = _build_state("주차 등록은 어떻게 하나요?", current_route=Route.COMPLAINT)
+    state["request"] = state["request"].model_copy(
+        update={
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
+        }
+    )
+    monkeypatch.setattr(
+        intent_module, "generate_structured", lambda *_a, **_kw: _plan("building_question")
+    )
+
+    result = classify_intent(state)
+
+    assert result["planned_tools"] == ["search_building_docs"]
+    assert result["route"] is Route.COMPLAINT
 
 
 def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
@@ -127,7 +132,7 @@ def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
         "generate_structured",
         lambda system, user, *_args, **_kwargs: (
             prompt_inputs.append((system, user)),
-            _plan_decision(["process_complaint_turn"], Route.COMPLAINT),
+            _plan("complaint"),
         )[1],
     )
 
@@ -135,34 +140,13 @@ def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
 
     assert result["planned_tools"] == ["process_complaint_turn"]
     system, user = prompt_inputs[0]
-    assert "only show whether this turn continues a complaint" in system
-    assert "An active complaint alone does not require process_complaint_turn" in system
+    assert "they are never requests themselves" in system
     assert "현재 민원 상태 힌트: collecting" in user
+    # Plan은 route를 정하지 않으므로 이전 route로 쏠리지 않게 넘기지 않는다.
+    assert "route" not in user
     assert '"symptom":"물이 새요"' in user
     assert "미수집 민원 항목 힌트: location" in user
     assert "assistant: 어디에서 생겼나요?" in user
-
-
-def test_clear_new_question_does_not_inherit_complaint_tool_plan(monkeypatch):
-    state = _build_state("주차 등록은 어떻게 하나요?", current_route=Route.COMPLAINT)
-    state["request"] = state["request"].model_copy(
-        update={
-            "current_complaint_state": ComplaintState.COLLECTING,
-            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="물이 새요"),
-        }
-    )
-    monkeypatch.setattr(
-        intent_module,
-        "generate_structured",
-        lambda *_args, **_kwargs: _plan_decision(
-            ["search_building_docs"], Route.KNOWLEDGE
-        ),
-    )
-
-    result = classify_intent(state)
-
-    assert result["planned_tools"] == ["search_building_docs"]
-    assert result["route"] is Route.KNOWLEDGE
 
 
 def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
@@ -176,7 +160,7 @@ def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
 
     def classify(system, user, schema, **_kwargs):
         prompts.append((system, user, schema))
-        return _decision(Route.COMPLAINT, "세탁기 밑으로 물이 새요")
+        return _plan("complaint", contextualized_message="세탁기 밑으로 물이 새요")
 
     monkeypatch.setattr(intent_module, "generate_structured", classify)
     result = classify_intent(
@@ -190,7 +174,7 @@ def test_classify_intent_passes_image_observations_to_route_model(monkeypatch):
     assert result["image_analysis"] is analysis
     assert result["contextualized_message"] == "세탁기 밑으로 물이 새요"
     assert "세탁기 아래 물이 고임" in prompts[0][1]
-    assert "route" in prompts[0][2].model_fields
+    assert "requests" in prompts[0][2].model_fields
     assert "images" not in prompts[0][2].model_fields
 
 
@@ -204,7 +188,7 @@ def test_intent_prompt_keeps_observation_and_context_rules(monkeypatch):
 
     def classify(system, user, *_args, **_kwargs):
         prompts.append((system, user))
-        return _decision(Route.CLARIFY)
+        return _plan()
 
     monkeypatch.setattr(intent_module, "generate_structured", classify)
     classify_intent(_build_state("사진을 봐주세요"))
@@ -214,48 +198,66 @@ def test_intent_prompt_keeps_observation_and_context_rules(monkeypatch):
     assert "현재 이미지 관찰" in user
 
 
-def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkeypatch):
+def _system_prompt(monkeypatch) -> str:
     prompts = []
-
-    def classify(system, user, *_args, **_kwargs):
-        prompts.append((system, user))
-        return _decision(Route.COMPLAINT)
-
-    monkeypatch.setattr(intent_module, "generate_structured", classify)
-
-    classify_intent(_build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘"))
-
-    system, _ = prompts[0]
-    assert "planned_tools = the distinct union" in system
-    assert "Do not answer the resident or choose tool order or arguments" in system
-    assert "route = the core intent this turn must resolve" in system
-    assert "required_capabilities" not in system
+    monkeypatch.setattr(
+        intent_module,
+        "generate_structured",
+        lambda system, *_a, **_kw: (prompts.append(system), _plan())[1],
+    )
+    classify_intent(_build_state("안녕하세요"))
+    return prompts[0]
 
 
-def test_intent_prompt_uses_tool_contract_descriptions_and_prefers_building_docs(
-    monkeypatch,
-):
-    from zipsai.orchestration.tool_contracts import TOOL_CONTRACTS
+def test_intent_prompt_lists_requests_of_current_turn_only(monkeypatch):
+    system = _system_prompt(monkeypatch)
 
-    prompts = []
+    # 핵심 규칙: 이번 턴만 요청으로 나누고, 대화 상태는 요청을 해석하는 데만 쓴다.
+    assert "split only the current turn into the requests it makes" in system
+    assert "A reported problem and each question are separate requests, even within one sentence" in system
+    assert "they are never requests themselves" in system
+    assert "A question stays a question" in system
+    # 도구·route는 코드가 정하므로 모델에게 고르게 하지 않는다.
+    assert "planned_tools" not in system
+    assert "route" not in system
 
-    def classify(system, user, *_args, **_kwargs):
-        prompts.append(system)
-        return _decision(Route.KNOWLEDGE)
 
-    monkeypatch.setattr(intent_module, "generate_structured", classify)
+@pytest.mark.parametrize(
+    "definition",
+    [
+        "- complaint: reports a broken, leaking, noisy, dirty, or unsafe facility",
+        "A broken facility is a complaint even when phrased as a question",
+        "- building_question: asks about this building or complex",
+        "use building_question if the answer could differ by building",
+        "- public_question: asks living-related public information",
+        "분리배출 방법",
+        "- other: greetings, thanks, small talk, how to use this chat assistant itself",
+        "A follow-up question is a new request",
+        # 질문 종류는 답이 어디서 오느냐로 나눈다: 건물 문서 / 공개 정보 / 이 assistant 자신.
+        "answered from its documents",
+    ],
+)
+def test_intent_prompt_defines_each_request_kind(monkeypatch, definition):
+    assert definition in _system_prompt(monkeypatch)
 
-    classify_intent(_build_state("관리비 납부일 알려줘"))
 
-    system = prompts[0]
-    for contract in TOOL_CONTRACTS:
-        assert f"- {contract.name}: {contract.description}" in system
-    assert "choose search_building_docs when the answer could differ by building" in system
-    # 고장 신고가 질문 문장 안에 있어도 민원이다.
-    assert "is a facility report even when phrased as a question" in system
-    # 분리배출 방법처럼 건물마다 같은 질문은 관리인 질문이 아니다.
-    assert "분리배출 방법" in system
-    assert "a new building question during it still needs search_building_docs" in system
+@pytest.mark.parametrize(
+    "patch_rule",
+    [
+        "An active complaint alone does not require process_complaint_turn",
+        "a new building question during it still needs search_building_docs",
+        "even if other questions came in between",
+        "A new question during a complaint is not such a reply",
+        "Missing complaint details do not make a facility report ambiguous",
+        # 기존 민원과 관련 있는지는 민원 노드만 판단한다. Plan은 시설 문제인지만 본다.
+        "ongoing complaint",
+        # 효과 없던 예시 문장.
+        "is a complaint and a building_question",
+    ],
+)
+def test_intent_prompt_drops_exception_rules_covered_by_kinds(monkeypatch, patch_rule):
+    # 진행 중 민원과 새 질문을 구분하던 예외 문장들은 kind 정의 하나로 대체됐다.
+    assert patch_rule not in _system_prompt(monkeypatch)
 
 
 def test_text_only_classifies_without_vlm(monkeypatch):
@@ -267,36 +269,17 @@ def test_text_only_classifies_without_vlm(monkeypatch):
     monkeypatch.setattr(
         intent_module,
         "generate_structured",
-        lambda *_args, **_kwargs: _decision(
-            Route.KNOWLEDGE, "쓰레기 배출일이 언제예요?"
-        ),
+        lambda *_args, **_kwargs: _plan("building_question", contextualized_message="쓰레기 배출일이 언제예요?"),
     )
 
     result = classify_intent(_build_state("쓰레기 배출일이 언제예요?"))
 
     assert result == {
         "route": Route.KNOWLEDGE,
-        "planned_tools": [],
+        "planned_tools": ["search_building_docs"],
         "image_analysis": None,
         "contextualized_message": "쓰레기 배출일이 언제예요?",
     }
-
-
-def test_classify_intent_returns_empty_plan_when_model_selects_no_tools(monkeypatch):
-    monkeypatch.setattr(
-        intent_module,
-        "generate_structured",
-        lambda *_args, **_kwargs: _decision(
-            Route.COMPLAINT,
-            "누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘",
-        ),
-    )
-
-    result = classify_intent(
-        _build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘")
-    )
-
-    assert result["planned_tools"] == []
 
 
 def test_image_only_success_passes_observation_to_route_model(monkeypatch):
@@ -310,7 +293,7 @@ def test_image_only_success_passes_observation_to_route_model(monkeypatch):
 
     def classify(_system, user, *_args, **_kwargs):
         prompts.append(user)
-        return _decision(Route.CLARIFY)
+        return _plan()
 
     monkeypatch.setattr(intent_module, "generate_structured", classify)
     result = classify_intent(
@@ -327,7 +310,7 @@ def test_image_only_success_passes_observation_to_route_model(monkeypatch):
 def test_classify_intent_resolves_history_reference(monkeypatch):
     def classify(_system, user, *_args, **_kwargs):
         assert "분리수거 언제해" in user
-        return _decision(Route.KNOWLEDGE, "분리수거는 어디에 배출하나요?")
+        return _plan("building_question", contextualized_message="분리수거는 어디에 배출하나요?")
 
     monkeypatch.setattr(intent_module, "generate_structured", classify)
     history = [
@@ -380,7 +363,7 @@ def test_image_failure_with_text_falls_back_to_text_intent(monkeypatch, error):
 
     def classify(system, user, *_args, **_kwargs):
         calls.append((system, user))
-        return _decision(Route.KNOWLEDGE)
+        return _plan("building_question")
 
     monkeypatch.setattr(intent_module, "generate_structured", classify)
     result = classify_intent(
@@ -430,60 +413,3 @@ def test_image_only_failure_routes_to_clarify_without_text_fallback(monkeypatch,
     assert result["route"] is Route.CLARIFY
     assert result["image_analysis"] is None
     assert result["image_analysis_failed"] is True
-
-
-def test_intent_prompt_searches_again_for_follow_up_questions(monkeypatch):
-    prompts = []
-
-    def classify(system, user, *_args, **_kwargs):
-        prompts.append(system)
-        return _decision(Route.KNOWLEDGE)
-
-    monkeypatch.setattr(intent_module, "generate_structured", classify)
-
-    classify_intent(_build_state("음식물 쓰레기는?"))
-
-    system = prompts[0]
-    assert "A follow-up question still needs its search tool" in system
-    assert "never answer from conversation history" in system
-
-
-def test_intent_prompt_routes_small_talk_usage_and_out_of_scope_to_clarify(monkeypatch):
-    prompts = []
-
-    def classify(system, user, *_args, **_kwargs):
-        prompts.append(system)
-        return _decision(Route.CLARIFY)
-
-    monkeypatch.setattr(intent_module, "generate_structured", classify)
-
-    classify_intent(_build_state("안녕하세요"))
-
-    system = prompts[0]
-    # 도구 없는 턴의 route는 BE가 대화 종료를 판단하는 신호다. 잡담·범위 밖은 업무가 아니므로 clarify.
-    assert "knowledge for information or small talk" not in system
-    assert "clarify for greetings, thanks, small talk" in system
-    assert "questions about using this assistant" in system
-    assert "requests unrelated to the building or complaints" in system
-    assert "Asking how to file or check a complaint through this assistant needs no tool" in system
-    assert "use route clarify" in system
-
-
-def test_intent_prompt_continues_complaint_when_reply_fills_missing_field(monkeypatch):
-    prompts = []
-
-    def classify(system, user, *_args, **_kwargs):
-        prompts.append(system)
-        return _decision(Route.COMPLAINT)
-
-    monkeypatch.setattr(intent_module, "generate_structured", classify)
-
-    classify_intent(_build_state("안방이에요"))
-
-    system = prompts[0]
-    # 다른 질문을 거친 뒤에도 빈 민원 항목을 채우는 답이면 민원을 이어간다.
-    assert "reply to the last complaint question" not in system
-    assert "a reply that fills a missing complaint field" in system
-    assert "even if other questions came in between" in system
-    assert "with no new question" in system
-    assert "A new question during a complaint is not such a reply" in system
