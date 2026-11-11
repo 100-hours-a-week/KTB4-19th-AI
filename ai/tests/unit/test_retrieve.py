@@ -167,3 +167,45 @@ def test_search_returns_at_most_top_k_chunks() -> None:
     )
 
     assert len(hits) == TOP_K
+
+
+def _row_of(parent: models.PointStruct, dense: list[float]) -> models.PointStruct:
+    return models.PointStruct(
+        id=str(uuid4()),
+        vector={DENSE_VECTOR: dense, SPARSE_VECTOR: to_sparse_vector({"7": 0.5})},
+        payload={
+            "building_id": parent.payload["building_id"],
+            "doc_id": parent.payload["doc_id"],
+            "text": "쪽지 글",
+            "type": "row",
+            "parent_id": parent.id,
+        },
+    )
+
+
+def test_search_folds_row_notes_into_one_parent_chunk() -> None:
+    parent = _point(1, "b001-fees", _dense(0.0, 1.0))
+    client = _client_with(
+        parent,
+        _row_of(parent, _dense(1.0)),
+        _row_of(parent, _dense(0.9, 0.1)),
+    )
+
+    hits = search_chunks(
+        (_dense(1.0), {"7": 0.5}), 1, client=client, collection=TEST_COLLECTION
+    )
+
+    assert [hit.id for hit in hits] == [parent.id]
+    assert hits[0].payload["text"] == "b001-fees 본문"
+
+
+def test_search_keeps_plain_chunks_and_drops_notes_whose_parent_is_gone() -> None:
+    plain = _point(1, "b001-rules", _dense(1.0))
+    orphan = _row_of(_point(1, "b001-gone", _dense(1.0)), _dense(0.95, 0.05))
+    client = _client_with(plain, orphan)
+
+    hits = search_chunks(
+        (_dense(1.0), {"7": 0.5}), 1, client=client, collection=TEST_COLLECTION
+    )
+
+    assert [hit.id for hit in hits] == [plain.id]

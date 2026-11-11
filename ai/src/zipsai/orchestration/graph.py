@@ -181,11 +181,16 @@ def _assemble_result(
     building_result = search if isinstance(search, BuildingDocsResult) else None
     web_result = web_search if isinstance(web_search, WebSearchResult) else None
     evidence_results = [item for item in (building_result, web_result) if item]
-    evidence = [entry for item in evidence_results for entry in item.evidence]
+    # 건물 검색은 문서당 하나로 만든 출처를, 웹 검색은 근거마다 붙은 출처를 쓴다.
+    citations = [
+        citation
+        for item in evidence_results
+        for citation in item.citations or [entry.citation for entry in item.evidence]
+    ]
     if evidence_results:
         result = result.model_copy(
             update={
-                "citations": [*result.citations, *(item.citation for item in evidence)],
+                "citations": [*result.citations, *citations],
                 "has_sufficient_evidence": any(item.status == "ok" for item in evidence_results),
                 "qa_card_draft": (
                     QaCardDraft(question=search_query)

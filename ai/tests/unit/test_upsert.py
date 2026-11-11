@@ -231,3 +231,24 @@ def test_reconcile_with_empty_list_deletes_all_documents_in_the_building(
     delete_missing_documents(client, 101, [])
 
     assert [point.payload["building_id"] for point in points(client)] == ["202"]
+
+
+def test_row_notes_are_stored_as_row_points_pointing_at_their_parent(
+    client: QdrantClient,
+) -> None:
+    parent = chunk("표 청크")
+    note = EmbeddedChunk(
+        text="쪽지",
+        page=2,
+        section="제1조",
+        dense=[0.5] * EMBEDDING_DIM,
+        sparse={"7": 0.5},
+        parent=0,
+    )
+
+    assert upsert_document(client, request(), [parent, note]) == 2
+
+    stored = {point.payload["text"]: point for point in points(client)}
+    assert "type" not in stored["표 청크"].payload
+    assert stored["쪽지"].payload["type"] == "row"
+    assert stored["쪽지"].payload["parent_id"] == str(stored["표 청크"].id)

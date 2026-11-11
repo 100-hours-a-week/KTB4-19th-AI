@@ -5,6 +5,7 @@ import pytest
 
 import zipsai.orchestration.graph as graph_module
 from zipsai.contracts.converse import (
+    Citation,
     ComplaintDraft,
     ComplaintState,
     CompletedComplaintDraft,
@@ -2009,6 +2010,26 @@ def test_graph_ends_safely_when_composer_returns_an_unoffered_tool_call(
 
     assert result["reply"] == graph_module._PROTOCOL_FAILURE_MESSAGE
     assert "process_complaint_turn" not in result["reply"]
+
+
+def test_response_assembler_uses_document_level_citations_for_building_search():
+    citation = Citation(
+        source_type="building_document", source_id="doc", title="문서", snippet="앞부분", url=None
+    )
+    search = BuildingDocsResult(
+        status="ok",
+        evidence=[
+            {"text": "첫째 청크", "citation": citation.model_dump()},
+            {"text": "둘째 청크", "citation": citation.model_dump()},
+        ],
+        citations=[citation],
+    )
+
+    _, _, result = graph_module._assemble_result(
+        Route.KNOWLEDGE, _state()["request"], search, "질문", None
+    )
+
+    assert result.citations == [citation]
 
 
 def test_no_evidence_reply_does_not_claim_the_question_was_sent():

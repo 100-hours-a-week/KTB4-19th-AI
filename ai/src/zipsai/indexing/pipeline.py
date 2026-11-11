@@ -15,7 +15,7 @@ from zipsai.errors import (
     JobCancelled,
     error_code,
 )
-from zipsai.indexing.chunk import chunk_pages
+from zipsai.indexing.chunk import chunk_pages, with_row_notes
 from zipsai.indexing.clean import apply_cleaning
 from zipsai.indexing.embed import Encoder, count_embed_texts, embed_chunks
 from zipsai.indexing.mask import apply_masking
@@ -149,7 +149,7 @@ def run_indexing_job(
                     step["skip_reason"] = getattr(cleaning, "skip_reason", None)
 
                 with stage("chunk", logger) as step:
-                    chunks = chunk_pages(cleaning.pages)
+                    chunks = with_row_notes(chunk_pages(cleaning.pages))
                     lengths = [len(chunk.text) for chunk in chunks]
                     chunk_count = len(chunks)
                     step["chunks"] = chunk_count

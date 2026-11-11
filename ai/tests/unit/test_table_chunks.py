@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from zipsai.indexing.chunk import TABLE_CHUNK_CHARS, TABLE_CHUNK_FORMAT, chunk_pages
+from zipsai.indexing.chunk import (
+    TABLE_CHUNK_CHARS,
+    TABLE_CHUNK_FORMAT,
+    Chunk,
+    chunk_pages,
+    with_row_notes,
+)
 
 HEADER = "| 항목 | 구분 | 요금 | 소요 시간 | 비고 |"
 SEPARATOR = "| --- | --- | --- | --- | --- |"
@@ -155,3 +161,43 @@ def test_packed_table_stays_within_512_bge_m3_tokens() -> None:
     for chunk in chunks:
         tokens = tokenizer.encode(chunk.text, add_special_tokens=True)
         assert len(tokens) <= 512
+
+
+def test_drops_only_unpaired_openers_inside_table_cells() -> None:
+    text = (
+        "세탁 요금\n| 항목 | 구분 | 요금 | 비고 |\n| --- | --- | --- | --- |\n"
+        "| 세탁기 | 이불 | [3,500원 | (최대 8kg |\n"
+        "| 건조기 | 일반 | 2,800원 | (60분) 기준 [참고] |"
+    )
+
+    chunk = chunk_pages([{"page": 1, "text": text}])[0].text
+
+    assert "요금: 3,500원" in chunk
+    assert "비고: 최대 8kg" in chunk
+    assert "비고: (60분) 기준 [참고]" in chunk
+    assert "[3,500" not in chunk
+
+
+def test_table_chunk_carries_one_row_note_per_row_with_its_labels() -> None:
+    text = (
+        "세탁 요금\n| 항목 | 구분 | 요금 |\n| --- | --- | --- |\n"
+        "| 세탁기 | 일반 | 2,000원 |\n| 건조기 | 일반 | 2,800원 |"
+    )
+
+    chunk = chunk_pages([{"page": 1, "text": text}])[0]
+
+    assert chunk.rows == (
+        "세탁 요금\n항목: 세탁기 / 구분: 일반 / 요금: 2,000원",
+        "세탁 요금\n항목: 건조기 / 구분: 일반 / 요금: 2,800원",
+    )
+
+
+def test_with_row_notes_appends_notes_pointing_at_their_parent_position() -> None:
+    plain = Chunk(text="일반 글", page=1, section=None)
+    blank = Chunk(text="  ", page=1, section=None)
+    table = Chunk(text="표", page=2, section=None, rows=("쪽지1", "쪽지2"))
+
+    result = with_row_notes([blank, plain, table])
+
+    assert [chunk.text for chunk in result] == ["일반 글", "표", "쪽지1", "쪽지2"]
+    assert [chunk.parent for chunk in result] == [None, None, 1, 1]

@@ -46,6 +46,8 @@ class SearchResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: Literal["ok", "no_results"]
     evidence: list[SearchEvidence] = Field(default_factory=list)
+    # 화면 출처. 답변 모델에 가는 도구 메시지에는 넣지 않는다.
+    citations: list[Citation] = Field(default_factory=list, exclude=True)
 
     @model_validator(mode="after")
     def validate_evidence(self) -> "SearchResult":

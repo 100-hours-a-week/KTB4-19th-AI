@@ -21,6 +21,7 @@ class EmbeddedChunk:
     section: str | None
     dense: list[float]
     sparse: dict[str, float]
+    parent: int | None = None
 
 
 def count_embed_texts(chunks: list[Chunk]) -> tuple[int, int]:
@@ -71,6 +72,7 @@ def embed_chunks(
                 section=chunk.section,
                 dense=vector,
                 sparse=weights,
+                parent=chunk.parent,
             )
             for chunk, vector, weights in zip(batch, dense, sparse, strict=True)
         )
