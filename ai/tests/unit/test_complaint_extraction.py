@@ -185,10 +185,9 @@ def test_complaint_prompt_separates_area_from_component_without_case_specific_ex
         "If both a place and component are stated, put the place here"
         in captured["system_prompt"]
     )
-    assert (
-        "If only a component is stated, use null; do not infer a place"
-        in captured["system_prompt"]
-    )
+    # Qwen3-VL-8B는 이 문장이 있으면 "욕실 천장"처럼 장소를 말해도 위치를 비웠다.
+    # scripts/eval_complaint_location_live.py: recall 32% -> 88%, 부품만 말한 문장 null 유지 100%
+    assert "If only a component is stated, use null" not in captured["system_prompt"]
     assert "Resolve a direct answer to a location question from the immediate conversation" in captured[
         "system_prompt"
     ]

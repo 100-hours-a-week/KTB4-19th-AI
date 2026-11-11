@@ -140,7 +140,7 @@ jobs:
           
           SECRET_KEYS = {"OPENROUTER_API_KEY", "SERVERLESS_API_KEY", "POD_API_KEY", "RUNPOD_API_KEY", "QDRANT_API_KEY",
                          "QDRANT_ADMIN_API_KEY", "QDRANT_READ_ONLY_API_KEY", "LANGFUSE_SECRET_KEY",
-                         "QDRANT__SERVICE__API_KEY", "QDRANT__SERVICE__READ_ONLY_API_KEY",
+                         "TAVILY_API_KEY", "QDRANT__SERVICE__API_KEY", "QDRANT__SERVICE__READ_ONLY_API_KEY",
                          "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
           BASE = Path("/opt/zipsai/ai-v2")
           
