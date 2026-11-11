@@ -233,6 +233,8 @@ def test_intent_prompt_lists_requests_of_current_turn_only(monkeypatch):
         "분리배출 방법",
         "- other: greetings, thanks, small talk, how to use this chat assistant itself",
         "A follow-up question is a new request",
+        # 이 서비스에서 민원은 이 채팅으로 접수하는 시설 민원이다. 공공 민원(국민신문고)이 아니다.
+        "In this service, 민원 means a facility complaint filed in this chat",
         # 질문 종류는 답이 어디서 오느냐로 나눈다: 건물 문서 / 공개 정보 / 이 assistant 자신.
         "answered from its documents",
     ],

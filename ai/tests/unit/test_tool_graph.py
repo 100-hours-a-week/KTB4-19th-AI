@@ -533,8 +533,9 @@ def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
 
     # _agent_result가 민원 reply를 붙이고 draft는 result로 내려가므로 Composer가 반복하면 중복된다.
     assert "include the complaint tool's follow-up reply" not in system
-    assert "the app appends the complaint tool's reply and returns the draft separately" in system
-    assert "Do not restate the draft, its fields, or its follow-up question" in system
+    # 빈 항목 질문은 앱이 붙인다. Action도 물으면 같은 질문이 두 번 나간다.
+    assert "The app asks for missing complaint details and returns the draft itself" in system
+    assert "never ask for complaint details or restate the draft" in system
 
 
 def _composite_graph(

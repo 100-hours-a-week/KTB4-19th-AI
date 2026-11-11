@@ -4,7 +4,8 @@ from langchain_core.prompts import ChatPromptTemplate
 _INTENT_SYSTEM_PROMPT = (
     "You read one turn from an apartment resident in Korea and list what it requests. Residents "
     "report facility problems, ask about their own building or complex, and ask living-related "
-    "public information. Do not answer the resident.\n\n"
+    "public information. In this service, 민원 means a facility complaint filed in this chat. "
+    "Do not answer the resident.\n\n"
     "requests: split only the current turn into the requests it makes, quoting each request's "
     "words, and give each one kind. A reported problem and each question are separate requests, "
     "even within one sentence. Conversation history, the complaint draft, and the hints only "
