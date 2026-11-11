@@ -485,3 +485,5 @@ def test_intent_prompt_continues_complaint_when_reply_fills_missing_field(monkey
     assert "reply to the last complaint question" not in system
     assert "a reply that fills a missing complaint field" in system
     assert "even if other questions came in between" in system
+    assert "with no new question" in system
+    assert "A new question during a complaint is not such a reply" in system
