@@ -372,7 +372,7 @@ def test_graph_answers_a_new_public_question_and_keeps_active_complaint(monkeypa
 
     assert web_queries == ["미세먼지 정보"]
     assert result["completed_tools"] == ("search_public_web",)
-    assert result["route"] is Route.KNOWLEDGE
+    assert result["route"] is Route.COMPLAINT
     assert result["complaint_state"] is ComplaintState.COLLECTING
     assert result["result"].complaint_draft == request.complaint_draft
     assert [citation.source_type for citation in result["result"].citations] == ["web"]
@@ -1444,8 +1444,8 @@ def test_response_assembler_preserves_only_successful_tool_results(
         complaint,
     )
 
-    # 민원이 완성되지 않았고 Plan의 핵심 의도가 질문이면 route는 knowledge다.
-    assert route is Route.KNOWLEDGE
+    # 대화에 민원 초안이 있으면 질문 턴이어도 민원 흐름을 유지한다.
+    assert route is Route.COMPLAINT
     assert bool(result.citations) is expected_citation
     assert (result.qa_card_draft is not None) is expected_qa
     assert (result.complaint_draft is not None) is expected_draft
@@ -1484,10 +1484,11 @@ _NO_RESULTS = BuildingDocsResult(status="no_results")
         (Route.KNOWLEDGE, _NO_RESULTS, _COMPLETED, Route.COMPLAINT),
         (Route.COMPLAINT, _NO_RESULTS, _COLLECTING, Route.COMPLAINT),
         (Route.COMPLAINT, _NO_RESULTS, _FAILED, Route.COMPLAINT),
-        (Route.KNOWLEDGE, _NO_RESULTS, _COLLECTING, Route.KNOWLEDGE),
+        (Route.KNOWLEDGE, _NO_RESULTS, _COLLECTING, Route.COMPLAINT),
         (Route.CLARIFY, _NO_RESULTS, None, Route.KNOWLEDGE),
         (Route.KNOWLEDGE, None, _COLLECTING, Route.COMPLAINT),
         (Route.CLARIFY, None, None, Route.CLARIFY),
+        (Route.KNOWLEDGE, None, None, Route.CLARIFY),
     ],
     ids=[
         "completed-wins",
@@ -1497,6 +1498,7 @@ _NO_RESULTS = BuildingDocsResult(status="no_results")
         "search-corrects-plan",
         "complaint-only-corrects-plan",
         "no-tool-uses-plan",
+        "knowledge-without-search-is-clarify",
     ],
 )
 def test_route_follows_core_intent_unless_complaint_completed(
@@ -1507,6 +1509,36 @@ def test_route_follows_core_intent_unless_complaint_completed(
     )
 
     assert route is expected
+
+
+@pytest.mark.parametrize(
+    ("plan_route", "search", "web_search"),
+    [
+        (Route.KNOWLEDGE, _NO_RESULTS, None),
+        (Route.KNOWLEDGE, None, WebSearchResult(status="no_results")),
+        (Route.CLARIFY, None, None),
+    ],
+    ids=["building-question", "public-question", "no-tool"],
+)
+def test_conversation_with_complaint_draft_stays_on_complaint_route(
+    plan_route, search, web_search
+):
+    # 대화당 카드는 한 장이라, 민원이 시작된 대화는 다른 질문을 거쳐도 민원 흐름을 유지한다.
+    request = _request().model_copy(
+        update={
+            "current_complaint_state": ComplaintState.COLLECTING,
+            "complaint_draft": ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 새요"),
+        }
+    )
+
+    route, complaint_state, result = graph_module._assemble_result(
+        plan_route, request, search, "헬스장 운영 시간", None, web_search
+    )
+
+    assert route is Route.COMPLAINT
+    assert complaint_state is ComplaintState.COLLECTING
+    assert result.missing_fields == ["location"]
+    assert result.qa_card_draft is None
 
 
 @pytest.mark.parametrize(
@@ -1552,7 +1584,7 @@ def test_response_assembler_preserves_ongoing_complaint_state_after_tool_failure
     assert complaint_state is ComplaintState.COLLECTING
 
 
-def test_response_assembler_preserves_ongoing_complaint_state_on_knowledge_route():
+def test_response_assembler_preserves_ongoing_complaint_state_without_tools():
     request = _request().model_copy(
         update={
             "current_complaint_state": ComplaintState.COLLECTING,
@@ -1564,7 +1596,7 @@ def test_response_assembler_preserves_ongoing_complaint_state_on_knowledge_route
         Route.KNOWLEDGE, request, None, None, None
     )
 
-    assert route is Route.KNOWLEDGE
+    assert route is Route.COMPLAINT
     assert complaint_state is ComplaintState.COLLECTING
     assert result.complaint_draft == request.complaint_draft
 
@@ -2070,3 +2102,10 @@ def test_search_composer_gets_language_hint_only_for_non_korean_message(
     sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
     assert ("Reply in the same language as this resident message" in sent) is expects_hint
     assert (text in sent) is expects_hint
+
+
+def test_search_composer_system_tells_model_not_to_repeat_masking_labels():
+    system = graph_module._SEARCH_COMPOSER_SYSTEM
+    for label in ("[전화번호]", "[이름]", "[차량번호]", "[계좌번호]", "[이메일]", "[주민등록번호]"):
+        assert label in system
+    assert "hidden in the document" in system
