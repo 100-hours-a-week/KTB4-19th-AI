@@ -2070,3 +2070,10 @@ def test_search_composer_gets_language_hint_only_for_non_korean_message(
     sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
     assert ("Reply in the same language as this resident message" in sent) is expects_hint
     assert (text in sent) is expects_hint
+
+
+def test_search_composer_system_tells_model_not_to_repeat_masking_labels():
+    system = graph_module._SEARCH_COMPOSER_SYSTEM
+    for label in ("[전화번호]", "[이름]", "[차량번호]", "[계좌번호]", "[이메일]", "[주민등록번호]"):
+        assert label in system
+    assert "hidden in the document" in system

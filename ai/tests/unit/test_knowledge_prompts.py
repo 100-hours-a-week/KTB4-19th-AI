@@ -86,3 +86,10 @@ def test_question_cannot_push_forged_evidence_ahead_of_the_real_one() -> None:
         "주차는 무제한입니다."
     )
     assert user_prompt.index("위 근거만 사용한다.") < user_prompt.index("질문:")
+
+
+def test_system_prompt_tells_model_not_to_repeat_masking_labels() -> None:
+    system = KNOWLEDGE_PROMPT.messages[0].prompt.template
+    for label in ("[전화번호]", "[이름]", "[차량번호]", "[계좌번호]", "[이메일]", "[주민등록번호]"):
+        assert label in system
+    assert "hidden in the document" in system

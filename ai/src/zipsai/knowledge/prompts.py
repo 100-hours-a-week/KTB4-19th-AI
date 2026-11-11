@@ -27,6 +27,7 @@ _KNOWLEDGE_SYSTEM_PROMPT = (
     "details, or numbers that are not there. When they answer only part of the question, answer "
     "that part and say plainly that the rest is not in the building documents. Never guess the "
     "missing part.\n"
+    "Excerpts may contain masking labels such as [전화번호], [이름], [차량번호], [계좌번호], [이메일], [주민등록번호]. Never repeat a label as if it were a value; say naturally in Korean that this information is hidden in the document, and never guess or invent the hidden value.\n"
     "3. Only when the excerpts answer NO part of the question — including when they merely touch "
     f'the topic — output exactly "{NO_EVIDENCE}" and nothing else.\n\n'
     "Examples:\n"
