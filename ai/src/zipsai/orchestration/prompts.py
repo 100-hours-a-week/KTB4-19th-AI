@@ -4,22 +4,34 @@ from zipsai.orchestration.tool_contracts import TOOL_CONTRACTS
 
 # Plan과 Action이 같은 도구 설명을 보도록 TOOL_CONTRACTS에서 가져온다.
 # ChatPromptTemplate가 중괄호를 변수로 읽지 않게 이스케이프한다.
+# 검색 도구는 질문 문장 규칙(query 설명)까지 함께 준다. Plan이 쓴 문장을 실행기가 그대로 쓴다.
 _TOOL_GUIDE = "\n".join(
-    f"- {contract.name}: {contract.description}" for contract in TOOL_CONTRACTS
+    f"- {contract.name}: {contract.description}"
+    + (
+        f" question 규칙: {query['description']}"
+        if (query := contract.args_model.model_json_schema().get("properties", {}).get("query"))
+        else ""
+    )
+    for contract in TOOL_CONTRACTS
 ).replace("{", "{{").replace("}", "}}")
 
 _INTENT_SYSTEM_PROMPT = (
     "You plan tools for an assistant used by apartment residents in Korea. Residents report "
     "facility problems, ask about their own building or complex, and ask living-related public "
-    "information. Do not answer the resident or choose tool order or arguments.\n\n"
+    "information. In this service, 민원 means a facility complaint filed in this chat. "
+    "Do not answer the resident.\n\n"
     f"Tools:\n{_TOOL_GUIDE}\n\n"
     "Planning:\n"
     "1. Split the current turn into requests; a complaint and questions may be mixed.\n"
     "2. Pick one tool per request using the patterns below. If unsure between building and "
     "public information, choose search_building_docs when the answer could differ by building; "
     "otherwise choose search_public_web.\n"
-    "3. planned_tools = the distinct union. Empty only for greetings, thanks, small talk, questions "
-    "about using this assistant, or requests unrelated to the building or complaints.\n\n"
+    "3. steps = one step per distinct tool, in the order the resident asked; the app runs them as "
+    "written. Empty only for greetings, thanks, small talk, questions about using this assistant, "
+    "or requests unrelated to the building or complaints.\n"
+    "4. question: one self-contained Korean question sentence for a search tool, following its "
+    "question 규칙 and the contextualized message; if one tool covers several questions, join them "
+    "in that sentence. Use null for process_complaint_turn.\n\n"
     "Patterns:\n"
     "- broken, leaking, noisy, dirty, or unsafe facility; a reply that fills a missing complaint "
     "field with no new question (e.g. 안방이에요, 욕실 천장이요), even if other questions came "
@@ -56,7 +68,8 @@ _INTENT_SYSTEM_PROMPT = (
     "- Return the text unchanged if already self-contained.\n"
     "- Image-only turn: continue only if history shows exactly one active request the image fits; "
     "otherwise return null with route clarify. The image alone cannot establish intent or location.\n\n"
-    "route = the core intent this turn must resolve. If a complaint and questions are mixed, pick "
+    "route = the core intent this turn must resolve, not the list of steps: if only one card could "
+    "follow this turn, which one. If a complaint and questions are mixed, pick "
     "the one the resident mainly needs resolved: complaint if reporting or continuing a complaint; "
     "knowledge for building or living information; clarify for greetings, thanks, small talk, "
     "questions about using this assistant, requests unrelated to the building or complaints, "

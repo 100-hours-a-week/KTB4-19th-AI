@@ -21,10 +21,17 @@ from zipsai.orchestration.state import AgentState, ToolName
 logger = logging.getLogger(__name__)
 
 
+class _Step(BaseModel):
+    tool: ToolName
+    # 검색 도구가 그대로 실행할 질문 문장. 민원 도구는 서버 문맥으로 실행하므로 null이다.
+    question: str | None
+
+
 class _ToolPlan(BaseModel):
-    planned_tools: list[ToolName]
-    route: Route
+    # 보강문을 먼저 쓰게 해 단계의 질문 문장이 보강된 내용을 따르게 한다.
     contextualized_message: str | None
+    steps: list[_Step]
+    route: Route
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:
@@ -55,6 +62,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     ) as step:
         contextualized_message: str | None = None
         planned_tools: list[ToolName] = []
+        planned_queries: dict[str, str] = {}
         image_analysis = None
         image_failed = False
         if request.message.images:
@@ -97,7 +105,11 @@ def classify_intent(state: AgentState) -> dict[str, object]:
             if decision is None:
                 raise IntentClassificationError("LLM did not return a usable tool plan")
             route = decision.route
-            planned_tools = list(dict.fromkeys(decision.planned_tools))
+            planned_tools = list(dict.fromkeys(item.tool for item in decision.steps))
+            for item in decision.steps:
+                # ponytail: 도구당 한 번 실행한다. 같은 도구의 질문이 여럿이면 Plan이 한 문장으로 합쳐야 한다.
+                if (item.question or "").strip() and item.tool not in planned_queries:
+                    planned_queries[item.tool] = item.question.strip()
             contextualized_message = decision.contextualized_message
         step["intent_route"] = route.value
         step["planned_tools"] = planned_tools
@@ -110,6 +122,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     result: dict[str, object] = {
         "route": route,
         "planned_tools": planned_tools,
+        "planned_queries": planned_queries,
         "image_analysis": image_analysis,
         "contextualized_message": contextualized_message,
     }

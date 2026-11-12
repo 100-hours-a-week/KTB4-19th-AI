@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     image_analysis_failed: NotRequired[bool]
     contextualized_message: NotRequired[str | None]
     planned_tools: NotRequired[list[ToolName]]
+    planned_queries: NotRequired[dict[str, str]]
     attempted_tools: NotRequired[tuple[ToolName, ...]]
     completed_tools: NotRequired[tuple[ToolName, ...]]
     agent_messages: NotRequired[list[object]]
