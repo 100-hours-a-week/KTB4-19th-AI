@@ -28,12 +28,15 @@ COMPLAINT_SYSTEM_PROMPT = (
     "- noise: disruptive neighbor or construction noise.\n"
     "- other: a complaint exists, but no listed category fits or the type remains unclassifiable after "
     "using available context.\n"
-    "complaint_switch: return ask only when an existing complaint is active and the current turn "
-    "clearly describes a different problem, not a correction or missing detail. Return accept only "
-    "when the immediately preceding assistant message asked whether to switch and the resident agrees. "
-    "Return same otherwise, including when there is no existing complaint to switch from. After an "
-    "accepted switch, use the new complaint in the switch question and current turn; do not carry old "
-    "complaint fields forward.\n"
+    "Facts about the existing complaint, all false when there is none:\n"
+    "- takes_back_existing: the current turn withdraws the existing complaint's problem as it was "
+    "described (창문 말고 방충망이요, 아니 그게 아니라).\n"
+    "- reports_other_problem: the current turn reports a problem that would need its own repair, "
+    "not a detail, part, cause, place, or time of the existing one, however it is joined "
+    "(그리고, ~도). If unsure whether it is the same problem, true; the app then asks the resident.\n"
+    "- agrees_to_switch: the immediately preceding assistant message asked whether to switch and the "
+    "resident agrees. Then use the new complaint in the switch question and current turn; do not "
+    "carry old complaint fields forward.\n"
     "location: use the stated place where the problem occurs, inside the unit or in a shared area. "
     "Resolve a direct answer to a location question from the immediate conversation; if the place "
     "is still unclear, use null. If both a place and component are stated, put the place here and "
@@ -53,12 +56,14 @@ COMPLAINT_SYSTEM_PROMPT = (
     "A bare weekday without a week "
     "qualifier is ambiguous. A clock time without an onset date is ambiguous; use null. For a date "
     "without time, output YYYY-MM-DD. For date and time, include the Asia/Seoul offset in ISO 8601. "
-    "On an accepted switch, use null unless the current turn states the new issue onset.\n\n"
-    "Output only a JSON object with exactly these five keys: complaint_switch, issue_type, location, "
+    "When agrees_to_switch, use null unless the current turn states the new issue onset.\n\n"
+    "Output only a JSON object with exactly these seven keys: takes_back_existing, "
+    "reports_other_problem, agrees_to_switch, issue_type, location, "
     "symptom, occurred_at. Use null when this message provides no new supported value for a field; "
     "the server preserves the existing draft value, except an explicitly "
     'unknown location, which is "모름". No markdown or explanation.\n'
-    '{{"complaint_switch": "same", "issue_type": null, "location": null, "symptom": null, '
+    '{{"takes_back_existing": false, "reports_other_problem": false, "agrees_to_switch": false, '
+    '"issue_type": null, "location": null, "symptom": null, '
     '"occurred_at": null}}'
 )
 

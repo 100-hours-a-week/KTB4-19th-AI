@@ -32,7 +32,7 @@ from zipsai.errors import (
     LlmUpstreamError,
     VectorStoreError,
 )
-from zipsai.integrations.llm import ToolCall, ToolDecision
+from zipsai.integrations.llm import ToolDecision
 from zipsai.main import app
 from zipsai.observability import _ContextFilter, collect_timings, note_llm_cost
 from zipsai.orchestration.tool_contracts import BuildingDocsResult
@@ -746,7 +746,9 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
         "generate_structured",
         lambda *, response_format, **_: (
             complaint_node._InterpretationOutput(
-                complaint_switch="same",
+                takes_back_existing=False,
+                reports_other_problem=False,
+                agrees_to_switch=False,
                 issue_type=None,
                 location=None,
                 symptom=None,
@@ -758,11 +760,6 @@ def test_converse_returns_collecting_reply_for_incomplete_complaint(monkeypatch)
     )
     decisions = iter(
         [
-            ToolDecision(
-                SimpleNamespace(),
-                None,
-                (ToolCall("call-1", "process_complaint_turn", {}),),
-            ),
             ToolDecision(SimpleNamespace(), "어디에서 생긴 문제인가요?", ()),
         ]
     )
@@ -843,11 +840,6 @@ def test_converse_returns_document_backed_reply_for_knowledge(monkeypatch):
     )
     decisions = iter(
         [
-            ToolDecision(
-                SimpleNamespace(),
-                None,
-                (ToolCall("call-1", "search_building_docs", {"query": "세탁실"}),),
-            ),
             ToolDecision(SimpleNamespace(), "22시까지 이용할 수 있습니다.", ()),
         ]
     )
@@ -892,9 +884,9 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
         intent_module,
         "generate_structured",
         lambda *_args, **_kwargs: intent_module._ToolPlan(
-            planned_tools=["process_complaint_turn"],
-            route=Route.COMPLAINT,
             contextualized_message=None,
+            steps=[{"tool": "process_complaint_turn", "question": None}],
+            route=Route.COMPLAINT,
         ),
     )
     monkeypatch.setattr(
@@ -907,7 +899,9 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
         "generate_structured",
         lambda *, response_format, **_: (
             complaint_node._InterpretationOutput(
-                complaint_switch="same",
+                takes_back_existing=False,
+                reports_other_problem=False,
+                agrees_to_switch=False,
                 issue_type=None,
                 location=None,
                 symptom=None,
@@ -919,11 +913,6 @@ def test_converse_consults_intent_even_when_complaint_state_in_progress(
     )
     decisions = iter(
         [
-            ToolDecision(
-                SimpleNamespace(),
-                None,
-                (ToolCall("call-1", "process_complaint_turn", {}),),
-            ),
             ToolDecision(SimpleNamespace(), "어디에서 생긴 문제인가요?", ()),
         ]
     )

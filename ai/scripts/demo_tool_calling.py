@@ -29,7 +29,7 @@ from zipsai.contracts.converse import (
     Route,
     RouteResult,
 )
-from zipsai.integrations.llm import ToolCall, ToolDecision
+from zipsai.integrations.llm import ToolDecision
 from zipsai.orchestration.tool_contracts import (
     BuildingDocsResult,
     ComplaintTurnResult,
@@ -91,17 +91,6 @@ def _initial_state(request: ConverseRequest) -> dict[str, object]:
     }
 
 
-def _assistant_message(calls: tuple[ToolCall, ...]) -> dict[str, object]:
-    return {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}}
-            for call in calls
-        ],
-    }
-
-
 def _decisions(values: list[ToolDecision]):
     pending = iter(values)
     return lambda *_args, **_kwargs: next(pending)
@@ -117,9 +106,8 @@ def _print_event(node: str, update: dict[str, object]) -> None:
     messages = update.get("agent_messages")
     if isinstance(messages, list) and messages:
         message = messages[-1]
-        if isinstance(message, dict) and message.get("role") == "tool":
-            print(f"  ToolMessage.tool_call_id: {message['tool_call_id']}")
-            print(f"  ToolMessage.content: {message['content']}")
+        if isinstance(message, dict) and "실행 결과" in str(message.get("content", "")):
+            print(f"  tool result: {message['content']}")
 
     if "reply" in update:
         if node != "tool":
@@ -149,6 +137,8 @@ def _run(title: str, request: ConverseRequest) -> dict[str, object]:
             _initial_state(request), stream_mode="updates"
         ):
             for node, node_update in update.items():
+                if not node_update:
+                    continue  # finish처럼 바꿀 것이 없는 노드
                 _print_event(node, node_update)
                 result.update(node_update)
     finally:
@@ -169,7 +159,6 @@ def _run(title: str, request: ConverseRequest) -> dict[str, object]:
 
 @contextmanager
 def _patched_search_flow() -> Iterator[None]:
-    call = ToolCall("call-search-1", "search_building_docs", {"query": "주차 위치"})
     evidence = SearchEvidence(
         text="입주민은 지하 1층 지정 구역을 이용합니다.",
         citation=Citation(
@@ -181,13 +170,12 @@ def _patched_search_flow() -> Iterator[None]:
         ),
     )
     with (
-        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"]}),
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"], "planned_queries": {"search_building_docs": "주차는 어디에 하나요?"}}),
         patch.object(
             graph_module,
             "generate_tool_decision",
             _decisions(
                 [
-                    ToolDecision(_assistant_message((call,)), None, (call,)),
                     ToolDecision(
                         {"role": "assistant", "content": "입주민 주차는 지하 1층 지정 구역을 이용해 주세요."},
                         "입주민 주차는 지하 1층 지정 구역을 이용해 주세요.",
@@ -207,7 +195,6 @@ def _patched_search_flow() -> Iterator[None]:
 
 @contextmanager
 def _patched_complaint_flow() -> Iterator[None]:
-    call = ToolCall("call-complaint-1", "process_complaint_turn", {})
     complaint = ComplaintTurnResult(
         reply="어느 장소에서 물이 새는지 알려주세요.",
         complaint_state=ComplaintState.COLLECTING,
@@ -218,20 +205,8 @@ def _patched_complaint_flow() -> Iterator[None]:
     )
     with (
         patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT, "planned_tools": ["process_complaint_turn"]}),
-        patch.object(
-            graph_module,
-            "generate_tool_decision",
-            _decisions(
-                [
-                    ToolDecision(_assistant_message((call,)), None, (call,)),
-                    ToolDecision(
-                        {"role": "assistant", "content": "추가 도구 없이 답변할 수 있습니다."},
-                        "추가 도구 없이 답변할 수 있습니다.",
-                        (),
-                    ),
-                ]
-            ),
-        ),
+        # 민원 reply가 최종 답변이라 LLM을 부르지 않는다.
+        patch.object(graph_module, "generate_tool_decision", _decisions([])),
         patch.object(
             graph_module,
             "process_complaint_turn",
@@ -243,10 +218,6 @@ def _patched_complaint_flow() -> Iterator[None]:
 
 @contextmanager
 def _patched_no_results_complaint_flow() -> Iterator[None]:
-    search_call = ToolCall(
-        "call-search-1", "search_building_docs", {"query": "누수 처리 기한"}
-    )
-    complaint_call = ToolCall("call-complaint-1", "process_complaint_turn", {})
     complaint = ComplaintTurnResult(
         reply="어느 장소에서 물이 새는지 알려주세요.",
         complaint_state=ComplaintState.COLLECTING,
@@ -256,14 +227,12 @@ def _patched_no_results_complaint_flow() -> Iterator[None]:
         ),
     )
     with (
-        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT, "planned_tools": ["search_building_docs", "process_complaint_turn"]}),
+        patch.object(graph_module, "classify_intent", lambda _state: {"route": Route.COMPLAINT, "planned_tools": ["search_building_docs", "process_complaint_turn"], "planned_queries": {"search_building_docs": "누수 처리 기한은 얼마인가요?"}}),
         patch.object(
             graph_module,
             "generate_tool_decision",
             _decisions(
                 [
-                    ToolDecision(_assistant_message((search_call,)), None, (search_call,)),
-                    ToolDecision(_assistant_message((complaint_call,)), None, (complaint_call,)),
                     ToolDecision(
                         {"role": "assistant", "content": "민원 초안을 만들었습니다. 처리 기한은 확인할 자료가 없습니다."},
                         "민원 초안을 만들었습니다. 처리 기한은 확인할 자료가 없습니다.",
@@ -293,23 +262,15 @@ def _patched_protocol_retry_flow() -> Iterator[None]:
         patch.object(
             graph_module,
             "classify_intent",
-            lambda _state: {"route": Route.KNOWLEDGE, "planned_tools": ["search_building_docs"]},
+            lambda _state: {"route": Route.CLARIFY, "planned_tools": []},
         ),
         patch.object(
             graph_module,
             "generate_tool_decision",
             _decisions(
                 [
-                    ToolDecision(
-                        {"role": "assistant", "content": invalid_text},
-                        invalid_text,
-                        (),
-                    ),
-                    ToolDecision(
-                        {"role": "assistant", "content": "주차는 지하 1층에서 하실 수 있습니다."},
-                        "주차는 지하 1층에서 하실 수 있습니다.",
-                        (),
-                    ),
+                    ToolDecision({"role": "assistant", "content": invalid_text}, invalid_text, ()),
+                    ToolDecision({"role": "assistant", "content": invalid_text}, invalid_text, ()),
                 ]
             ),
         ),
@@ -353,7 +314,7 @@ def main(*, live: bool = False) -> int:
 
     with _patched_search_flow():
         search_result = _run(
-            "1. 건물 정보 질문: Action → 검색 → Action/Composer",
+            "1. 건물 정보 질문: Plan → 실행기 검색 → Composer",
             _request("주차는 어디에 하나요?"),
         )
     assert search_result["route"] is Route.KNOWLEDGE
@@ -362,7 +323,7 @@ def main(*, live: bool = False) -> int:
 
     with _patched_complaint_flow():
         complaint_result = _run(
-            "2. 민원: Action → 민원 pipeline → 추가 도구 확인 → workflow reply",
+            "2. 민원: Plan → 실행기 민원 pipeline → workflow reply",
             _request("화장실에서 물이 새요."),
         )
     assert complaint_result["reply"] == "어느 장소에서 물이 새는지 알려주세요."
@@ -384,7 +345,7 @@ def main(*, live: bool = False) -> int:
 
     with _patched_protocol_retry_flow():
         protocol_result = _run(
-            "4. Action 형식 오류: text → retry → 안전한 종료",
+            "4. 답변 형식 오류: 도구 흉내 text → retry → 안전한 종료",
             _request("주차는 어디에 하나요?"),
         )
     assert protocol_result["tool_call_count"] == 0
