@@ -421,7 +421,7 @@ def test_graph_returns_to_agent_after_building_search(monkeypatch: pytest.Monkey
     assert tool_events[0][2] >= 0
 
 
-def test_action_context_includes_active_complaint_draft_missing_fields_and_last_question():
+def test_reply_context_leaves_complaint_details_to_the_app():
     request = _request().model_copy(
         update={
             "current_route": Route.COMPLAINT,
@@ -436,10 +436,9 @@ def test_action_context_includes_active_complaint_draft_missing_fields_and_last_
     messages = graph_module._initial_messages({**_state(), "request": request})
     context = messages[-1]["content"]
 
-    assert "현재 민원 상태: collecting" in context
-    assert '"issue_type":"plumbing"' in context
-    assert "미수집 민원 항목: location" in context
-    assert "assistant: 어느 장소에서 발생했나요?" in context
+    # 빈 항목은 앱이 묻는다. 답변 모델이 민원 상태·초안을 보면 같은 질문을 한 번 더 했다(라이브 9/9).
+    for detail in ("민원 상태", "민원 draft", "미수집 민원 항목", "route fallback", '"issue_type":"plumbing"'):
+        assert detail not in context
 
 
 def test_composer_leaves_complaint_draft_and_follow_up_to_the_app():
@@ -1723,7 +1722,8 @@ def test_turn_without_complaint_tool_asks_the_missing_field_again(draft, attempt
 
 def test_reply_prompt_leaves_complaint_questions_to_the_app():
     # 앱이 빈 항목을 묻으므로 답변 모델까지 물으면 같은 질문이 두 번 나간다.
-    assert "never ask for complaint details" in graph_module._AGENT_SYSTEM
+    assert "the app appends its next complaint question right after your reply" in graph_module._AGENT_SYSTEM
+    assert "never ask about the complaint, its place, or its details yourself" in graph_module._AGENT_SYSTEM
 
 
 def _stream_graph(monkeypatch, order, chunks, *, building=None, text="헬스장은 몇 시에 열어요?", complaint=None):
@@ -1900,3 +1900,35 @@ def test_independent_plan_steps_run_at_the_same_time(monkeypatch: pytest.MonkeyP
     assert result["tool_call_count"] == 2
     assert sorted(statuses) == sorted(["민원 내용을 정리하고 있습니다.", "건물 문서를 확인하고 있습니다."])
     assert result["reply"] == "관리비는 25일까지입니다.\n\n어디에서 생긴 문제인가요?"
+
+
+def test_reply_prompt_asks_one_short_question_when_the_request_is_unclear():
+    # v2 clarify 노드가 하던 일. 내부 판단(이력 유무 등)은 입주민에게 말하지 않는다.
+    system = graph_module._AGENT_SYSTEM
+
+    assert "If the request is unclear, ask one short question" in system
+    assert "a facility problem to report or a question about the building" in system
+    assert "never mention whether there is conversation history" in system
+
+
+@pytest.mark.parametrize(
+    ("draft", "history_shown"),
+    [
+        (ComplaintDraft(issue_type="plumbing", symptom="물이 새요"), False),
+        (ComplaintDraft(location="욕실", symptom="물이 새요"), True),
+        (None, True),
+    ],
+    ids=["app-asks-next", "complete-draft", "no-complaint"],
+)
+def test_reply_model_does_not_see_history_while_the_app_asks_the_next_complaint_question(draft, history_shown):
+    # 이력에 열린 민원 질문이 보이면 모델이 같은 질문을 또 했다(규칙만으로 9/9 → 4/9). 그 턴은 앱이 질문을 붙인다.
+    request = _request().model_copy(
+        update={
+            "complaint_draft": draft,
+            "conversation_history": [HistoryTurn(message_id="a1", role="assistant", text="어디에서 생긴 문제인가요?")],
+        }
+    )
+
+    context = graph_module._initial_messages({**_state(), "request": request})[-1]["content"]
+
+    assert ("어디에서 생긴 문제인가요?" in context) is history_shown
