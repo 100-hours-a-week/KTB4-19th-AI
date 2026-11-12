@@ -59,6 +59,13 @@ _PROTOCOL_RETRY_MESSAGE = (
     "Reply to the resident in natural language now; do not write tool names or arguments as text."
 )
 _HANGUL = re.compile(r"[가-힣]")
+SEARCH_NOT_FOUND_REPLY = "요청하신 정보를 찾지 못했어요."
+_PROBE_CALL_ID = "probe-1"
+
+
+def _probing(state: AgentState) -> bool:
+    """Plan이 도구를 고르지 않아 실행기가 원문으로 건물 문서를 찾아본 턴인가."""
+    return not state.get("planned_tools") and isinstance(state.get("search_result"), BuildingDocsResult)
 _SEARCH_COMPOSER_SYSTEM = (
     "Answer the resident's question in Korean using only the search results below. "
     "If a result is no_results or error, say the information was not found. "
@@ -294,6 +301,11 @@ def _next_steps(state: AgentState) -> tuple[ToolCall, ...]:
     """Plan의 남은 단계를 그대로 도구 호출로 만든다. 실행기는 단계를 고르거나 건너뛰지 않는다."""
     attempted = set(state.get("attempted_tools", ()))
     request = state["request"]
+    text = (request.message.text or "").strip()
+    if not state.get("planned_tools") and not attempted and text:
+        # 빈 Plan은 모델이 도구를 못 고른 턴일 수 있다(예: '단수'를 모름). 원문으로 건물 문서를 한 번 찾아보고,
+        # 근거가 없으면 검색하지 않은 턴처럼 되묻기로 돌아간다(_run_one, _after_compose).
+        return (ToolCall(_PROBE_CALL_ID, "search_building_docs", {"query": text}),)
     calls = []
     for name in state.get("planned_tools", ()):
         if name in attempted:
@@ -318,11 +330,13 @@ class _Composition:
     building_only: bool
     no_evidence: bool
     route_label: str
+    probe: bool = False
 
     @property
     def streamable(self) -> bool:
         # 검색 결과만 주는 새 Composer 프롬프트만 토큰으로 내보낸다. 실패 안내·잡담은 짧아 그대로 받는다.
-        return self.call_messages is not self.messages
+        # 찾아본 검색의 답은 되묻기로 바뀔 수 있어 토큰을 먼저 내보내지 않는다.
+        return self.call_messages is not self.messages and not self.probe
 
 
 def _before_compose(state: AgentState) -> dict[str, object] | _Composition:
@@ -357,6 +371,15 @@ def _before_compose(state: AgentState) -> dict[str, object] | _Composition:
                 "protocol_retry_pending": False,
                 **_agent_result(state, _no_evidence_reply(state)),
             }
+    if searched and all(result.status != "ok" for _query, result in searched):
+        # 근거가 하나도 없으면 Composer가 없는 답을 지어낸다. 실패·0건은 고정 문구로 답한다.
+        return {
+            "agent_messages": messages,
+            "protocol_retry_pending": False,
+            **_agent_result(
+                state, _no_evidence_reply(state) if no_evidence else SEARCH_NOT_FOUND_REPLY
+            ),
+        }
     if isinstance(state.get("last_tool_result"), ComplaintTurnResult) and not searched:
         # 민원 reply가 곧 최종 답변이다(_run_tool에서 이미 조립). 버릴 Composer 호출을 하지 않는다.
         return {"agent_messages": messages, "protocol_retry_pending": False}
@@ -388,7 +411,7 @@ def _before_compose(state: AgentState) -> dict[str, object] | _Composition:
                     "content": f"Reply in the same language as this resident message: {text}",
                 }
             )
-    return _Composition(messages, call_messages, building_only, no_evidence, route_label)
+    return _Composition(messages, call_messages, building_only, no_evidence, route_label, _probing(state))
 
 
 def _after_compose(
@@ -399,6 +422,15 @@ def _after_compose(
     observe_tool_decision(composition.route_label, "protocol_failure" if tool_text else "no_tool")
     if tool_text:
         return _protocol_failure(state, messages, "tool_call_as_text")
+    if composition.probe and (content or "").strip() == NO_EVIDENCE:
+        # 찾아본 문서에 답이 없으면 검색하지 않은 턴으로 되돌려 Composer를 한 번 더 부른다(되묻기·잡담 답변).
+        # 질문인지조차 모른 턴이라 QA 카드를 띄우지 않는다.
+        return {
+            "agent_messages": [],
+            "search_result": None,
+            "search_query": None,
+            "protocol_retry_pending": True,
+        }
     if composition.building_only and (content or "").strip() == NO_EVIDENCE:
         # v2 model_declined: 걸린 문서가 답이 아니면 근거 없음과 같다. 출처를 버리고 QA 카드로 넘긴다.
         declined = {**state, "search_result": BuildingDocsResult(status="no_results")}
@@ -724,9 +756,16 @@ def _run_one(state: AgentState, call: ToolCall) -> dict[str, object]:
         },
     )
 
+    probe_missed = call.id == _PROBE_CALL_ID and not (
+        isinstance(result, BuildingDocsResult) and result.status == "ok"
+    )
+    if probe_missed:
+        # 찾아본 검색이 빈손이면 검색하지 않은 턴과 같다. 결과를 남기면 QA 카드·무근거 문구로 바뀐다.
+        updates.pop("search_result", None)
+        updates.pop("search_query", None)
     updates.update(
         {
-            "agent_messages": [*messages, _tool_message(call, result)],
+            "agent_messages": messages if probe_missed else [*messages, _tool_message(call, result)],
             "pending_tool_calls": (),
             "tool_call_count": state.get("tool_call_count", 0) + 1,
             "last_tool_result": result,
