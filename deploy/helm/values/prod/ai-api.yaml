@@ -3,7 +3,7 @@ environment: prod
 component: ai
 image:
   repository: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com/zipsai-ai-api
-  tag: ''
+  tag: '3d68e1e'
 command: []
 args:
 - --timeout-graceful-shutdown
@@ -30,6 +30,8 @@ externalSecret:
     SERVERLESS_API_KEY: ai-api/serverless-api-key
     SERVERLESS_BASE_URL: ai-api/serverless-base-url
     SERVERLESS_MODEL: ai-api/serverless-model
+    QDRANT_API_KEY: ai-api/qdrant-api-key
+    TAVILY_API_KEY: ai-api/tavily-api-key
 resources:
   requests:
     cpu: 500m

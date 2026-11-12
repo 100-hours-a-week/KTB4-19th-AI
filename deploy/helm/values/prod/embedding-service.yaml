@@ -3,7 +3,7 @@ environment: prod
 component: embedding
 image:
   repository: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com/zipsai-embedding
-  tag: ''
+  tag: '3d68e1e-gpu'
 command: []
 args:
 - --timeout-graceful-shutdown
