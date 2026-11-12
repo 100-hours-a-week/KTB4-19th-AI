@@ -93,3 +93,10 @@ def test_system_prompt_tells_model_not_to_repeat_masking_labels() -> None:
     for label in ("[전화번호]", "[이름]", "[차량번호]", "[계좌번호]", "[이메일]", "[주민등록번호]"):
         assert label in system
     assert "hidden in the document" in system
+
+
+def test_knowledge_prompt_declines_when_the_same_topic_lacks_the_asked_fact():
+    # 같은 시설 문서만 걸리고 물은 내용이 없으면 부분 답변이 아니라 근거 없음이다.
+    from zipsai.knowledge.prompts import _KNOWLEDGE_SYSTEM_PROMPT, NO_EVIDENCE
+
+    assert f"질문=세탁실 요금은 얼마인가요 / 근거=세탁실은 22시까지입니다 → {NO_EVIDENCE}" in _KNOWLEDGE_SYSTEM_PROMPT
