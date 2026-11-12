@@ -1,8 +1,10 @@
 import asyncio
+import contextvars
 import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -294,21 +296,23 @@ def _protocol_failure(
     }
 
 
-def _next_step(state: AgentState) -> ToolCall | None:
-    """Plan의 다음 단계를 그대로 도구 호출로 만든다. 실행기는 단계를 고르거나 건너뛰지 않는다."""
+def _next_steps(state: AgentState) -> tuple[ToolCall, ...]:
+    """Plan의 남은 단계를 그대로 도구 호출로 만든다. 실행기는 단계를 고르거나 건너뛰지 않는다."""
     attempted = set(state.get("attempted_tools", ()))
-    name = next((tool for tool in state.get("planned_tools", ()) if tool not in attempted), None)
-    if name is None:
-        return None
     request = state["request"]
-    question = (
-        (state.get("planned_queries") or {}).get(name)
-        or state.get("contextualized_message")
-        or request.message.text
-        or ""
-    )
-    arguments = {} if name == "process_complaint_turn" else {"query": question}
-    return ToolCall(f"plan-{len(attempted) + 1}", name, arguments)
+    calls = []
+    for name in state.get("planned_tools", ()):
+        if name in attempted:
+            continue
+        question = (
+            (state.get("planned_queries") or {}).get(name)
+            or state.get("contextualized_message")
+            or request.message.text
+            or ""
+        )
+        arguments = {} if name == "process_complaint_turn" else {"query": question}
+        calls.append(ToolCall(f"plan-{len(attempted) + len(calls) + 1}", name, arguments))
+    return tuple(calls)
 
 
 @dataclass(frozen=True)
@@ -331,10 +335,13 @@ def _before_compose(state: AgentState) -> dict[str, object] | _Composition:
     messages = list(state.get("agent_messages") or _initial_messages(state))
     route = state.get("route")
     route_label = route.value if route else "unknown"
-    if call := _next_step(state):
+    if calls := _next_steps(state):
         observe_tool_decision(route_label, "planned")
-        logger.info("agent_decision", extra={"route": route_label, "outcome": "planned", "tool": call.name})
-        return {"agent_messages": messages, "pending_tool_calls": (call,), "protocol_retry_pending": False}
+        logger.info(
+            "agent_decision",
+            extra={"route": route_label, "outcome": "planned", "tools": ",".join(call.name for call in calls)},
+        )
+        return {"agent_messages": messages, "pending_tool_calls": calls, "protocol_retry_pending": False}
     searched = [
         (query, result)
         for query, result in (
@@ -569,8 +576,37 @@ def _log_tool_result_message(call: ToolCall, result: object) -> None:
 
 
 def _run_tool(state: AgentState) -> dict[str, object]:
-    # 실행기가 Plan 단계로 만든 호출 하나만 들어온다(_next_step).
-    (call,) = state["pending_tool_calls"]
+    """Plan의 남은 단계를 동시에 실행하고 결과는 Plan 순서대로 합친다."""
+    calls = tuple(state["pending_tool_calls"])
+    if len(calls) == 1:
+        return _run_one(state, calls[0])
+    # 단계끼리 서로의 결과를 쓰지 않아 동시에 돌린다. 로그 맥락·스트림 writer는 contextvar라 호출마다 복사한다.
+    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, _run_one, state, call) for call in calls]
+        results = [future.result() for future in futures]
+    updates: dict[str, object] = {}
+    for result in results:
+        updates.update(result)
+    updates.update(
+        {
+            "agent_messages": [*(state.get("agent_messages") or []), *(result["agent_messages"][-1] for result in results)],
+            "pending_tool_calls": (),
+            "tool_call_count": state.get("tool_call_count", 0) + len(calls),
+            "attempted_tools": (*state.get("attempted_tools", ()), *(call.name for call in calls)),
+            "completed_tools": (
+                *state.get("completed_tools", ()),
+                *(call.name for call, result in zip(calls, results, strict=True) if "completed_tools" in result),
+            ),
+        }
+    )
+    complaint = updates.get("complaint_result")
+    if isinstance(complaint, ComplaintTurnResult):
+        # 민원 단계의 답변 조립은 함께 돈 검색 결과까지 본 상태로 다시 한다.
+        updates.update(_agent_result({**state, **updates}, complaint.reply))
+    return updates
+
+
+def _run_one(state: AgentState, call: ToolCall) -> dict[str, object]:
     messages = list(state.get("agent_messages") or [])
     _log_tool_call_message(call)
     request = state["request"]

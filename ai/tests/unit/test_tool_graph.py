@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -1693,10 +1694,10 @@ def test_executor_runs_plan_steps_without_an_action_model():
         "attempted_tools": ("process_complaint_turn",),
     }
 
-    call = graph_module._next_step(state)
+    (call,) = graph_module._next_steps(state)
 
     assert (call.name, call.arguments) == ("search_building_docs", {"query": "주차 등록은 어떻게 하나요?"})
-    assert graph_module._next_step({**state, "attempted_tools": ("process_complaint_turn", "search_building_docs")}) is None
+    assert graph_module._next_steps({**state, "attempted_tools": ("process_complaint_turn", "search_building_docs")}) == ()
 
 
 @pytest.mark.parametrize(
@@ -1862,3 +1863,40 @@ def test_streamed_reply_goes_out_before_the_card_is_finished(monkeypatch: pytest
     assert events[0] == first_delta
     assert events[-1] == "finish"
     assert "".join(deltas) == final["reply"]
+
+
+def test_independent_plan_steps_run_at_the_same_time(monkeypatch: pytest.MonkeyPatch):
+    # 단계끼리 결과를 쓰지 않으므로 동시에 돈다. 순서대로 돌면 Barrier가 상대를 기다리다 깨진다.
+    barrier = threading.Barrier(2, timeout=2)
+    statuses = []
+
+    def complaint(*_a, **_kw):
+        barrier.wait()
+        return ComplaintTurnResult(
+            reply="어디에서 생긴 문제인가요?",
+            complaint_state=ComplaintState.COLLECTING,
+            result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing", symptom="누수"), missing_fields=["location"]),
+        )
+
+    def search(*_a):
+        barrier.wait()
+        return _building_ok()
+
+    monkeypatch.setattr(graph_module, "process_complaint_turn", complaint)
+    monkeypatch.setattr(graph_module, "search_building_docs", search)
+    monkeypatch.setattr(graph_module, "_emit_status", statuses.append)
+    monkeypatch.setattr(
+        graph_module,
+        "classify_intent",
+        lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn", "search_building_docs", queries={"search_building_docs": "관리비 납부일은 언제인가요?"}),
+    )
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: _decision(content="관리비는 25일까지입니다."))
+
+    result = graph_module.build_graph().invoke(_state())
+
+    # 실행은 동시에, 기록과 답변 조립은 Plan 순서대로 한다.
+    assert result["attempted_tools"] == ("process_complaint_turn", "search_building_docs")
+    assert result["completed_tools"] == ("process_complaint_turn", "search_building_docs")
+    assert result["tool_call_count"] == 2
+    assert sorted(statuses) == sorted(["민원 내용을 정리하고 있습니다.", "건물 문서를 확인하고 있습니다."])
+    assert result["reply"] == "관리비는 25일까지입니다.\n\n어디에서 생긴 문제인가요?"
