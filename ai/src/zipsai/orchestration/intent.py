@@ -28,10 +28,10 @@ class _Step(BaseModel):
 
 
 class _ToolPlan(BaseModel):
-    # 보강문을 먼저 쓰게 해 단계의 질문 문장이 보강된 내용을 따르게 한다.
-    contextualized_message: str | None
+    # 단계를 먼저 쓰게 한다. 보강문을 앞에 두면 8B 모델이 그 칸에 추론을 늘어놓는다.
     steps: list[_Step]
     route: Route
+    contextualized_message: str | None
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:

@@ -30,7 +30,7 @@ _INTENT_SYSTEM_PROMPT = (
     "written. Empty only for greetings, thanks, small talk, questions about using this assistant, "
     "or requests unrelated to the building or complaints.\n"
     "4. question: one self-contained Korean question sentence for a search tool, following its "
-    "question 규칙 and the contextualized message; if one tool covers several questions, join them "
+    "question 규칙; if one tool covers several questions, join them "
     "in that sentence. Use null for process_complaint_turn.\n\n"
     "Patterns:\n"
     "- broken, leaking, noisy, dirty, or unsafe facility; a reply that fills a missing complaint "

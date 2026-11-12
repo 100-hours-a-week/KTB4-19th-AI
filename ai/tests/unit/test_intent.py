@@ -105,7 +105,7 @@ def test_plan_returns_distinct_tools_and_response_route_fallback(
 
     assert result["planned_tools"] == list(dict.fromkeys(planned_tools))
     assert result["route"] is route
-    assert list(schemas[0].model_fields) == ["contextualized_message", "steps", "route"]
+    assert list(schemas[0].model_fields) == ["steps", "route", "contextualized_message"]
 
 
 def test_plan_steps_carry_one_question_sentence_per_search_tool(monkeypatch):
