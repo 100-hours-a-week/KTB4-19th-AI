@@ -21,17 +21,22 @@ env:
   QDRANT_COLLECTION: documents
   S3_BUCKET: zipsai-prod-uploads
   EMBEDDING_API_URL: http://embedding-service.prod.svc.cluster.local:8000
+  ACTIVE_MODEL_PROVIDER: pod
   LANGFUSE_TRACING_ENABLED: 'false'
 externalSecret:
   enabled: true
   forceSync: '1'
   parameters:
-    ACTIVE_MODEL_PROVIDER: ai-api/active-model-provider
-    SERVERLESS_API_KEY: ai-api/serverless-api-key
-    SERVERLESS_BASE_URL: ai-api/serverless-base-url
-    SERVERLESS_MODEL: ai-api/serverless-model
     QDRANT_API_KEY: ai-api/qdrant-api-key
     TAVILY_API_KEY: ai-api/tavily-api-key
+    RUNPOD_API_KEY: ai-api/runpod-api-key
+    RUNPOD_POD_NAME_PREFIX: ai-api/runpod-pod-name-prefix
+    POD_API_KEY: ai-api/pod-api-key
+    POD_MODEL: ai-api/pod-model
+    OPENROUTER_API_KEY: ai-api/openrouter-api-key
+    OPENROUTER_BASE_URL: ai-api/openrouter-base-url
+    OPENROUTER_LLM_MODEL: ai-api/openrouter-llm-model
+    OPENROUTER_VLM_MODEL: ai-api/openrouter-vlm-model
 resources:
   requests:
     cpu: 500m
