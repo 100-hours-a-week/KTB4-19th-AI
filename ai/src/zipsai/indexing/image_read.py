@@ -1,4 +1,4 @@
-"""색인 사진 전용. 채팅 VLM 대체 호출(_call_with_fallback)은 쓰지 않는다."""
+"""색인 사진·스캔 PDF 전용. 채팅 VLM 대체 호출(_call_with_fallback)은 쓰지 않는다."""
 
 from __future__ import annotations
 
@@ -107,6 +107,12 @@ def prepare_image(path: Path) -> PreparedImage:
     with Image.open(path) as image:
         orig_size = image.size
         upright = ImageOps.exif_transpose(image).convert("RGB")
+    return _shrink(upright, orig_size)
+
+
+def _shrink(upright: object, orig_size: tuple[int, int]) -> PreparedImage:
+    from PIL import Image
+
     sent = upright
     long_edge = max(sent.size)
     if long_edge > LONG_EDGE:
@@ -341,4 +347,113 @@ def read_image_pages(source: str | Path):
         route="index_vlm" if route == "vlm" else "index_paddle",
         reason=reason or "image",
         convert_s=vlm.seconds + paddle_s,
+    )
+
+
+def _log_scan_page(
+    *,
+    page: int,
+    route: str,
+    reason: str | None,
+    prepared: PreparedImage,
+    est_tokens: int,
+    out_chars: int,
+    vlm_s: float,
+    ocr_s: float,
+) -> None:
+    logger.info(
+        "index_scan_page",
+        extra={
+            "page": page,
+            "scan_route": route,
+            "scan_reason": reason,
+            "sent_size": f"{prepared.sent_size[0]}x{prepared.sent_size[1]}",
+            "est_tokens": est_tokens,
+            "out_chars": out_chars,
+            "vlm_s": round(vlm_s, 3),
+            "ocr_s": round(ocr_s, 3),
+        },
+    )
+
+
+def read_scan_pages(source: str | Path, *, reason: str | None, layer: str | None):
+    """쪽마다 VLM을 먼저 부르고, 실패한 쪽만 docling EasyOCR로 읽는다.
+
+    pdfium이 파일을 못 열면 None을 돌려 문서 전체를 기존 docling 경로로 넘긴다.
+    """
+
+    import pypdfium2 as pdfium
+
+    from zipsai.errors import PdfParseError
+    from zipsai.indexing.parse import ParsedPages, _annotate_route, ocr_scan_page
+
+    path = Path(source)
+    try:
+        document = pdfium.PdfDocument(path)
+    except pdfium.PdfiumError:
+        return None
+    pages: list[dict[str, int | str]] = []
+    routes: set[str] = set()
+    total_s = 0.0
+    try:
+        for index in range(len(document)):
+            page_no = index + 1
+            page = document[index]
+            try:
+                width, height = page.get_size()
+                # 사진 경로와 같은 긴 변 2048px로 바로 그려 다시 줄이지 않는다.
+                bitmap = page.render(scale=LONG_EDGE / max(width, height))
+                image = bitmap.to_pil().convert("RGB")
+            finally:
+                page.close()
+            prepared = _shrink(image, image.size)
+            vlm = call_index_vlm(
+                prepared.jpeg, prepared.sent_size[0], prepared.sent_size[1]
+            )
+            ocr_s = 0.0
+            if vlm.reason is None and vlm.text is not None:
+                text = pipe_runs_to_markdown(vlm.text)
+                route = "vlm"
+            else:
+                text, ocr_s = ocr_scan_page(path, page_no)
+                route = "ocr"
+            routes.add(route)
+            total_s += vlm.seconds + ocr_s
+            _log_scan_page(
+                page=page_no,
+                route=route,
+                reason=vlm.reason,
+                prepared=prepared,
+                est_tokens=vlm.est_tokens,
+                out_chars=len(text),
+                vlm_s=vlm.seconds,
+                ocr_s=ocr_s,
+            )
+            pages.append({"page": page_no, "text": text})
+    finally:
+        document.close()
+    if not pages:
+        raise PdfParseError(f"Document has no pages: {path}")
+    if not any(str(item["text"]).strip() for item in pages):
+        raise PdfParseError(f"Document has no usable text: {path}")
+    parsed = ParsedPages(pages)
+    texts = [str(item["text"]) for item in pages]
+    parsed.empty_pages = sum(1 for text in texts if not text.strip())
+    parsed.min_chars_per_page = min(len(text) for text in texts)
+    parsed.parser_status = "SUCCESS"
+    parsed.ocr_used = True
+    parsed.ocr_pages = len(pages)
+    parsed.fallback_reason = reason
+    parsed.text_layer = layer
+    if routes == {"vlm"}:
+        parsed.parser, route_name = "qwen-vl", "index_vlm"
+    elif routes == {"ocr"}:
+        parsed.parser, route_name = "docling", "docling_ocr"
+    else:
+        parsed.parser, route_name = "qwen-vl+docling", "index_vlm_mixed"
+    return _annotate_route(
+        parsed,
+        route=route_name,
+        reason=reason or "text_layer_none",
+        convert_s=total_s,
     )
