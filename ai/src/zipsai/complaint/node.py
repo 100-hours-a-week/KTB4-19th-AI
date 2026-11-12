@@ -54,7 +54,11 @@ _UNKNOWN_LOCATION = "모름"
 
 
 class _InterpretationOutput(BaseModel):
-    complaint_switch: ComplaintSwitch
+    # 전환 여부는 모델이 사실만 적고 _switch_from이 정한다. 한 번에 판정시키면 정정과
+    # 다른 고장을 구분하지 못했다.
+    takes_back_existing: bool
+    reports_other_problem: bool
+    agrees_to_switch: bool
     issue_type: IssueType | None
     location: str | None
     symptom: str | None
@@ -74,6 +78,14 @@ class _TurnSymptomOutput(BaseModel):
 class _TurnInterpretation:
     fields: ComplaintDraft = field(default_factory=ComplaintDraft)
     switch: ComplaintSwitch = ComplaintSwitch.SAME
+
+
+def _switch_from(parsed: _InterpretationOutput) -> ComplaintSwitch:
+    if parsed.agrees_to_switch:
+        return ComplaintSwitch.ACCEPT
+    if parsed.reports_other_problem and not parsed.takes_back_existing:
+        return ComplaintSwitch.ASK
+    return ComplaintSwitch.SAME
 
 
 def _log_interpretation_retry(attempt: int, error: Exception) -> None:
@@ -120,11 +132,10 @@ def _interpret_turn(
             retry_reason=None if attempt == 1 else "empty_output",
         )
         if parsed is not None:
+            switch = _switch_from(parsed)
             if usage_sink is not None:
                 issue = parsed.issue_type
-                usage_sink["complaint_switch"] = getattr(
-                    parsed.complaint_switch, "value", parsed.complaint_switch
-                )
+                usage_sink["complaint_switch"] = switch.value
                 usage_sink["issue_type"] = (
                     getattr(issue, "value", issue) if issue else None
                 )
@@ -142,7 +153,7 @@ def _interpret_turn(
                     symptom=parsed.symptom,
                     occurred_at=parsed.occurred_at,
                 ),
-                switch=parsed.complaint_switch,
+                switch=switch,
             )
         last_error = ComplaintExtractionError("LLM did not return an interpretation")
         _log_interpretation_retry(attempt, last_error)
@@ -240,6 +251,19 @@ def _switch_question(current_symptom: str, new_symptom: str) -> str:
     증상에서 경계가 겹쳐 회수가 조용히 깨진다.
     """
     return f"{current_symptom} 건은 접어두고 「{new_symptom}」으로 전환할까요?"
+
+
+_COMPLETE_REPLY = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+# 시점은 필수가 아니라 따로 묻지 않는다. 다음 턴에 답하면 기존 추출 경로로 초안에 합쳐진다.
+_ONSET_INVITE = " 언제부터 그랬는지 알려주시면 함께 적어둘게요."
+
+def _should_invite_onset(request: ConverseRequest, draft: ComplaintDraft) -> bool:
+    # 대화당 한 번만 권한다. 날짜 없는 답은 시점이 비어 남아 매 턴 같은 권유가 반복된다.
+    invite = _ONSET_INVITE.strip()
+    return not draft.occurred_at and not any(
+        turn.role == "assistant" and invite in (turn.text or "")
+        for turn in request.conversation_history
+    )
 
 
 _MISSING_FIELD_REPLY = {
@@ -384,7 +408,7 @@ def _ready_for_card(
             missing_fields=[],
             image_analysis=image_analysis,
         ),
-        reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
+        reply=_COMPLETE_REPLY + (_ONSET_INVITE if _should_invite_onset(request, draft) else ""),
         complaint_state=None,
         asked=None,
         reply_source="complete",

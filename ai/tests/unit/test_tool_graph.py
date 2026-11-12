@@ -640,10 +640,10 @@ def test_building_no_results_uses_fixed_reply_without_composer(
         (None, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
         # 빈 초안은 민원 이력이 아니다.
         ({}, NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
-        # 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다. QA 카드를 만들지 않는다.
+        # 이전 턴에 민원이 진행됐으면 이 대화의 카드는 민원 카드다. QA 카드를 만들지 않고 빈 항목을 이어서 묻는다.
         (
             {"issue_type": "plumbing", "symptom": "천장 누수"},
-            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.",
+            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.\n\n어디에서 생긴 문제인가요?",
             None,
         ),
     ],
@@ -1696,3 +1696,29 @@ def test_executor_runs_plan_steps_without_an_action_model():
 
     assert (call.name, call.arguments) == ("search_building_docs", {"query": "주차 등록은 어떻게 하나요?"})
     assert graph_module._next_step({**state, "attempted_tools": ("process_complaint_turn", "search_building_docs")}) is None
+
+
+@pytest.mark.parametrize(
+    ("draft", "attempted", "asks_location"),
+    [
+        (ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 새요"), (), True),
+        (ComplaintDraft(location="욕실", symptom="천장에서 물이 새요"), (), False),
+        (None, (), False),
+        (ComplaintDraft(issue_type="plumbing", symptom="천장에서 물이 새요"), ("process_complaint_turn",), False),
+    ],
+    ids=["missing-location", "complete-draft", "no-complaint", "tool-failed"],
+)
+def test_turn_without_complaint_tool_asks_the_missing_field_again(draft, attempted, asks_location):
+    # 민원 도구가 돌지 않은 턴(질문·인사)에도 빈 항목이 남아 있으면 이어서 묻는다. 안 물으면 수집이 멈춘다.
+    request = _request().model_copy(update={"complaint_draft": draft})
+    state = {**_state(), "request": request, "attempted_tools": attempted}
+
+    reply = graph_module._agent_result(state, "헬스장은 06시에 엽니다.")["reply"]
+
+    assert reply.startswith("헬스장은 06시에 엽니다.")
+    assert ("어디에서 생긴 문제인가요?" in reply) is asks_location
+
+
+def test_reply_prompt_leaves_complaint_questions_to_the_app():
+    # 앱이 빈 항목을 묻으므로 답변 모델까지 물으면 같은 질문이 두 번 나간다.
+    assert "never ask for complaint details" in graph_module._AGENT_SYSTEM

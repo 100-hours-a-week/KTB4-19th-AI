@@ -147,7 +147,9 @@ def test_complaint_extraction_prompt_receives_summary_and_ocr(
         captured["user"] = kwargs["user_prompt"]
         captured["system"] = kwargs["system_prompt"]
         return node_module._InterpretationOutput(
-            complaint_switch="same",
+            takes_back_existing=False,
+                reports_other_problem=False,
+                agrees_to_switch=False,
             issue_type="appliance",
             location=None,
             symptom="세탁기에 LE 오류가 표시됨",
