@@ -1725,7 +1725,7 @@ def test_reply_prompt_leaves_complaint_questions_to_the_app():
     assert "never ask for complaint details" in graph_module._AGENT_SYSTEM
 
 
-def _stream_graph(monkeypatch, order, chunks, *, building=None, text="헬스장은 몇 시에 열어요?"):
+def _stream_graph(monkeypatch, order, chunks, *, building=None, text="헬스장은 몇 시에 열어요?", complaint=None):
     """스트리밍 그래프를 끝까지 돌려 화면 delta와 최종 상태를 돌려준다."""
     queries = {"search_building_docs": "헬스장은 몇 시에 여나요?"}
 
@@ -1744,10 +1744,13 @@ def _stream_graph(monkeypatch, order, chunks, *, building=None, text="헬스장�
     monkeypatch.setattr(
         graph_module,
         "process_complaint_turn",
-        lambda *_a, **_kw: ComplaintTurnResult(
-            reply="민원 정보를 확인했습니다.",
-            complaint_state=None,
-            result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing", location="거실", symptom="누수")),
+        complaint
+        or (
+            lambda *_a, **_kw: ComplaintTurnResult(
+                reply="민원 정보를 확인했습니다.",
+                complaint_state=None,
+                result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing", location="거실", symptom="누수")),
+            )
         ),
     )
     state = _state()
@@ -1795,3 +1798,67 @@ def test_streamed_deltas_add_up_to_the_final_reply_with_the_complaint_reply(
 
     assert deltas[:2] == ["관리비는 ", "25일까지입니다."]
     assert "".join(deltas) == final["reply"] == "관리비는 25일까지입니다.\n\n민원 정보를 확인했습니다."
+
+
+def _completed_draft() -> CompletedComplaintDraft:
+    return CompletedComplaintDraft(issue_type="plumbing", location="거실", symptom="누수")
+
+
+@pytest.mark.parametrize(
+    ("draft", "finished"),
+    [(_completed_draft(), True), (ComplaintDraft(issue_type="plumbing", symptom="누수"), False)],
+    ids=["completed", "still-asking"],
+)
+def test_finish_completes_the_card_only_for_a_completed_draft(monkeypatch: pytest.MonkeyPatch, draft, finished):
+    calls = []
+    monkeypatch.setattr(
+        graph_module, "classify_intent", lambda _state: _plan(Route.COMPLAINT, "process_complaint_turn")
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_a, **_kw: ComplaintTurnResult(
+            reply="민원 정보를 확인했습니다.",
+            complaint_state=None,
+            result=RouteResult(complaint_draft=draft, missing_fields=[] if finished else ["location"]),
+        ),
+    )
+    monkeypatch.setattr(
+        graph_module,
+        "finish_card",
+        lambda _request, card, _images: (calls.append(card), card.model_copy(update={"urgency_score": 58}))[1],
+    )
+
+    result = graph_module.build_graph().invoke(_state())
+
+    assert bool(calls) is finished
+    assert getattr(result["result"].complaint_draft, "urgency_score", None) == (58 if finished else None)
+
+
+@pytest.mark.parametrize(
+    ("order", "first_delta"),
+    [
+        (("process_complaint_turn",), "민원 정보를 확인했습니다."),
+        (("process_complaint_turn", "search_building_docs"), "관리비는 25일까지입니다."),
+    ],
+    ids=["complaint-only", "mixed"],
+)
+def test_streamed_reply_goes_out_before_the_card_is_finished(monkeypatch: pytest.MonkeyPatch, order, first_delta):
+    # 답변(민원 단독 또는 검색 답변+민원 답변)을 먼저 보내고, 대표 사진·긴급도는 그 뒤에 붙인다.
+    events = []
+    emit = graph_module._emit_delta
+    monkeypatch.setattr(graph_module, "_emit_delta", lambda text: (text and events.append(text), emit(text)))
+    monkeypatch.setattr(
+        graph_module, "finish_card", lambda _r, card, _i: (events.append("finish"), card)[1]
+    )
+    completed = lambda *_a, **_kw: ComplaintTurnResult(
+        reply="민원 정보를 확인했습니다.",
+        complaint_state=None,
+        result=RouteResult(complaint_draft=_completed_draft()),
+    )
+
+    deltas, final = _stream_graph(monkeypatch, order, ["관리비는 25일까지입니다."], complaint=completed)
+
+    assert events[0] == first_delta
+    assert events[-1] == "finish"
+    assert "".join(deltas) == final["reply"]

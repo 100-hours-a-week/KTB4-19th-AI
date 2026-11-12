@@ -11,10 +11,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
-from zipsai.complaint.node import _MISSING_FIELD_REPLY, _missing_fields
+from zipsai.complaint.node import finish_card, missing_field_question, missing_fields
 from zipsai.complaint.tool import process_complaint_turn
 from zipsai.contracts.converse import (
-    ComplaintDraft,
+    CompletedComplaintDraft,
     QaCardDraft,
     Route,
     RouteResult,
@@ -205,7 +205,7 @@ def _assemble_result(
     if route is Route.COMPLAINT and not complaint_result:
         # 민원 도구 결과가 없는 complaint 턴을 BE가 완성 민원으로 오인하지 않게 빈 항목을 알린다.
         result = result.model_copy(
-            update={"missing_fields": _missing_fields(request.complaint_draft or ComplaintDraft())}
+            update={"missing_fields": missing_fields(request.complaint_draft)}
         )
     return (
         route or Route.CLARIFY,
@@ -253,15 +253,16 @@ def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
         state.get("complaint_result"),
         state.get("web_search_result"),
     )
+    draft = state["request"].complaint_draft
     if (
         "process_complaint_turn" not in state.get("attempted_tools", ())
-        and state["request"].complaint_draft
-        and result.missing_fields
+        and draft
+        and result.missing_fields  # 빈 초안처럼 진행 중인 민원이 없으면 결과 조립이 비워 둔다
+        and (question := missing_field_question(draft))
+        and question not in reply
     ):
         # 민원 도구가 돌지 않은 턴에도 빈 항목을 이어서 묻는다. 한 번에 한 항목만 묻는다.
-        question = _MISSING_FIELD_REPLY[result.missing_fields[0]]
-        if question not in reply:
-            reply = f"{reply.rstrip()}\n\n{question}".strip()
+        reply = f"{reply.rstrip()}\n\n{question}".strip()
     return _include_image_analysis(
         {
             "route": route,
@@ -427,8 +428,13 @@ def _run_agent(state: AgentState) -> dict[str, object]:
 
 
 def _emit_delta(text: str) -> None:
-    if text:
+    if not text:
+        return
+    try:
         get_stream_writer()({"type": "delta", "field": "reply", "text": text})
+    except RuntimeError:
+        # 일반 invoke에는 스트림 writer가 없다.
+        return
 
 
 async def _run_agent_stream(state: AgentState) -> dict[str, object]:
@@ -470,7 +476,26 @@ async def _run_agent_stream(state: AgentState) -> dict[str, object]:
     if isinstance(reply, str) and reply.startswith(streamed):
         # 민원 답변·재질문·무근거 문구처럼 Composer 뒤에 붙은 조각을 이어 보내 complete와 화면을 맞춘다.
         _emit_delta(reply[len(streamed):])
-    return result
+    return {**result, "reply_streamed": True}
+
+
+def _finish(state: AgentState) -> dict[str, object]:
+    """완료 카드에 대표 사진·긴급도를 붙인다. 답변에 쓰이지 않아 그래프 맨 끝에서 한 번 돈다."""
+    result = state.get("result")
+    complaint = state.get("complaint_result")
+    draft = result.complaint_draft if isinstance(result, RouteResult) else None
+    # 완료 초안은 이번 턴 민원 도구의 _ready_for_card만 만든다. 묻는 중·전환 질문·도구 실패 턴은 건너뛴다.
+    if not (isinstance(complaint, ComplaintTurnResult) and isinstance(draft, CompletedComplaintDraft)):
+        return {}
+    card = finish_card(state["request"], draft, complaint.result.image_analysis)
+    return {"result": result.model_copy(update={"complaint_draft": card})}
+
+
+async def _finish_stream(state: AgentState) -> dict[str, object]:
+    if not state.get("reply_streamed"):
+        # Composer가 스트리밍하지 않은 답변(민원 단독·고정 문구)은 카드 마무리 전에 한 번에 보낸다.
+        _emit_delta(state.get("reply") or "")
+    return await asyncio.to_thread(_finish, state)
 
 
 def _is_tool_text(content: str | None) -> bool:
@@ -689,7 +714,7 @@ def _run_tool(state: AgentState) -> dict[str, object]:
 def _after_agent(state: AgentState) -> str:
     if state.get("pending_tool_calls"):
         return "tool"
-    return "agent" if state.get("protocol_retry_pending") else END
+    return "agent" if state.get("protocol_retry_pending") else "finish"
 
 
 def _after_tool(state: AgentState) -> str:
@@ -726,8 +751,10 @@ def build_graph(streaming: bool = False) -> CompiledStateGraph:
     builder.add_node("tool", _run_tool)
     builder.add_edge(START, "prepare")
     builder.add_edge("prepare", "agent")
+    builder.add_node("finish", _finish_stream if streaming else _finish)
     builder.add_conditional_edges(
-        "agent", _after_agent, {"agent": "agent", "tool": "tool", END: END}
+        "agent", _after_agent, {"agent": "agent", "tool": "tool", "finish": "finish"}
     )
+    builder.add_edge("finish", END)
     builder.add_conditional_edges("tool", _after_tool, {"agent": "agent", END: END})
     return builder.compile()

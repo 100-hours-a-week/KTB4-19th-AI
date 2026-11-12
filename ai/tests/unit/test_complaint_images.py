@@ -413,6 +413,14 @@ def test_no_attachment_ids_skips_representative_selection_even_with_history_imag
     assert result.complaint_draft.representative_attachment_id is None
 
 
+
+def _finished(request):
+    """대표 사진은 그래프 끝 finish_card에서 고른다."""
+    result = handle_complaint(request)["result"]
+    return result.model_copy(
+        update={"complaint_draft": node_module.finish_card(request, result.complaint_draft, result.image_analysis)}
+    )
+
 def test_single_attachment_is_recommended_without_embedding(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -431,7 +439,7 @@ def test_single_attachment_is_recommended_without_embedding(
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.complaint_draft.representative_attachment_id == 123
 
@@ -476,7 +484,7 @@ def test_multiple_attachments_select_highest_cosine_summary_match(
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.complaint_draft.representative_attachment_id == 789
     assert encoded_texts == [
@@ -515,7 +523,7 @@ def test_missing_summary_falls_back_to_first_attachment(
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.missing_fields == []
     assert result.complaint_draft.representative_attachment_id == 123
@@ -553,7 +561,7 @@ def test_embedding_failure_falls_back_to_first_attachment(
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.missing_fields == []
     assert result.complaint_draft.representative_attachment_id == 123

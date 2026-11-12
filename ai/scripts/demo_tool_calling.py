@@ -137,6 +137,8 @@ def _run(title: str, request: ConverseRequest) -> dict[str, object]:
             _initial_state(request), stream_mode="updates"
         ):
             for node, node_update in update.items():
+                if not node_update:
+                    continue  # finish처럼 바꿀 것이 없는 노드
                 _print_event(node, node_update)
                 result.update(node_update)
     finally:

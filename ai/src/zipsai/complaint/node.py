@@ -220,6 +220,17 @@ def _missing_fields(draft: ComplaintDraft) -> list[str]:
     return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
 
 
+def missing_fields(draft: ComplaintDraft | None) -> list[str]:
+    """민원 밖(그래프 결과 조립)에서 쓰는 공개 이름. 초안이 없으면 전부 비었다."""
+    return _missing_fields(draft or ComplaintDraft())
+
+
+def missing_field_question(draft: ComplaintDraft | None) -> str | None:
+    """빈 항목이 있으면 다음에 물을 고정 질문 하나. 무엇을 어떤 순서로 묻는지는 민원 모듈만 안다."""
+    fields = missing_fields(draft)
+    return _MISSING_FIELD_REPLY[fields[0]] if fields else None
+
+
 def _can_switch_away_from(current: ComplaintDraft | None) -> bool:
     return bool(current and current.symptom)
 
@@ -283,7 +294,6 @@ class _ComplaintTurn:
     complaint_state: ComplaintState | None
     asked: str | None
     reply_source: str
-    urgency_level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,18 +403,10 @@ def _ready_for_card(
     # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
     if draft.issue_type is None:
         draft = draft.model_copy(update={"issue_type": "other"})
-    representative_id = _representative_attachment_id(request, draft, image_analysis)
-    urgency = _assess_urgency_with_stage(draft, image_analysis)
-    response_draft = CompletedComplaintDraft(
-        **draft.model_dump(),
-        representative_attachment_id=representative_id,
-        urgency_score=urgency.score,
-        is_urgent=urgency.is_urgent,
-        urgency_version=urgency.urgency_version,
-    )
+    # 대표 사진·긴급도는 답변에 쓰이지 않는다. 답변을 먼저 보낼 수 있게 그래프 끝에서 finish_card가 붙인다.
     return _ComplaintTurn(
         result=RouteResult(
-            complaint_draft=response_draft,
+            complaint_draft=CompletedComplaintDraft(**draft.model_dump()),
             missing_fields=[],
             image_analysis=image_analysis,
         ),
@@ -412,7 +414,35 @@ def _ready_for_card(
         complaint_state=None,
         asked=None,
         reply_source="complete",
-        urgency_level=getattr(urgency, "level", None),
+    )
+
+
+def finish_card(
+    request: ConverseRequest,
+    draft: CompletedComplaintDraft,
+    image_analysis: ImageAnalysis | None,
+) -> CompletedComplaintDraft:
+    """완료 카드에 대표 사진과 긴급도를 붙인다. 긴급도 실패는 null로 남는다."""
+    representative_id = _representative_attachment_id(request, draft, image_analysis)
+    urgency = _assess_urgency_with_stage(draft, image_analysis)
+    logger.info(
+        "complaint_card_finished",
+        extra={
+            "conversation_id": request.conversation_id,
+            "urgency_level": getattr(urgency, "level", None),
+            "urgency_score": urgency.score,
+            "is_urgent": urgency.is_urgent,
+            "urgency_version": urgency.urgency_version,
+            "representative_attachment_id": representative_id,
+        },
+    )
+    return draft.model_copy(
+        update={
+            "representative_attachment_id": representative_id,
+            "urgency_score": urgency.score,
+            "is_urgent": urgency.is_urgent,
+            "urgency_version": urgency.urgency_version,
+        }
     )
 
 
@@ -833,7 +863,6 @@ def _log_complaint_turn(
             "location_unknown": draft.location == _UNKNOWN_LOCATION,
             "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
-            "urgency_level": turn.urgency_level,
             "image_count": len(evidence.images),
             "images_analyzed": len(observations),
             "summary_chars": sum(len(image.summary or "") for image in observations),

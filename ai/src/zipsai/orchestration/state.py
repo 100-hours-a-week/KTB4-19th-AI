@@ -37,3 +37,4 @@ class AgentState(TypedDict):
     web_search_query: NotRequired[str]
     web_search_result: NotRequired[object]
     complaint_result: NotRequired[object]
+    reply_streamed: NotRequired[bool]
