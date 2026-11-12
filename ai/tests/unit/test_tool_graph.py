@@ -17,6 +17,7 @@ from zipsai.contracts.converse import (
 from zipsai.errors import LlmInvalidToolCallError
 from zipsai.integrations.llm import ToolCall, ToolDecision
 from zipsai.knowledge.node import NO_EVIDENCE_REPLY
+from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT
 from zipsai.orchestration.state import AgentState
 from zipsai.orchestration.tool_contracts import (
     BuildingDocsResult,
@@ -43,6 +44,9 @@ def _request() -> ConverseRequest:
             "complaint_draft": None,
         }
     )
+
+
+_KNOWLEDGE_SYSTEM = KNOWLEDGE_PROMPT.messages[0].prompt.template
 
 
 def _state() -> AgentState:
@@ -538,6 +542,7 @@ def _composite_graph(
     composer_messages,
     text="누수 민원 만들고 방문 차량 등록도 알려줘",
     complaint_draft=None,
+    composer_reply="검색 답변입니다.",
 ):
     calls = {
         "process_complaint_turn": ToolCall("call-complaint", "process_complaint_turn", {}),
@@ -545,7 +550,7 @@ def _composite_graph(
         "search_public_web": ToolCall("call-web", "search_public_web", {"query": "전입신고 준비물"}),
     }
     decisions = iter(
-        [*(_decision(calls=(calls[name],)) for name in order), _decision(content="검색 답변입니다.")]
+        [*(_decision(calls=(calls[name],)) for name in order), _decision(content=composer_reply)]
     )
 
     def decide(messages, _tools, *, purpose):
@@ -610,7 +615,7 @@ def test_composite_composer_sees_only_search_question_and_results(
     )
 
     sent = json.dumps(composer_messages[0], ensure_ascii=False, default=str)
-    assert composer_messages[0][0] == {"role": "system", "content": graph_module._SEARCH_COMPOSER_SYSTEM}
+    assert composer_messages[0][0]["content"] == _KNOWLEDGE_SYSTEM
     assert "방문 차량 등록 방법" in sent
     assert "관리사무소 앱에서 등록" in sent
     for complaint_text in ("천장 누수", "어디에서 생긴 문제인가요?", "누수 민원 만들고"):
@@ -630,9 +635,56 @@ def test_search_only_composer_sees_only_search_question_and_results(
         composer_messages,
     )
 
-    assert composer_messages[0][0] == {"role": "system", "content": graph_module._SEARCH_COMPOSER_SYSTEM}
+    assert composer_messages[0][0]["content"] == _KNOWLEDGE_SYSTEM
     assert "누수 민원 만들고" not in json.dumps(composer_messages[0], ensure_ascii=False, default=str)
     assert result["reply"] == "검색 답변입니다."
+
+
+def test_building_only_composer_uses_v2_knowledge_contract(monkeypatch: pytest.MonkeyPatch):
+    # v2 knowledge 노드와 같은 답변 규칙: 근거를 먼저, 입주민 질문을 맨 뒤에 둔다.
+    composer_messages: list[list[object]] = []
+
+    _composite_graph(
+        monkeypatch,
+        ("search_building_docs",),
+        {"building": _building_ok(), "web": None},
+        composer_messages,
+    )
+
+    user = composer_messages[0][1]["content"]
+    assert user.startswith("건물 문서 근거:\n[근거 1]\n제목: 주차 안내\n내용: 방문 차량은 관리사무소 앱에서 등록한다.")
+    assert user.endswith("질문: 방문 차량 등록 방법")
+
+
+@pytest.mark.parametrize(
+    "order, reply, qa_question",
+    [
+        (("search_building_docs",), NO_EVIDENCE_REPLY, "방문 차량 등록 방법"),
+        (
+            ("process_complaint_turn", "search_building_docs"),
+            "'방문 차량 등록 방법' 내용은 건물 문서에서 찾지 못했어요.\n\n어디에서 생긴 문제인가요?",
+            None,
+        ),
+    ],
+    ids=["search-only", "complaint-and-search"],
+)
+def test_composer_no_evidence_falls_back_like_v2(
+    monkeypatch: pytest.MonkeyPatch, order, reply, qa_question
+):
+    # 문서는 걸렸지만 답이 없으면 v2처럼 고정 문구와 QA 카드로 관리인에게 넘긴다.
+    result = _composite_graph(
+        monkeypatch,
+        order,
+        {"building": _building_ok(), "web": None},
+        [],
+        composer_reply="no_evidence",
+    )
+
+    assert result["reply"] == reply
+    qa_card = result["result"].qa_card_draft
+    assert (qa_card.question if qa_card else None) == qa_question
+    assert result["result"].has_sufficient_evidence is False
+    assert result["result"].citations == []
 
 
 @pytest.mark.parametrize(

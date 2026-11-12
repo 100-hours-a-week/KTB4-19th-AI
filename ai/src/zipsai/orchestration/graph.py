@@ -21,6 +21,7 @@ from zipsai.errors import LlmInvalidToolCallError
 from zipsai.history import format_intent_history
 from zipsai.integrations.llm import ToolCall, generate_tool_decision
 from zipsai.knowledge.node import NO_EVIDENCE_REPLY
+from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT, NO_EVIDENCE
 from zipsai.knowledge.tool import search_building_docs
 from zipsai.knowledge.web import search_public_web
 from zipsai.metrics import (
@@ -237,6 +238,19 @@ def _no_evidence_reply(state: AgentState) -> str:
     return NO_EVIDENCE_REPLY
 
 
+def _knowledge_messages(question: str, result: BuildingDocsResult) -> list[dict[str, str]]:
+    # v2 format_context와 같은 근거 블록. 번호가 없으면 본문 속 '제목:'에 경계가 무너진다.
+    context = "\n\n".join(
+        f"[근거 {number}]\n제목: {item.citation.title}\n내용: {item.text}"
+        for number, item in enumerate(result.evidence, start=1)
+    )
+    system, user = KNOWLEDGE_PROMPT.format_messages(question=question, context=context)
+    return [
+        {"role": "system", "content": str(system.content)},
+        {"role": "user", "content": str(user.content)},
+    ]
+
+
 def _agent_result(state: AgentState, reply: str) -> dict[str, object]:
     complaint = state.get("complaint_result")
     if (
@@ -321,7 +335,11 @@ def _run_agent(state: AgentState) -> dict[str, object]:
         # 민원 reply가 곧 최종 답변이다(_run_tool에서 이미 조립). 버릴 Composer 호출을 하지 않는다.
         return {"agent_messages": messages, "protocol_retry_pending": False}
     call_messages = messages
-    if not tools and searched and not tool_failed:
+    # 건물 문서만 근거면 v2 knowledge 답변 계약을 그대로 쓴다. 걸린 문서에 답이 없으면 no_evidence로 QA 카드에 넘긴다.
+    building_only = [result for _query, result in searched] == [building]
+    if not tools and building_only and not tool_failed:
+        call_messages = _knowledge_messages(state.get("search_query") or "", building)
+    elif not tools and searched and not tool_failed:
         # Composer에는 검색 질문과 결과만 준다. 민원 답변은 _agent_result가 붙이며, 대화·민원 맥락을
         # 보면 8B 모델이 초안·재질문을 반복하거나 없는 정보를 제안한다. query는 Action이 맥락을 푼 질문이다.
         call_messages = [
@@ -334,6 +352,7 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                 ),
             },
         ]
+    if call_messages is not messages:
         text = (state["request"].message.text or "").strip()
         if text and not _HANGUL.search(text):
             # query는 한국어로 바뀌어 있을 수 있어, 한국어가 아닌 질문만 원문을 언어 기준으로 준다.
@@ -375,6 +394,15 @@ def _run_agent(state: AgentState) -> dict[str, object]:
         if tool_text or tools:
             reason = "tool_call_as_text" if tool_text else "planned_tool_skipped"
             return _protocol_failure(state, messages, reason)
+        if building_only and (decision.content or "").strip() == NO_EVIDENCE:
+            # v2 model_declined: 걸린 문서가 답이 아니면 근거 없음과 같다. 출처를 버리고 QA 카드로 넘긴다.
+            declined = {**state, "search_result": BuildingDocsResult(status="no_results")}
+            return {
+                "agent_messages": messages,
+                "protocol_retry_pending": False,
+                "search_result": declined["search_result"],
+                **_agent_result(declined, _no_evidence_reply(declined)),
+            }
         return {
             "agent_messages": messages,
             "protocol_retry_pending": False,
