@@ -15,6 +15,21 @@ def test_drops_repeated_line_seen_on_three_pages() -> None:
     assert [page["text"] for page in result.pages] == ["본문 1", "본문 2", "본문 3"]
 
 
+def test_keeps_a_table_header_repeated_on_three_pages() -> None:
+    header = "| 항목 | 요금 |\n| --- | --- |"
+    pages = [
+        {"page": page, "text": f"{header}\n| 행{page} | {page} |"}
+        for page in (1, 2, 3)
+    ]
+
+    result = clean_pages(pages)
+
+    for page, source in zip(result.pages, pages):
+        assert "| 항목 | 요금 |" in page["text"]
+        assert "| --- | --- |" in page["text"]
+        assert f"| 행{source['page']} |" in page["text"]
+
+
 def test_keeps_repeated_line_seen_on_two_pages() -> None:
     pages = [
         {"page": 1, "text": "건물 관리규정\n본문 1"},

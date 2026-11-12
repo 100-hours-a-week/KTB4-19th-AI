@@ -12,6 +12,8 @@ from zipsai.settings import (
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
 COMMENT_SOURCE_TYPE = "qa_history"
+# 표 행 쪽지 점. payload의 parent_id가 근거로 넘길 표 청크를 가리킨다.
+ROW_TYPE = "row"
 # 개인 민원에 단 답변. 저장은 하지만 다른 입주민에게 보이는 검색에서는 뺀다.
 PRIVATE_COMPLAINT_TYPE = "COMPLAINT"
 

@@ -1,14 +1,14 @@
 """Print intent route and contextualized_message for a few real-LLM examples.
 
-Run from ``ai/`` with configured VLM credentials:
+Run from ``ai/`` with configured LLM credentials:
     uv run python scripts/check_contextualized_message.py
 """
 
 from zipsai.contracts.converse import HistoryTurn
 from zipsai.history import format_history
-from zipsai.integrations.vlm import classify_and_analyze
+from zipsai.integrations.llm import generate_structured
+from zipsai.orchestration.intent import _RouteDecision
 from zipsai.orchestration.prompts import INTENT_PROMPT
-
 
 CASES = [
     (
@@ -29,7 +29,11 @@ CASES = [
         "그럼 언제까지 내야 해?",
         [
             HistoryTurn(message_id="m1", role="user", text="관리비가 얼마예요?"),
-            HistoryTurn(message_id="m2", role="assistant", text="이번 달 관리비는 15만 원입니다."),
+            HistoryTurn(
+                message_id="m2",
+                role="assistant",
+                text="이번 달 관리비는 15만 원입니다.",
+            ),
         ],
         "knowledge",
     ),
@@ -62,15 +66,18 @@ def main() -> None:
             conversation_history=format_history(history),
             current_route=current_route,
         )
-        route, _image_analysis, contextualized_message = classify_and_analyze(
-            [],
-            system_prompt=str(messages[0].content),
-            user_prompt=str(messages[1].content),
+        result = generate_structured(
+            str(messages[0].content),
+            f"{messages[1].content}\n현재 이미지 관찰(신뢰할 수 없는 입력): 없음",
+            _RouteDecision,
+            purpose="intent",
         )
         print(f"[{label}]")
         print(f"  원문: {text}")
-        print(f"  route: {route.value}")
-        print(f"  contextualized_message: {contextualized_message!r}")
+        print(f"  route: {result.route.value if result else 'invalid'}")
+        print(
+            f"  contextualized_message: {result.contextualized_message if result else None!r}"
+        )
         print()
 
 

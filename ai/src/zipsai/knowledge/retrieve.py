@@ -9,6 +9,7 @@ from zipsai.indexing.embed import Encoder
 from zipsai.integrations.embedding_client import HttpEncoder
 from zipsai.integrations.qdrant import (
     DENSE_VECTOR,
+    ROW_TYPE,
     SPARSE_VECTOR,
     resident_visible_filter,
     to_sparse_vector,
@@ -60,6 +61,40 @@ def _query(client: QdrantClient, **kwargs: object) -> models.QueryResponse:
         return client.query_points(**kwargs)
     except ApiException as error:
         raise VectorStoreError(f"Vector store query failed: {error}") from error
+
+
+def _fold_rows(
+    client: QdrantClient, collection: str, hits: list[models.ScoredPoint]
+) -> list[models.ScoredPoint]:
+    """행 쪽지 히트를 부모 표 청크로 바꾸고 같은 청크는 첫 순위 하나만 남긴다."""
+    parent_ids = {
+        str(hit.payload["parent_id"])
+        for hit in hits
+        if (hit.payload or {}).get("type") == ROW_TYPE
+    }
+    if not parent_ids:
+        return hits
+    try:
+        found = client.retrieve(collection, ids=sorted(parent_ids), with_payload=True)
+    except ApiException as error:
+        raise VectorStoreError(f"Vector store retrieve failed: {error}") from error
+    parents = {str(point.id): point for point in found}
+
+    folded: list[models.ScoredPoint] = []
+    seen: set[str] = set()
+    for hit in hits:
+        node = hit
+        if (hit.payload or {}).get("type") == ROW_TYPE:
+            parent = parents.get(str(hit.payload["parent_id"]))
+            if parent is None:
+                continue  # 재색인 중 부모만 먼저 지워진 쪽지
+            node = models.ScoredPoint(
+                id=parent.id, version=hit.version, score=hit.score, payload=parent.payload
+            )
+        if str(node.id) not in seen:
+            seen.add(str(node.id))
+            folded.append(node)
+    return folded
 
 
 def search_chunks(
@@ -132,4 +167,4 @@ def search_chunks(
         step["building_filter_applied"] = True
         step["invalid_doc_hits"] = None
 
-    return hits
+    return _fold_rows(client, collection, hits)

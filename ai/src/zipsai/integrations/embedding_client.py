@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Literal
 
@@ -14,7 +15,33 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 120.0
 # embedding 서비스의 MAX_BATCH_SIZE(상한)보다 작으면 되므로 낮추는 건 그쪽 변경이
 # 필요 없다. 올릴 때는 embedding/src/embedding/api/embed.py도 같이 올린다.
-BATCH_SIZE = 2
+_CLIENT_BATCH_DEFAULT = 2
+_CLIENT_BATCH_MIN = 1
+_CLIENT_BATCH_MAX = 32
+
+
+def client_batch_size() -> int:
+    """한 HTTP 요청에 넣는 텍스트 수. 비어 있으면 2. 1~32가 아니면 기동 때 실패한다."""
+    raw = os.getenv("EMBEDDING_CLIENT_BATCH_SIZE")
+    if raw is None or raw.strip() == "":
+        return _CLIENT_BATCH_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            "EMBEDDING_CLIENT_BATCH_SIZE는 1 이상 32 이하의 정수여야 합니다. "
+            f"받은 값: {raw!r}"
+        ) from exc
+    if value < _CLIENT_BATCH_MIN or value > _CLIENT_BATCH_MAX:
+        raise RuntimeError(
+            "EMBEDDING_CLIENT_BATCH_SIZE는 1 이상 32 이하의 정수여야 합니다. "
+            f"받은 값: {value}"
+        )
+    return value
+
+
+# 프로세스가 뜰 때 한 번 읽어 잘못된 값이면 import 단계에서 죽는다.
+BATCH_SIZE = client_batch_size()
 # embedding/src/embedding/api/embed.py의 MAX_TEXT_CHARS와 같은 값이다.
 MAX_TEXT_CHARS = 8000
 # 일시 장애만 한 번 더 시도한다. embedding 컨테이너 재시작이 주 대상이라
@@ -62,9 +89,10 @@ class HttpEncoder:
     def encode(self, texts: list[str], trace_id: str) -> EncodeOutput:
         dense: list[list[float]] = []
         sparse: list[dict[str, float]] = []
-        for start in range(0, len(texts), BATCH_SIZE):
+        batch_size = client_batch_size()
+        for start in range(0, len(texts), batch_size):
             batch_dense, batch_sparse = self._encode_batch(
-                texts[start : start + BATCH_SIZE], trace_id
+                texts[start : start + batch_size], trace_id
             )
             dense.extend(batch_dense)
             sparse.extend(batch_sparse)

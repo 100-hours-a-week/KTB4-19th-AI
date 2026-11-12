@@ -2,15 +2,15 @@ import asyncio
 import json
 import logging
 import threading
+from collections.abc import Iterator
 
 import pytest
 
 from zipsai.api import indexing
 from zipsai.api.indexing import JobOutcome
 from zipsai.contracts.indexing import IndexingJobRequest, JobStatus
-from zipsai.indexing import admission
-from zipsai.indexing.admission import acquire, release
 from zipsai.indexing.admission import reset as reset_admission
+from zipsai.indexing.registry import reset_registry
 from zipsai.main import app
 from zipsai.metrics import INDEXING_RESULTS
 from zipsai.observability import _ContextFilter
@@ -20,16 +20,19 @@ REAL_RUN_JOB = indexing._run_job
 
 
 @pytest.fixture(autouse=True)
-def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> list[IndexingJobRequest]:
+def scheduled_jobs(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[IndexingJobRequest]]:
     # 배경 작업이 실제 S3·Embedding에 붙지 않게 막고 예약 여부만 기록한다.
     reset_admission()
+    reset_registry()
     runs: list[IndexingJobRequest] = []
+
     def fake(payload: IndexingJobRequest, _job_id: str) -> JobOutcome:
         runs.append(payload)
         return JobOutcome(results=[])
 
     monkeypatch.setattr(indexing, "_run_job", fake)
-    return runs
+    yield runs
+    reset_registry()
 
 
 def post(path: str, payload: dict | None = None) -> tuple[int, bytes]:
@@ -513,7 +516,12 @@ def test_same_doc_id_returns_429_until_the_job_finishes(
 
     assert status_code == 429
     assert post.headers["retry-after"] == "30"
-    assert json.loads(body) == {"trace_id": "trace-001", "error_code": "IN_PROGRESS"}
+    parsed = json.loads(body)
+    assert parsed["trace_id"] == "trace-001"
+    assert parsed["error_code"] == "IN_PROGRESS"
+    assert parsed["status"] == "IN_PROGRESS"
+    assert parsed["doc_id"] == "notice-001"
+    assert parsed["progress"] == {"done": 0, "total": 0}
     rejected = next(
         record
         for record in caplog.records
@@ -529,7 +537,9 @@ def test_same_doc_id_returns_429_until_the_job_finishes(
     assert rejected.doc_id == "notice-001"
     assert rejected.building_id == 101
     assert rejected.items is None
-    assert rejected.indexing_in_flight == 1
+    assert rejected.status == "IN_PROGRESS"
+    assert rejected.progress == {"done": 0, "total": 0}
+    assert rejected.queue_len == 0
     assert rejected.retry_after_s == 30
     let_go.set()
     holder.join(2)
@@ -579,10 +589,16 @@ def _indexing_lines(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]
 
 
 def test_in_progress_request_logs_only_indexing_rejected(
-    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
-    acquire("doc:notice-001")
+    started, let_go = _hold_job(monkeypatch)
+    holder = threading.Thread(
+        target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
+    )
+    holder.start()
+    assert started.wait(2)
+    caplog.clear()
     try:
         status_code, _body = post("/api/v3/ai/indexing/jobs", valid_payload())
 
@@ -591,17 +607,24 @@ def test_in_progress_request_logs_only_indexing_rejected(
         assert [record.getMessage() for record in lines] == ["indexing_rejected"]
         assert lines[0].job_id
         assert lines[0].error_code == "IN_PROGRESS"
+        assert lines[0].status == "IN_PROGRESS"
     finally:
-        release("doc:notice-001")
+        let_go.set()
+        holder.join(2)
 
 
 def test_busy_request_logs_only_indexing_rejected(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
-    monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
-    reset_admission()
-    acquire("doc:held")
+    started, let_go = _hold_job(monkeypatch)
+    holder = threading.Thread(
+        target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
+    )
+    holder.start()
+    assert started.wait(2)
+    monkeypatch.setattr("zipsai.settings.INDEXING_QUEUE_LIMIT", 0)
+    caplog.clear()
     try:
         status_code, _body = post(
             "/api/v3/ai/indexing/jobs",
@@ -612,9 +635,11 @@ def test_busy_request_logs_only_indexing_rejected(
         lines = _indexing_lines(caplog)
         assert [record.getMessage() for record in lines] == ["indexing_rejected"]
         assert lines[0].job_id
-        assert lines[0].error_code == "BUSY"
+        assert lines[0].error_code == "QUEUE_FULL"
+        assert lines[0].status == "QUEUE_FULL"
     finally:
-        release("doc:held")
+        let_go.set()
+        holder.join(2)
 
 
 def test_success_logs_job_accepted_with_job_done(
@@ -645,37 +670,36 @@ def test_over_capacity_returns_503(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="zipsai.api.indexing")
-    monkeypatch.setattr(admission, "INDEXING_MAX_CONCURRENCY", 1)
-    reset_admission()
     started, let_go = _hold_job(monkeypatch)
     holder = threading.Thread(
         target=lambda: post("/api/v3/ai/indexing/jobs", valid_payload())
     )
     holder.start()
     assert started.wait(2)
-    assert admission.in_flight() == 1
+    monkeypatch.setattr("zipsai.settings.INDEXING_QUEUE_LIMIT", 0)
 
     other = valid_payload() | {"doc_id": "notice-002", "trace_id": "trace-002"}
     status_code, body = post("/api/v3/ai/indexing/jobs", other)
 
     assert status_code == 503
     assert post.headers["retry-after"] == "10"
-    assert json.loads(body) == {"trace_id": "trace-002", "error_code": "BUSY"}
-    assert admission.in_flight() == 1
+    parsed = json.loads(body)
+    assert parsed["trace_id"] == "trace-002"
+    assert parsed["error_code"] == "QUEUE_FULL"
+    assert parsed["status"] == "QUEUE_FULL"
+    assert parsed["doc_id"] == "notice-002"
     rejected = next(
         record
         for record in caplog.records
         if record.getMessage() == "indexing_rejected"
     )
-    assert rejected.error_code == "BUSY"
+    assert rejected.error_code == "QUEUE_FULL"
     assert rejected.job_id
     assert not any(
         record.getMessage() == "job_accepted" and record.job_id == rejected.job_id
         for record in caplog.records
     )
     assert rejected.doc_id == "notice-002"
-    assert rejected.indexing_in_flight == 1
     assert rejected.retry_after_s == 10
     let_go.set()
     holder.join(2)
-    assert admission.in_flight() == 0

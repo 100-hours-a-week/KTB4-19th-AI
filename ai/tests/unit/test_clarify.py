@@ -59,7 +59,7 @@ def test_handle_clarify_returns_fixed_question_for_first_clarify():
 def test_handle_clarify_keeps_the_complaint_draft_it_was_given():
     # 수집 중에 경로가 바뀌어도 초안을 돌려줘야 한다. 빼면 백엔드가 받는
     # complaint_draft가 null이 되어 모아둔 값이 사라진다.
-    draft = {"issue_type": "leak", "location": "화장실", "symptom": "물이 새요"}
+    draft = {"issue_type": "plumbing", "location": "화장실", "symptom": "물이 새요"}
 
     result = handle_clarify(_make_state(complaint_draft=draft))
 

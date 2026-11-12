@@ -69,6 +69,24 @@ def test_health_reports_unavailable_while_the_model_loads(
     assert client.get("/health").status_code == 503
 
 
+def test_liveness_is_ok_while_the_model_loads(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    encoder.ready = False
+
+    assert client.get("/liveness").status_code == 200
+
+
+def test_readiness_tracks_model_and_worker_state(
+    client: TestClient, encoder: FakeEncoder
+) -> None:
+    assert client.get("/readiness").status_code == 200
+
+    encoder.ready = False
+
+    assert client.get("/readiness").status_code == 503
+
+
 def test_embed_returns_dense_and_sparse_for_every_text(
     client: TestClient, encoder: FakeEncoder
 ) -> None:

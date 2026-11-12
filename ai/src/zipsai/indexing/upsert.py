@@ -8,6 +8,7 @@ from zipsai.indexing.embed import EmbeddedChunk
 from zipsai.integrations.qdrant import (
     COMMENT_SOURCE_TYPE,
     DENSE_VECTOR,
+    ROW_TYPE,
     SPARSE_VECTOR,
     building_condition,
     to_sparse_vector,
@@ -36,10 +37,12 @@ def upsert_document(
         # 지우기만 하고 넣지 않으면 기존 문서가 조용히 사라진다.
         raise EmptyDocumentError(f"No chunks to store for document '{request.doc_id}'")
 
+    # 쪽지의 부모 id를 알려면 id를 먼저 정해 둔다.
+    ids = [str(uuid4()) for _ in chunks]
     # 포인트를 먼저 만든다. sparse 변환이 실패해도 기존 벡터는 남는다.
     points = [
         models.PointStruct(
-            id=str(uuid4()),
+            id=point_id,
             vector={
                 DENSE_VECTOR: chunk.dense,
                 SPARSE_VECTOR: to_sparse_vector(chunk.sparse),
@@ -52,9 +55,14 @@ def upsert_document(
                 "page": chunk.page,
                 "section": chunk.section,
                 "text": chunk.text,
+                **(
+                    {"type": ROW_TYPE, "parent_id": ids[chunk.parent]}
+                    if chunk.parent is not None
+                    else {}
+                ),
             },
         )
-        for chunk in chunks
+        for point_id, chunk in zip(ids, chunks, strict=True)
     ]
 
     client.delete(

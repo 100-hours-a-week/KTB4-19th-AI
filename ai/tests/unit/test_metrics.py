@@ -17,6 +17,9 @@ _NAMES = (
     "zipsai_llm_call_duration_seconds",
     "zipsai_llm_ttft_seconds",
     "zipsai_llm_structured_output_failures_total",
+    "zipsai_tool_calls_total",
+    "zipsai_tool_duration_seconds",
+    "zipsai_tool_rejections_total",
     "zipsai_gate_decisions_total",
     "zipsai_fallbacks_total",
     "zipsai_complaint_ask_repeats_total",
@@ -56,3 +59,19 @@ def test_health_does_not_increment_the_request_counter() -> None:
     after = _requests_total(client.get("/metrics").text)
 
     assert after == before
+
+
+def test_public_web_tool_calls_keep_their_own_label() -> None:
+    from prometheus_client import REGISTRY
+
+    from zipsai.metrics import observe_tool_call
+
+    def count() -> float:
+        return REGISTRY.get_sample_value(
+            "zipsai_tool_calls_total", {"tool": "search_public_web", "outcome": "success"}
+        ) or 0.0
+
+    before = count()
+    observe_tool_call("search_public_web", "success", 0.1)
+
+    assert count() == before + 1

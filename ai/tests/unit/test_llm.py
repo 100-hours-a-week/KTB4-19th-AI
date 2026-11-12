@@ -7,6 +7,7 @@ import httpx
 import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 from prometheus_client import REGISTRY
+from pydantic import BaseModel
 
 from zipsai.errors import (
     LlmRateLimitedError,
@@ -89,6 +90,80 @@ def test_connection_error_maps_to_llm_unavailable(monkeypatch):
 
     with pytest.raises(LlmUnavailableError):
         llm_module.generate_text("system", "user")
+
+
+def test_pod_502_retries_text_once_on_openrouter(monkeypatch, caplog):
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30, provider="pod")
+    backup = Settings(
+        "router-key", "https://router.example/v1", "router-model", 30,
+        provider="openrouter",
+    )
+    calls = []
+    failed_urls = []
+
+    def create_client(key, *_args):
+        def create(**kwargs):
+            calls.append((key, kwargs["model"]))
+            if key == "pod-key":
+                raise APIStatusError("bad gateway", response=_response(502), body=None)
+            return _success_response("ok")
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(llm_module, "get_settings", lambda provider=None: backup if provider else pod)
+    monkeypatch.setattr(llm_module, "_get_client", create_client)
+    monkeypatch.setattr(llm_module, "mark_pod_unavailable", failed_urls.append)
+
+    with caplog.at_level(logging.INFO, logger="zipsai.integrations.llm"):
+        assert llm_module.generate_text("system", "user") == "ok"
+
+    assert calls == [("pod-key", "pod-model"), ("router-key", "router-model")]
+    assert failed_urls == [pod.llm_base_url]
+    assert _llm_calls(caplog)[-1].provider == "openrouter"
+    assert _llm_calls(caplog)[-1].attempt == 2
+
+
+def test_pod_400_does_not_retry_on_openrouter(monkeypatch):
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30, provider="pod")
+    calls = []
+
+    def create_client(key, *_args):
+        calls.append(key)
+        return _FakeClient(APIStatusError("bad request", response=_response(400), body=None))
+
+    monkeypatch.setattr(llm_module, "get_settings", lambda provider=None: pod)
+    monkeypatch.setattr(llm_module, "_get_client", create_client)
+    with pytest.raises(LlmUnavailableError):
+        llm_module.generate_text("system", "user")
+    assert calls == ["pod-key"]
+
+
+def test_pod_connection_error_retries_structured_on_openrouter(monkeypatch):
+    class Answer(BaseModel):
+        value: str
+
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30, provider="pod")
+    backup = Settings("router-key", "https://router.example/v1", "router-model", 30, provider="openrouter")
+    calls = []
+
+    def client(key, *_args):
+        def parse(**kwargs):
+            calls.append((key, kwargs["model"]))
+            if key == "pod-key":
+                raise APIConnectionError(request=_request())
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(parsed=Answer(value="ok"), refusal=None))],
+                usage=None,
+            )
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=parse)))
+
+    monkeypatch.setattr(llm_module, "get_settings", lambda provider=None: backup if provider else pod)
+    monkeypatch.setattr(llm_module, "_get_client", client)
+    monkeypatch.setattr(llm_module, "mark_pod_unavailable", lambda *_: None)
+
+    assert llm_module.generate_structured("system", "user", Answer) == Answer(value="ok")
+    assert calls == [("pod-key", "pod-model"), ("router-key", "router-model")]
 
 
 def test_usage_sink_receives_token_counts(monkeypatch):
@@ -253,6 +328,70 @@ def test_generate_text_stream_yields_only_non_empty_text_chunks(monkeypatch):
     assert chunks == ["안녕", "하세요"]
     assert completions.kwargs is not None
     assert completions.kwargs["stream_options"] == {"include_usage": True}
+
+
+def test_stream_retries_on_openrouter_before_first_text(monkeypatch):
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30, provider="pod")
+    backup = Settings("router-key", "https://router.example/v1", "router-model", 30, provider="openrouter")
+    calls = []
+
+    def client(key, *_args):
+        async def create(**kwargs):
+            calls.append((key, kwargs["model"]))
+            if key == "pod-key":
+                raise APITimeoutError(_request())
+            return _AsyncStream([SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="backup"))],
+                usage=None,
+            )])
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(llm_module, "get_settings", lambda provider=None: backup if provider else pod)
+    monkeypatch.setattr(llm_module, "_get_async_client", client)
+    monkeypatch.setattr(llm_module, "mark_pod_unavailable", lambda *_: None)
+
+    async def collect():
+        return [part async for part in llm_module.generate_text_stream("system", "user")]
+
+    assert asyncio.run(collect()) == ["backup"]
+    assert calls == [("pod-key", "pod-model"), ("router-key", "router-model")]
+
+
+def test_stream_does_not_retry_after_partial_text(monkeypatch):
+    pod = Settings("pod-key", "https://pod.example/v1", "pod-model", 30, provider="pod")
+    calls = []
+    failed_urls = []
+
+    class BrokenStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not calls:
+                calls.append("first chunk")
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content="partial"))],
+                    usage=None,
+                )
+            raise APIStatusError("bad gateway", response=_response(502), body=None)
+
+    async def create(**_kwargs):
+        return BrokenStream()
+
+    monkeypatch.setattr(llm_module, "get_settings", lambda provider=None: pod)
+    monkeypatch.setattr(llm_module, "_get_async_client", lambda *_: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    ))
+    monkeypatch.setattr(llm_module, "mark_pod_unavailable", failed_urls.append)
+
+    async def collect():
+        return [part async for part in llm_module.generate_text_stream("system", "user")]
+
+    with pytest.raises(LlmUpstreamError):
+        asyncio.run(collect())
+    assert calls == ["first chunk"]
+    assert failed_urls == [pod.llm_base_url]
 
 
 def test_stream_reads_usage_from_the_trailing_chunk(monkeypatch, caplog):

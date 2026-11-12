@@ -1,0 +1,80 @@
+workload: embedding-service
+environment: prod
+component: embedding
+image:
+  repository: 929368845727.dkr.ecr.ap-northeast-2.amazonaws.com/zipsai-embedding
+  tag: '3d68e1e-gpu'
+command: []
+args:
+- --timeout-graceful-shutdown
+- '110'
+replicaCount: 1
+containerPort: 8000
+service:
+  enabled: true
+  port: 8000
+  annotations: {}
+env:
+  EMBEDDING_DEVICE: cuda
+  EMBEDDING_MODEL_ID: BAAI/bge-m3
+  LANGFUSE_TRACING_ENABLED: 'false'
+externalSecret:
+  enabled: false
+  forceSync: '1'
+  parameters: {}
+resources:
+  requests:
+    cpu: '2'
+    memory: 4Gi
+    nvidia.com/gpu: 1
+  limits:
+    cpu: '2'
+    memory: 4Gi
+    nvidia.com/gpu: 1
+nodeSelector:
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+  environment: prod
+  role: gpu
+tolerations:
+- key: role
+  operator: Equal
+  value: gpu
+  effect: NoSchedule
+spread:
+  enabled: false
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 70
+pdb:
+  enabled: false
+  minAvailable: 1
+rollingUpdate:
+  maxSurge: 0
+  maxUnavailable: 1
+terminationGracePeriodSeconds: 120
+preStopSeconds: 0
+probes:
+  startup:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  readiness:
+    httpGet:
+      path: /readiness
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    httpGet:
+      path: /liveness
+      port: http
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3

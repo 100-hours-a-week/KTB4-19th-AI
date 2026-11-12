@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ai-api
+description: ZipsAI V3 application workload
+type: application
+version: 0.1.0
+kubeVersion: '>=1.30.0-0'

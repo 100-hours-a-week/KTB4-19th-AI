@@ -12,15 +12,16 @@ from zipsai.errors import (
     ChunkTooLongError,
     EmbeddingRequestInvalidError,
     EmptyDocumentError,
+    JobCancelled,
     error_code,
 )
-from zipsai.indexing.chunk import chunk_pages
+from zipsai.indexing.chunk import chunk_pages, with_row_notes
 from zipsai.indexing.clean import apply_cleaning
-from zipsai.indexing.embed import Encoder, embed_chunks
+from zipsai.indexing.embed import Encoder, count_embed_texts, embed_chunks
 from zipsai.indexing.mask import apply_masking
 from zipsai.indexing.parse import parse_document
 from zipsai.indexing.upsert import upsert_document
-from zipsai.integrations.embedding_client import BATCH_SIZE, MAX_TEXT_CHARS
+from zipsai.integrations.embedding_client import MAX_TEXT_CHARS, client_batch_size
 from zipsai.metrics import observe_index_job, observe_tables
 from zipsai.observability import collect_timings, elapsed_ms, is_cold, stage
 
@@ -40,6 +41,45 @@ _STAGE_REASON = {
 }
 
 
+def _seconds(value: object) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 3)
+
+
+def _log_parse_stages(
+    request: IndexingJobRequest,
+    *,
+    file_type: str,
+    pages: object,
+    chars: int,
+    chunks: int,
+    chunk_s: float,
+    total_s: float,
+) -> None:
+    """색인 한 건의 파싱·청킹 시간을 한 줄로 남긴다. 본문은 넣지 않는다."""
+
+    logger.info(
+        "parse_stages",
+        extra={
+            "doc_id": request.doc_id,
+            "file_key": request.file_key,
+            "file_type": file_type,
+            "pages": len(pages),
+            "parser_route": getattr(pages, "parser_route", None),
+            "route_reason": getattr(pages, "route_reason", None),
+            "t_convert_s": _seconds(getattr(pages, "t_convert_s", None)),
+            "t_ocr_s": _seconds(getattr(pages, "t_ocr_s", None)),
+            "t_table_s": _seconds(getattr(pages, "t_table_s", None)),
+            "t_chunk_s": _seconds(chunk_s),
+            "t_total_s": _seconds(total_s),
+            "chars": chars,
+            "chunks": chunks,
+            "tables": getattr(pages, "tables_found", None),
+        },
+    )
+
+
 def run_indexing_job(
     request: IndexingJobRequest,
     *,
@@ -48,6 +88,8 @@ def run_indexing_job(
     client: QdrantClient,
     on_fail: Callable[[str], None] | None = None,
     on_stats: Callable[[int | None, int | None, int | None], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> JobStatus:
     doc_id = request.doc_id
     # 첫 작업은 docling이 OCR·레이아웃 모델을 올리느라 수십 초가 더 걸린다.
@@ -73,7 +115,8 @@ def run_indexing_job(
                     pages = parse_document(source)
                     page_count = len(pages)
                     step["pages"] = page_count
-                    step["chars"] = sum(len(str(page["text"])) for page in pages)
+                    char_count = sum(len(str(page["text"])) for page in pages)
+                    step["chars"] = char_count
                     step["empty_pages"] = getattr(pages, "empty_pages", None)
                     step["min_chars_per_page"] = getattr(pages, "min_chars_per_page", None)
                     step["tables_found"] = getattr(pages, "tables_found", None)
@@ -82,6 +125,9 @@ def run_indexing_job(
                     step["table_fail_reasons"] = getattr(pages, "table_fail_reasons", None)
                     step["images_found"] = getattr(pages, "images_found", None)
                     step["parser_status"] = getattr(pages, "parser_status", None)
+                    step["parser"] = getattr(pages, "parser", None)
+                    step["fallback_reason"] = getattr(pages, "fallback_reason", None)
+                    step["text_layer"] = getattr(pages, "text_layer", None)
                     step["ocr_used"] = getattr(pages, "ocr_used", None)
                     step["failed_pages"] = getattr(pages, "failed_pages", None)
                     observe_tables(
@@ -103,7 +149,7 @@ def run_indexing_job(
                     step["skip_reason"] = getattr(cleaning, "skip_reason", None)
 
                 with stage("chunk", logger) as step:
-                    chunks = chunk_pages(cleaning.pages)
+                    chunks = with_row_notes(chunk_pages(cleaning.pages))
                     lengths = [len(chunk.text) for chunk in chunks]
                     chunk_count = len(chunks)
                     step["chunks"] = chunk_count
@@ -112,13 +158,41 @@ def run_indexing_job(
                     step["over_limit"] = sum(
                         1 for length in lengths if length > MAX_TEXT_CHARS
                     )
+                _log_parse_stages(
+                    request,
+                    file_type=source.suffix.lstrip(".").lower(),
+                    pages=pages,
+                    chars=char_count,
+                    chunks=chunk_count or 0,
+                    chunk_s=timings.get("chunk", 0) / 1000,
+                    total_s=(timings.get("parse", 0) + timings.get("chunk", 0)) / 1000,
+                )
 
+                cancelled = False
                 with stage("embed", logger, cold=cold) as step:
                     step["texts"] = len(chunks)
-                    embed_batches = -(-len(chunks) // BATCH_SIZE) if chunks else 0
+                    text_count, unique_texts = count_embed_texts(chunks)
+                    step["unique_texts"] = unique_texts
+                    step["duplicate_texts"] = text_count - unique_texts
+                    embed_batches = (
+                        -(-len(chunks) // client_batch_size()) if chunks else 0
+                    )
                     step["batches"] = embed_batches
                     step["total_chars"] = sum(len(chunk.text) for chunk in chunks)
-                    embedded = embed_chunks(chunks, encoder, request.trace_id)
+                    try:
+                        embedded = embed_chunks(
+                            chunks,
+                            encoder,
+                            request.trace_id,
+                            should_cancel=should_cancel,
+                            on_progress=on_progress,
+                        )
+                    except JobCancelled:
+                        # 단계 로그는 실패로 남기지 않는다. 저장 전에 빠진다.
+                        cancelled = True
+                        embedded = []
+                if cancelled or (should_cancel is not None and should_cancel()):
+                    raise JobCancelled()
 
                 with stage("upsert", logger) as step:
                     stored = upsert_document(
@@ -126,6 +200,24 @@ def run_indexing_job(
                     )
                     point_count = stored
                     step["points"] = stored
+        except JobCancelled:
+            logger.info(
+                "index_done",
+                extra={
+                    "outcome": "cancelled",
+                    "total_ms": elapsed_ms(started),
+                    "failed_stage": None,
+                    "error_code": None,
+                    "error_type": None,
+                    "doc_bytes": doc_bytes,
+                    "pages": page_count,
+                    "chunks": chunk_count,
+                    "embed_batches": embed_batches,
+                    "stage_ms": dict(timings),
+                },
+            )
+            observe_index_job("cancelled", None)
+            raise
         except Exception as error:
             # 배경 실행이라 예외를 삼키면 아무 기록도 남지 않는다.
             # 스택은 단계 로그가 이미 남겼다. 여기서 또 실으면 같은 줄이 두 번 쌓인다.

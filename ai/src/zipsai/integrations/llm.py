@@ -1,13 +1,15 @@
 import asyncio
+import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlparse
 
 from openai import (
+    APIConnectionError,
     APIError,
     APIStatusError,
     APITimeoutError,
@@ -20,6 +22,7 @@ from openai import (
 from pydantic import BaseModel
 
 from zipsai.errors import (
+    LlmInvalidToolCallError,
     LlmRateLimitedError,
     LlmTimeoutError,
     LlmUnavailableError,
@@ -27,7 +30,7 @@ from zipsai.errors import (
 )
 from zipsai.metrics import observe_llm
 from zipsai.observability import current_stage, note_llm_cost, note_llm_tokens
-from zipsai.settings import call_cost_usd, get_settings
+from zipsai.settings import Settings, call_cost_usd, get_settings, mark_pod_unavailable
 from zipsai.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
@@ -197,6 +200,156 @@ def start_llm_call(
     )
 
 
+def _pod_failed(settings: Settings, error: APIError) -> bool:
+    if settings.provider != "pod" or not settings.llm_base_url or not (
+        isinstance(error, APIConnectionError)
+        or isinstance(error, APIStatusError) and error.status_code >= 500
+    ):
+        return False
+    mark_pod_unavailable(settings.llm_base_url)
+    logger.warning(
+        "pod_fallback_to_openrouter",
+        extra={
+            "status_code": getattr(error, "status_code", None),
+            "error_type": type(error).__name__,
+        },
+    )
+    return True
+
+
+def _call_with_fallback[T](
+    settings: Settings, request: Callable[[Settings], T]
+) -> tuple[T, Settings]:
+    try:
+        return request(settings), settings
+    except (APIConnectionError, APIStatusError) as error:
+        if not _pod_failed(settings, error):
+            raise
+        fallback = get_settings("openrouter")
+        return request(fallback), fallback
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ToolDecision:
+    message: object
+    content: str | None
+    tool_calls: tuple[ToolCall, ...]
+
+
+def generate_tool_decision(
+    messages: list[object],
+    tools: list[dict[str, object]],
+    *,
+    usage_sink: dict[str, object] | None = None,
+    purpose: str | None = None,
+) -> ToolDecision:
+    """도구 선택을 요청한다. 반환한 message를 도구 결과와 함께 다음 호출에 넣는다."""
+    settings = get_settings()
+    call = start_llm_call(
+        purpose=purpose,
+        model=settings.llm_model,
+        provider=settings.provider,
+        base_url=settings.llm_base_url,
+        streaming=False,
+        structured=False,
+    )
+    outcome = "fail"
+    status_code: int | None = None
+    err_code: str | None = None
+    finish_reason: str | None = None
+    output_text: str | None = None
+    try:
+        def request(selected: Settings):
+            request_args: dict[str, object] = {
+                "model": selected.llm_model,
+                "messages": messages,
+                **({"tools": tools} if tools else {}),
+                **({"tool_choice": "required", "parallel_tool_calls": False} if tools else {}),
+                **({"name": "generate-tool-decision"} if get_tracing_client() else {}),
+            }
+            return _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            ).chat.completions.create(**request_args)
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
+        call.usage = response.usage
+        _record_usage(usage_sink, response.usage)
+        if not response.choices:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an empty response")
+        choice = response.choices[0]
+        message = choice.message
+        finish_reason = _reason(getattr(choice, "finish_reason", None))
+        if finish_reason in {"length", "content_filter"}:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an incomplete response")
+        parsed = []
+        for item in message.tool_calls or []:
+            try:
+                arguments = json.loads(item.function.arguments)
+                if (
+                    item.type != "function"
+                    or not isinstance(arguments, dict)
+                    or not item.id
+                    or not item.function.name
+                ):
+                    raise ValueError("invalid tool call")
+            except (ValueError, TypeError, AttributeError) as error:
+                err_code = "DEPENDENCY_NOT_READY"
+                raise LlmInvalidToolCallError("LLM returned invalid tool arguments") from error
+            parsed.append(ToolCall(item.id, item.function.name, arguments))
+        if not message.content and not parsed:
+            err_code = "DEPENDENCY_NOT_READY"
+            raise LlmUnavailableError("LLM returned an empty response")
+        output_text = message.content
+        outcome, status_code = "ok", 200
+        return ToolDecision(message, message.content, tuple(parsed))
+    except RateLimitError as error:
+        outcome, status_code, err_code = "fail", 429, "MODEL_RATE_LIMITED"
+        raise LlmRateLimitedError(
+            "LLM rate limit exceeded", retry_after_seconds=_retry_after(error)
+        ) from error
+    except APITimeoutError as error:
+        outcome, status_code, err_code = "fail", None, "MODEL_TIMEOUT"
+        raise LlmTimeoutError("LLM request timed out") from error
+    except APIStatusError as error:
+        status_code = error.status_code
+        err_code = "MODEL_UPSTREAM_ERROR" if error.status_code >= 500 else "DEPENDENCY_NOT_READY"
+        if error.status_code >= 500:
+            raise LlmUpstreamError("LLM provider returned an upstream error") from error
+        raise LlmUnavailableError("LLM request failed") from error
+    except APIError as error:
+        err_code = "DEPENDENCY_NOT_READY"
+        raise LlmUnavailableError("LLM request failed") from error
+    except Exception as error:
+        if err_code is None:
+            err_code = type(error).__name__
+        raise
+    finally:
+        call.finish(
+            outcome=outcome,
+            status_code=status_code,
+            error_code=err_code,
+            finish_reason=finish_reason,
+            output_text=output_text,
+        )
+
+
 def generate_text(
     system_prompt: str,
     user_prompt: str,
@@ -226,25 +379,36 @@ def generate_text(
     structured_ok: bool | None = True if response_format else None
     output_text: str | None = None
     try:
-        client = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        )
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            **({"name": "generate-text"} if get_tracing_client() else {}),
-            **(
-                {
-                    "response_format": response_format,
-                    "extra_body": _REQUIRE_STRUCTURED_OUTPUTS,
-                }
-                if response_format
-                else {}
-            ),
-        )
+        def request(selected: Settings):
+            client = _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            )
+            return client.chat.completions.create(
+                model=selected.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                **({"name": "generate-text"} if get_tracing_client() else {}),
+                **(
+                    {
+                        "response_format": response_format,
+                        "extra_body": _REQUIRE_STRUCTURED_OUTPUTS,
+                    }
+                    if response_format
+                    else {}
+                ),
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
         call.usage = response.usage
         _record_usage(usage_sink, response.usage)
         content = response.choices[0].message.content if response.choices else None
@@ -316,32 +480,49 @@ async def generate_text_stream(
     err_code: str | None = None
     parts: list[str] = []
     try:
-        client = _get_async_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        )
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        async for chunk in stream:
-            usage = getattr(chunk, "usage", None)
-            if usage is not None:
-                call.usage = usage
-                _record_usage(usage_sink, usage)
-            if not chunk.choices:
-                continue
-            text = chunk.choices[0].delta.content
-            if text:
-                call.mark_ttft()
-                parts.append(text)
-                yield text
-        outcome = "ok"
-        status_code = 200
+        selected = settings
+        while True:
+            try:
+                client = _get_async_client(
+                    selected.llm_api_key,
+                    selected.llm_base_url,
+                    selected.llm_timeout_seconds,
+                )
+                stream = await client.chat.completions.create(
+                    model=selected.llm_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                async for chunk in stream:
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        call.usage = usage
+                        _record_usage(usage_sink, usage)
+                    if not chunk.choices:
+                        continue
+                    text = chunk.choices[0].delta.content
+                    if text:
+                        call.mark_ttft()
+                        parts.append(text)
+                        yield text
+                outcome = "ok"
+                status_code = 200
+                break
+            except (APIConnectionError, APIStatusError) as error:
+                if _pod_failed(selected, error) and not parts:
+                    selected = get_settings("openrouter")
+                    call.provider = selected.provider
+                    call.model = selected.llm_model
+                    call.base_url = selected.llm_base_url
+                    call.attempt += 1
+                    call.retry_reason = "pod_unavailable"
+                    call.usage = None
+                    continue
+                raise
     except (asyncio.CancelledError, GeneratorExit):
         outcome = "cancelled"
         status_code = None
@@ -390,7 +571,7 @@ def generate_structured[T: BaseModel](
     attempt: int = 1,
     retry_reason: str | None = None,
 ) -> T | None:
-    settings = get_settings("openrouter" if purpose == "urgency" else None)
+    settings = get_settings()
     chosen = model if model is not None else settings.llm_model
     call = start_llm_call(
         purpose=purpose,
@@ -408,17 +589,28 @@ def generate_structured[T: BaseModel](
     finish_reason: str | None = None
     structured_ok: bool | None = True
     try:
-        response = _get_client(
-            settings.llm_api_key, settings.llm_base_url, settings.llm_timeout_seconds
-        ).chat.completions.parse(
-            model=chosen,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=response_format,
-            extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
-        )
+        def request(selected: Settings):
+            return _get_client(
+                selected.llm_api_key,
+                selected.llm_base_url,
+                selected.llm_timeout_seconds,
+            ).chat.completions.parse(
+                model=model if model is not None else selected.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format=response_format,
+                extra_body=_REQUIRE_STRUCTURED_OUTPUTS,
+            )
+
+        response, used = _call_with_fallback(settings, request)
+        if used is not settings:
+            call.provider = used.provider
+            call.model = model if model is not None else used.llm_model
+            call.base_url = used.llm_base_url
+            call.attempt += 1
+            call.retry_reason = "pod_unavailable"
         call.usage = response.usage
         _record_usage(usage_sink, response.usage)
         if not response.choices:

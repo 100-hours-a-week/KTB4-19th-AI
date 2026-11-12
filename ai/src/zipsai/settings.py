@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final
@@ -7,6 +8,7 @@ from typing import Final
 from dotenv import load_dotenv
 
 from zipsai.errors import LlmUnavailableError
+from zipsai.integrations.runpod import get_locator
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,27 @@ EMBEDDING_API_URL: Final = os.getenv("EMBEDDING_API_URL", "http://embedding:8000
 AWS_REGION: Final = os.getenv("AWS_REGION", "ap-northeast-2")
 # 인증을 켜지 않은 Qdrant에는 키가 없다. 필수로 두면 로컬과 테스트가 기동하지 못한다.
 QDRANT_API_KEY: Final = os.getenv("QDRANT_API_KEY")
+# 검색 기능은 선택 사항이라 키가 없어도 서버 기동은 허용한다.
+TAVILY_API_KEY: Final = os.getenv("TAVILY_API_KEY")
+TAVILY_TIMEOUT_SECONDS: Final = float(os.getenv("TAVILY_TIMEOUT_SECONDS", "8"))
 # 마스킹 뒤 답변이 10자보다 짧으면 "처리 완료"같은 의미 없는 답으로 보고 색인하지 않는다.
 COMMENT_MIN_CHARS: Final = int(os.getenv("COMMENT_MIN_CHARS", "10"))
-# 문서 색인과 답변 반영·삭제가 함께 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.
+# 답변 반영·삭제가 쓰는 동시 처리 수. 넘치면 기다리지 않고 503이다.
+# 문서 색인은 이 값을 쓰지 않고 작업 스레드 하나와 대기열로 받는다.
 INDEXING_MAX_CONCURRENCY: Final = int(os.getenv("INDEXING_MAX_CONCURRENCY", "2"))
+# 색인 사진의 VLM 호출만 제한한다. 채팅 타임아웃(LLM_TIMEOUT_SECONDS)과 따로 둔다.
+INDEX_VLM_CONCURRENCY: Final = int(os.getenv("INDEX_VLM_CONCURRENCY", "1"))
+INDEX_VLM_TIMEOUT_SECONDS: Final = float(os.getenv("INDEX_VLM_TIMEOUT_SECONDS", "300"))
+INDEXING_QUEUE_LIMIT: Final = int(os.getenv("INDEXING_QUEUE_LIMIT", "5"))
+INDEXING_FIRST_WAIT_SECONDS: Final = float(
+    os.getenv("INDEXING_FIRST_WAIT_SECONDS", "30")
+)
+INDEXING_RETRY_AFTER_SECONDS: Final = int(
+    os.getenv("INDEXING_RETRY_AFTER_SECONDS", "30")
+)
+INDEXING_RECORD_TTL_SECONDS: Final = float(
+    os.getenv("INDEXING_RECORD_TTL_SECONDS", "3600")
+)
 # 접수카드에서 위치를 모를 때 채우는 문구는 "미상"으로 되어있다. "미상"은 그대로 들어가지 않고 위치 없음(null)과 같게 다룬다.
 LOCATION_PLACEHOLDER: Final = "미상"
 # /converse 한 턴 전체 상한. 개별 LLM 호출(LLM_TIMEOUT_SECONDS)이 여러 번
@@ -47,9 +66,13 @@ LOCATION_PLACEHOLDER: Final = "미상"
 # 작업 자체를 강제 종료하진 않는다(Python은 실행 중 스레드를 취소할 수 없음).
 CONVERSE_TIMEOUT_SECONDS: Final = float(os.getenv("CONVERSE_TIMEOUT_SECONDS", "115"))
 
-# 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 이 값을 바꿔 배포한다.
-ACTIVE_MODEL_PROVIDER: Final = "openrouter"
+# 운영 환경변수는 모든 provider 값을 보관하고, provider 전환은 배포 환경에서 선택한다.
+ACTIVE_MODEL_PROVIDER: Final = os.getenv("ACTIVE_MODEL_PROVIDER", "serverless")
 LLM_JUDGE_MODEL: Final = os.getenv("LLM_JUDGE_MODEL") or None
+
+_POD_FAILOVER_SECONDS: Final = 30.0
+_pod_failed_url: str | None = None
+_pod_failed_until = 0.0
 
 # 평가 전용. 채점 사진은 공개 URL이 없어 data URL로 넣는다. 운영 compose는
 # 이 값을 절대 설정하지 않는다 — 켜지면 /converse가 임의 크기의 base64 사진을
@@ -115,8 +138,28 @@ def call_cost_usd(
     return incoming / 1_000_000 * in_price + outgoing / 1_000_000 * out_price
 
 
-@lru_cache
 def get_settings(provider_override: str | None = None) -> Settings:
+    provider = provider_override or ACTIVE_MODEL_PROVIDER
+    manual_url = os.getenv("POD_BASE_URL") if provider == "pod" else None
+    locator = get_locator() if provider == "pod" and not manual_url else None
+    discovered_url = locator.base_url if locator else None
+    if provider == "pod" and provider_override is None:
+        pod_url = manual_url or discovered_url
+        if not pod_url or (
+            pod_url == _pod_failed_url and time.monotonic() < _pod_failed_until
+        ):
+            return _settings_for("openrouter", None)
+    return _settings_for(provider, discovered_url)
+
+
+def mark_pod_unavailable(base_url: str | None) -> None:
+    global _pod_failed_url, _pod_failed_until
+    _pod_failed_url = base_url
+    _pod_failed_until = time.monotonic() + _POD_FAILOVER_SECONDS
+
+
+@lru_cache
+def _settings_for(provider: str, discovered_base_url: str | None) -> Settings:
     profiles = {
         "openrouter": (
             os.getenv("OPENROUTER_API_KEY"),
@@ -136,14 +179,13 @@ def get_settings(provider_override: str | None = None) -> Settings:
         ),
         "pod": (
             os.getenv("POD_API_KEY"),
-            os.getenv("POD_BASE_URL"),
+            os.getenv("POD_BASE_URL") or discovered_base_url,
             os.getenv("POD_MODEL"),
             os.getenv("POD_MODEL"),
             "POD_MODEL",
             "POD_MODEL",
         ),
     }
-    provider = provider_override or ACTIVE_MODEL_PROVIDER
     if provider not in profiles:
         raise LlmUnavailableError(
             "ACTIVE_MODEL_PROVIDER must be openrouter, serverless, or pod"
@@ -175,3 +217,6 @@ def get_settings(provider_override: str | None = None) -> Settings:
         vlm_price_input_per_1m=_optional_price("VLM_PRICE_INPUT_PER_1M"),
         vlm_price_output_per_1m=_optional_price("VLM_PRICE_OUTPUT_PER_1M"),
     )
+
+
+get_settings.cache_clear = _settings_for.cache_clear

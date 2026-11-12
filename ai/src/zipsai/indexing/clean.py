@@ -26,8 +26,10 @@ class CleaningResult:
 
 def _is_protected(line: str) -> bool:
     stripped = line.strip()
+    # 표 머리행은 쪽마다 같다. 여기서 지우면 청크가 머리행을 되살릴 수 없다.
     return bool(
-        _ARTICLE_RE.match(stripped)
+        stripped.startswith("|")
+        or _ARTICLE_RE.match(stripped)
         or _MARKDOWN_RE.match(stripped)
         or _ITEM_RE.match(stripped)
         or _UNCHANGED_RE.fullmatch(stripped)

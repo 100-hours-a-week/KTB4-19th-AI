@@ -11,12 +11,17 @@ dependencies = [
     "boto3",
     "docling",
     "dotenv>=0.9.9",
+    "easyocr==1.7.2",
     "fastapi>=0.141.1",
     "httpx>=0.28",
     "langfuse==4.15.6",
     "langgraph>=1.2.11",
+    "modal>=1.6.2",
     "openai>=3.14.0",
+    "paddleocr==3.7.0 ; sys_platform == 'linux'",
+    "paddlepaddle==3.2.2 ; sys_platform == 'linux'",
     "prometheus-client>=0.26.0",
+    "pdfplumber>=0.11.10",
     "pydantic>=2.13.5,<3",
     "qdrant-client==1.19.0",
     "tiktoken>=0.14.0",
@@ -31,10 +36,16 @@ zipsai = "zipsai:main"
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+paddlepaddle = [{ index = "paddle-cpu", marker = "sys_platform == 'linux'" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "paddle-cpu"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
 explicit = true
 
 [build-system]
@@ -45,6 +56,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.7",
+    "transformers>=4.40",
 ]
 
 [tool.ruff]

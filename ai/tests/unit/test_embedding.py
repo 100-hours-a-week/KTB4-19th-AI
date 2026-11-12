@@ -1,6 +1,6 @@
 import pytest
 
-from zipsai.errors import EmbeddingError
+from zipsai.errors import EmbeddingError, JobCancelled
 from zipsai.indexing.chunk import Chunk
 from zipsai.indexing.embed import EmbeddedChunk, embed_chunks
 from zipsai.settings import EMBEDDING_DIM
@@ -45,6 +45,30 @@ def test_embed_chunks_preserves_chunk_metadata_and_embedding_values() -> None:
     assert [chunk.dense[0] for chunk in embedded] == [0.0, 1.0]
     assert [chunk.sparse for chunk in embedded] == [{"first": 1.0}, {"second": 0.5}]
     assert all(len(chunk.dense) == EMBEDDING_DIM for chunk in embedded)
+
+
+def test_cancel_is_checked_only_between_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("zipsai.indexing.embed.client_batch_size", lambda: 1)
+    calls: list[list[str]] = []
+
+    class Encoder:
+        def encode(self, texts: list[str], trace_id: str):
+            calls.append(list(texts))
+            dense = [[0.0] * EMBEDDING_DIM for _ in texts]
+            return dense, [{} for _ in texts]
+
+    def should_cancel() -> bool:
+        return len(calls) >= 1
+
+    with pytest.raises(JobCancelled):
+        embed_chunks(
+            [Chunk(text, 1, None) for text in ("하나", "둘", "셋")],
+            Encoder(),
+            "trace-001",
+            should_cancel=should_cancel,
+        )
+
+    assert calls == [["하나"]]
 
 
 def test_embed_chunks_calls_encoder_once_with_all_texts() -> None:
