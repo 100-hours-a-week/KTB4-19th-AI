@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -1722,3 +1723,75 @@ def test_turn_without_complaint_tool_asks_the_missing_field_again(draft, attempt
 def test_reply_prompt_leaves_complaint_questions_to_the_app():
     # 앱이 빈 항목을 묻으므로 답변 모델까지 물으면 같은 질문이 두 번 나간다.
     assert "never ask for complaint details" in graph_module._AGENT_SYSTEM
+
+
+def _stream_graph(monkeypatch, order, chunks, *, building=None, text="헬스장은 몇 시에 열어요?"):
+    """스트리밍 그래프를 끝까지 돌려 화면 delta와 최종 상태를 돌려준다."""
+    queries = {"search_building_docs": "헬스장은 몇 시에 여나요?"}
+
+    async def stream(system_prompt, user_prompt, **_kwargs):
+        for chunk in chunks:
+            yield chunk
+
+    monkeypatch.setattr(
+        graph_module, "classify_intent", lambda _state: _plan(Route.KNOWLEDGE, *order, queries=queries)
+    )
+    monkeypatch.setattr(graph_module, "generate_text_stream", stream)
+    monkeypatch.setattr(
+        graph_module, "generate_tool_decision", lambda *_a, **_kw: pytest.fail("streaming must not use the blocking composer")
+    )
+    monkeypatch.setattr(graph_module, "search_building_docs", lambda *_a: building or _building_ok())
+    monkeypatch.setattr(
+        graph_module,
+        "process_complaint_turn",
+        lambda *_a, **_kw: ComplaintTurnResult(
+            reply="민원 정보를 확인했습니다.",
+            complaint_state=None,
+            result=RouteResult(complaint_draft=ComplaintDraft(issue_type="plumbing", location="거실", symptom="누수")),
+        ),
+    )
+    state = _state()
+    state["request"] = state["request"].model_copy(
+        update={"message": state["request"].message.model_copy(update={"text": text})}
+    )
+
+    async def run():
+        deltas, final = [], None
+        async for mode, event in graph_module.build_graph(streaming=True).astream(
+            state, stream_mode=["custom", "values"]
+        ):
+            if mode == "custom" and event.get("type") == "delta":
+                deltas.append(event["text"])
+            elif mode == "values":
+                final = event
+        return deltas, final
+
+    return asyncio.run(run())
+
+
+def test_streaming_composer_sends_answer_tokens_as_they_arrive(monkeypatch: pytest.MonkeyPatch):
+    deltas, final = _stream_graph(monkeypatch, ("search_building_docs",), ["헬스장은 ", "06시에 ", "엽니다."])
+
+    assert deltas == ["헬스장은 ", "06시에 ", "엽니다."]
+    assert "".join(deltas) == final["reply"] == "헬스장은 06시에 엽니다."
+
+
+def test_streaming_composer_never_shows_the_no_evidence_token(monkeypatch: pytest.MonkeyPatch):
+    # v2처럼 no_evidence 접두는 화면에 내보내지 않고, 고정 문구와 QA 카드로 바꾼다.
+    deltas, final = _stream_graph(monkeypatch, ("search_building_docs",), ["no_", "evidence"])
+
+    assert not any("no_" in delta for delta in deltas)
+    assert "".join(deltas) == final["reply"] == NO_EVIDENCE_REPLY
+    assert final["result"].qa_card_draft.question == "헬스장은 몇 시에 여나요?"
+
+
+def test_streamed_deltas_add_up_to_the_final_reply_with_the_complaint_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # 화면은 delta를 이어 붙이고 complete가 최종 답으로 덮는다. 둘이 같아야 답이 튀지 않는다.
+    deltas, final = _stream_graph(
+        monkeypatch, ("process_complaint_turn", "search_building_docs"), ["관리비는 ", "25일까지입니다."]
+    )
+
+    assert deltas[:2] == ["관리비는 ", "25일까지입니다."]
+    assert "".join(deltas) == final["reply"] == "관리비는 25일까지입니다.\n\n민원 정보를 확인했습니다."

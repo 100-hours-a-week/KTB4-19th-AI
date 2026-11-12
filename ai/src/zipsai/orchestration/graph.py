@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 
 from langgraph.config import get_stream_writer
@@ -18,7 +20,11 @@ from zipsai.contracts.converse import (
     RouteResult,
 )
 from zipsai.history import format_intent_history
-from zipsai.integrations.llm import ToolCall, generate_tool_decision
+from zipsai.integrations.llm import (
+    ToolCall,
+    generate_text_stream,
+    generate_tool_decision,
+)
 from zipsai.knowledge.node import NO_EVIDENCE_REPLY
 from zipsai.knowledge.prompts import KNOWLEDGE_PROMPT, NO_EVIDENCE
 from zipsai.knowledge.tool import search_building_docs
@@ -304,7 +310,23 @@ def _next_step(state: AgentState) -> ToolCall | None:
     return ToolCall(f"plan-{len(attempted) + 1}", name, arguments)
 
 
-def _run_agent(state: AgentState) -> dict[str, object]:
+@dataclass(frozen=True)
+class _Composition:
+    """Composer 호출 직전 상태. 일반·스트리밍 노드가 같은 준비와 조립을 쓴다."""
+
+    messages: list[object]
+    call_messages: list[object]
+    building_only: bool
+    no_evidence: bool
+    route_label: str
+
+    @property
+    def streamable(self) -> bool:
+        # 검색 결과만 주는 새 Composer 프롬프트만 토큰으로 내보낸다. 실패 안내·잡담은 짧아 그대로 받는다.
+        return self.call_messages is not self.messages
+
+
+def _before_compose(state: AgentState) -> dict[str, object] | _Composition:
     messages = list(state.get("agent_messages") or _initial_messages(state))
     route = state.get("route")
     route_label = route.value if route else "unknown"
@@ -364,13 +386,18 @@ def _run_agent(state: AgentState) -> dict[str, object]:
                     "content": f"Reply in the same language as this resident message: {text}",
                 }
             )
-    decision = generate_tool_decision(call_messages, [], purpose="composer")
-    tool_text = _is_tool_text(decision.content)
-    observe_tool_decision(route_label, "protocol_failure" if tool_text else "no_tool")
-    messages.append(decision.message)
+    return _Composition(messages, call_messages, building_only, no_evidence, route_label)
+
+
+def _after_compose(
+    state: AgentState, composition: _Composition, content: str | None, message: object, *, check_tool_text: bool = True
+) -> dict[str, object]:
+    messages = [*composition.messages, message]
+    tool_text = check_tool_text and _is_tool_text(content)
+    observe_tool_decision(composition.route_label, "protocol_failure" if tool_text else "no_tool")
     if tool_text:
         return _protocol_failure(state, messages, "tool_call_as_text")
-    if building_only and (decision.content or "").strip() == NO_EVIDENCE:
+    if composition.building_only and (content or "").strip() == NO_EVIDENCE:
         # v2 model_declined: 걸린 문서가 답이 아니면 근거 없음과 같다. 출처를 버리고 QA 카드로 넘긴다.
         declined = {**state, "search_result": BuildingDocsResult(status="no_results")}
         return {
@@ -384,11 +411,66 @@ def _run_agent(state: AgentState) -> dict[str, object]:
         "protocol_retry_pending": False,
         **_agent_result(
             state,
-            f"{(decision.content or '').rstrip()}\n\n{_no_evidence_reply(state)}".strip()
-            if no_evidence
-            else decision.content or "",
+            f"{(content or '').rstrip()}\n\n{_no_evidence_reply(state)}".strip()
+            if composition.no_evidence
+            else content or "",
         ),
     }
+
+
+def _run_agent(state: AgentState) -> dict[str, object]:
+    composition = _before_compose(state)
+    if isinstance(composition, dict):
+        return composition
+    decision = generate_tool_decision(composition.call_messages, [], purpose="composer")
+    return _after_compose(state, composition, decision.content, decision.message)
+
+
+def _emit_delta(text: str) -> None:
+    if text:
+        get_stream_writer()({"type": "delta", "field": "reply", "text": text})
+
+
+async def _run_agent_stream(state: AgentState) -> dict[str, object]:
+    """Composer 답변을 토큰 단위로 내보낸다. 나머지 답변 조각은 끝에 이어 보낸다."""
+    composition = _before_compose(state)
+    if isinstance(composition, dict):
+        return composition
+    if not composition.streamable:
+        decision = await asyncio.to_thread(
+            generate_tool_decision, composition.call_messages, [], purpose="composer"
+        )
+        return _after_compose(state, composition, decision.content, decision.message)
+    system, *users = composition.call_messages
+    # 사진 실패 안내는 최종 답변 맨 앞에 붙으므로 토큰보다 먼저 보낸다.
+    streamed = _IMAGE_FAILED_PREFIX if _image_failed_with_text(state) else ""
+    _emit_delta(streamed)
+    parts: list[str] = []
+    pending = ""
+    async for text in generate_text_stream(
+        str(system["content"]), "\n\n".join(str(user["content"]) for user in users), purpose="composer"
+    ):
+        parts.append(text)
+        pending += text
+        # no_evidence는 QA 카드로 바뀌는 신호라 화면에 내보내지 않는다(v2와 같은 버퍼링).
+        if composition.building_only and NO_EVIDENCE.startswith(pending.lstrip()):
+            continue
+        _emit_delta(pending)
+        streamed += pending
+        pending = ""
+    content = "".join(parts)
+    if pending and content.strip() != NO_EVIDENCE:
+        _emit_delta(pending)
+        streamed += pending
+    # ponytail: 스트리밍 답변은 도구 흉내 검사를 건너뛴다. 이미 보낸 토큰은 되돌릴 수 없고 검색 Composer는 도구 이름을 보지 않는다.
+    result = _after_compose(
+        state, composition, content, {"role": "assistant", "content": content}, check_tool_text=False
+    )
+    reply = result.get("reply")
+    if isinstance(reply, str) and reply.startswith(streamed):
+        # 민원 답변·재질문·무근거 문구처럼 Composer 뒤에 붙은 조각을 이어 보내 complete와 화면을 맞춘다.
+        _emit_delta(reply[len(streamed):])
+    return result
 
 
 def _is_tool_text(content: str | None) -> bool:
@@ -614,12 +696,19 @@ def _after_tool(state: AgentState) -> str:
     return "agent"
 
 
+_IMAGE_FAILED_PREFIX = "사진을 확인하지 못했지만, 적어주신 내용으로 먼저 도와드릴게요.\n"
+
+
+def _image_failed_with_text(state: AgentState) -> bool:
+    return bool(state.get("image_analysis_failed") and (state["request"].message.text or "").strip())
+
+
 def _include_image_analysis(result: dict[str, object], state: AgentState) -> dict[str, object]:
     if state.get("image_analysis_failed"):
         reply = result.get("reply")
         if isinstance(reply, str):
             if (state["request"].message.text or "").strip():
-                result["reply"] = f"사진을 확인하지 못했지만, 적어주신 내용으로 먼저 도와드릴게요.\n{reply}"
+                result["reply"] = f"{_IMAGE_FAILED_PREFIX}{reply}"
             else:
                 result["reply"] = "사진을 확인하지 못했어요. 사진을 다시 첨부하거나, 사진으로 어떤 도움을 원하는지 알려주세요."
     analysis = state.get("image_analysis")
@@ -633,7 +722,7 @@ def _include_image_analysis(result: dict[str, object], state: AgentState) -> dic
 def build_graph(streaming: bool = False) -> CompiledStateGraph:
     builder = StateGraph(AgentState)
     builder.add_node("prepare", _run_prepare)
-    builder.add_node("agent", _run_agent)
+    builder.add_node("agent", _run_agent_stream if streaming else _run_agent)
     builder.add_node("tool", _run_tool)
     builder.add_edge(START, "prepare")
     builder.add_edge("prepare", "agent")
