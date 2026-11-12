@@ -36,24 +36,12 @@ class _ToolPlan(BaseModel):
 
 def classify_intent(state: AgentState) -> dict[str, object]:
     request = state["request"]
-    draft = request.complaint_draft
-    missing_complaint_fields = [
-        field for field in ("location", "symptom") if not draft or not getattr(draft, field)
-    ]
+    # 민원 상태·초안 힌트는 주지 않는다. 진행 중 민원이 있다는 사실만으로 질문까지 민원 도구로 끌려갔다.
+    # 민원 진행 여부는 대화 이력의 직전 assistant 질문으로 판단하고, 초안은 민원 노드가 받는다.
     messages = INTENT_PROMPT.format_messages(
         message_text=(request.message.text or "").strip() or "없음",
         image_present="있음" if request.message.images else "없음",
         conversation_history=format_intent_history(request.conversation_history),
-        current_route=request.current_route.value if request.current_route else "없음",
-        current_complaint_state=(
-            request.current_complaint_state.value if request.current_complaint_state else "없음"
-        ),
-        complaint_draft=draft.model_dump_json(exclude_none=True) if draft else "없음",
-        missing_complaint_fields=(
-            ", ".join(missing_complaint_fields)
-            if request.current_complaint_state or draft
-            else "없음"
-        ),
     )
     with stage(
         "intent",

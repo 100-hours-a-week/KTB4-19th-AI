@@ -152,12 +152,14 @@ def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
 
     assert result["planned_tools"] == ["process_complaint_turn"]
     system, user = prompt_inputs[0]
-    assert "only show whether this turn continues a complaint" in system
-    assert "An active complaint alone does not require process_complaint_turn" in system
-    assert "현재 민원 상태 힌트: collecting" in user
-    assert '"symptom":"물이 새요"' in user
-    assert "미수집 민원 항목 힌트: location" in user
+    # 민원 상태 힌트는 질문까지 민원으로 끌어당겼다. 민원 진행 여부는 이력의 직전 질문으로만 본다.
+    for hint in ("route 힌트", "민원 상태 힌트", "초안 힌트", "미수집 민원 항목"):
+        assert hint not in user
+    assert '"symptom":"물이 새요"' not in user
     assert "assistant: 어디에서 생겼나요?" in user
+    assert "current_route" not in system
+    assert "conversation history only shows whether this turn answers" in system
+    assert "An active complaint alone does not require process_complaint_turn" in system
 
 
 def test_clear_new_question_does_not_inherit_complaint_tool_plan(monkeypatch):
@@ -491,6 +493,12 @@ def test_intent_prompt_routes_small_talk_usage_and_out_of_scope_to_clarify(monke
     assert "questions about using this assistant" in system
     assert "requests unrelated to the building or complaints" in system
     assert "Asking how to file or check a complaint through this assistant needs no tool" in system
+    # 사용법 예시는 입주민 문장으로 준다. 'file a complaint'는 전입신고 같은 행정 신고와 섞였다.
+    assert "how to file a complaint here" not in system
+    assert "여기서 민원은 어떻게 넣어요?" in system
+    # 사용법 규칙이 특정 행정 신고를 직접 말하면 8B 모델이 그 단어를 사용법으로 엮었다(전입신고 0/3).
+    assert "government or administrative procedures are public information" in system
+    assert "how to do 전입신고" not in system
     assert "use route clarify" in system
 
 
