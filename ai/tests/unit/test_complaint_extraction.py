@@ -1,6 +1,6 @@
 import asyncio
 import importlib.util
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -83,8 +83,11 @@ def _make_request(
 
 
 def _interpretation_output(**updates: object) -> node_module._InterpretationOutput:
+    switch = updates.get("complaint_switch", "same")
     return node_module._InterpretationOutput(
-        complaint_switch=updates.get("complaint_switch", "same"),
+        takes_back_existing=False,
+        reports_other_problem=switch == "ask",
+        agrees_to_switch=switch == "accept",
         issue_type=updates.get("issue_type"),
         location=updates.get("location"),
         symptom=updates.get("symptom"),
@@ -299,9 +302,57 @@ def test_complaint_prompt_accepts_only_an_explicit_reply_to_a_switch_question(
     _interpret_turn(_make_request("네"))
 
     assert (
-        "Return accept only when the immediately preceding assistant message asked whether to switch"
+        "agrees_to_switch: the immediately preceding assistant message asked whether to switch"
         in captured["system_prompt"]
     )
+
+
+def test_complaint_prompt_decides_switch_by_the_broken_thing_not_the_wording(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str] = {}
+
+    def extract(**kwargs: object):
+        captured["system_prompt"] = str(kwargs["system_prompt"])
+        return _interpretation_output()
+
+    monkeypatch.setattr(node_module, "generate_structured", extract)
+
+    _interpret_turn(_make_request("아 그리고 현관 도어락도 고장났어요"))
+
+    system = captured["system_prompt"]
+    # 모델은 사실만 적고 전환 여부는 코드가 정한다(_switch_from).
+    assert "takes_back_existing: the current turn withdraws the existing complaint's problem" in system
+    assert "reports_other_problem: the current turn reports a problem that would need its own repair" in system
+    assert "complaint_switch" not in system
+    assert "clearly describes a different problem" not in system
+    # 같은 민원인지 확실하지 않으면 묻는 쪽(ask)으로 기운다. 잘못 합치면 다른 고장이 사라진다.
+    assert "If unsure whether it is the same problem, true" in system
+
+
+@pytest.mark.parametrize(
+    ("takes_back", "other", "agrees", "expected"),
+    [
+        (False, False, False, "same"),  # 위치 답변·같은 대상 세부
+        (False, True, False, "ask"),  # 그리고 현관 도어락도
+        (True, True, False, "same"),  # 창문 말고 방충망: 기존을 거둬들인 정정
+        (True, False, False, "same"),
+        (False, False, True, "accept"),  # 전환 질문에 동의
+        (False, True, True, "accept"),
+    ],
+)
+def test_switch_is_decided_by_code_from_the_reported_facts(takes_back, other, agrees, expected):
+    parsed = node_module._InterpretationOutput(
+        takes_back_existing=takes_back,
+        reports_other_problem=other,
+        agrees_to_switch=agrees,
+        issue_type=None,
+        location=None,
+        symptom=None,
+        occurred_at=None,
+    )
+
+    assert node_module._switch_from(parsed).value == expected
 
 
 def test_complaint_prompt_routes_unresolved_door_lock_to_other(
@@ -719,7 +770,7 @@ def test_handle_complaint_uses_finalizer_to_merge_symptoms(
         ).model_dump()
     )
     assert outcome["result"].complaint_draft.representative_attachment_id is None
-    assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+    assert outcome["reply"] == node_module._COMPLETE_REPLY + node_module._ONSET_INVITE
 
 
 def test_handle_complaint_uses_fixed_reply_for_the_decided_missing_field(
@@ -811,7 +862,7 @@ def test_handle_complaint_skips_finalizer_for_complete_single_symptom(
     outcome = handle_complaint(_make_request("화장실에서 물이 새요"))
 
     assert outcome["result"].complaint_draft.symptom == "물이 새요"
-    assert outcome["reply"] == "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+    assert outcome["reply"] == node_module._COMPLETE_REPLY + node_module._ONSET_INVITE
 
 
 def test_handle_complaint_clears_state_when_fields_complete(
@@ -979,8 +1030,7 @@ def test_handle_complaint_logs_stages_and_turn(
     assert [(r.stage, r.outcome) for r in stages] == [
         ("text_interpretation", "ok"),
         ("turn_finalization", "skipped"),
-        ("urgency_assessment", "ok"),
-    ]
+    ]  # urgency_assessment는 그래프 끝 finish_card에서 남는다
     assert all(r.duration_ms >= 0 for r in stages)
 
     turn = records[-1]
@@ -1202,6 +1252,14 @@ def test_handle_complaint_propagates_interpretation_failure(
         )
 
 
+def _finished(request: ConverseRequest):
+    """민원 턴 결과에 그래프 끝 finish_card까지 붙인 카드."""
+    result = handle_complaint(request)["result"]
+    return result.model_copy(
+        update={"complaint_draft": node_module.finish_card(request, result.complaint_draft, result.image_analysis)}
+    )
+
+
 def test_ready_for_card_attaches_urgency_result(monkeypatch: pytest.MonkeyPatch):
     request = _make_request("주방에서 가스 누출 냄새가 나요")
     monkeypatch.setattr(
@@ -1219,7 +1277,7 @@ def test_ready_for_card_attaches_urgency_result(monkeypatch: pytest.MonkeyPatch)
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.complaint_draft.urgency_score == 58
     assert result.complaint_draft.is_urgent is True
@@ -1245,7 +1303,84 @@ def test_ready_for_card_keeps_null_urgency_on_assessment_failure(
         ),
     )
 
-    result = handle_complaint(request)["result"]
+    result = _finished(request)
 
     assert result.complaint_draft.urgency_score is None
     assert result.complaint_draft.is_urgent is None
+
+
+def test_complete_reply_invites_onset_only_when_it_is_missing(monkeypatch: pytest.MonkeyPatch):
+    # 시점은 필수 항목이 아니다. 따로 묻지 않고(한 번에 한 항목 원칙) 카드와 함께 한 번 권한다.
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: node_module._TurnInterpretation(
+            ComplaintDraft(
+                location="화장실",
+                symptom="물이 새요",
+                occurred_at=datetime(2026, 11, 10, tzinfo=UTC),
+            )
+        ),
+    )
+
+    outcome = handle_complaint(_make_request("어제부터 화장실에서 물이 새요"))
+
+    assert outcome["reply"] == node_module._COMPLETE_REPLY
+    assert "언제부터" in node_module._ONSET_INVITE
+
+
+def test_onset_invite_is_not_repeated_once_it_was_offered(monkeypatch: pytest.MonkeyPatch):
+    # "아침부터요"처럼 날짜 없는 답은 시점이 비어 남는다. 그래도 같은 권유를 매 턴 반복하지 않는다.
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: node_module._TurnInterpretation(
+            ComplaintDraft(location="화장실", symptom="물이 새요")
+        ),
+    )
+    history = [
+        {"message_id": "a1", "role": "assistant", "text": node_module._COMPLETE_REPLY + node_module._ONSET_INVITE},
+    ]
+
+    outcome = handle_complaint(_make_request("아침부터요", conversation_history=history))
+
+    assert outcome["reply"] == node_module._COMPLETE_REPLY
+
+
+def test_handle_complaint_leaves_card_finishing_to_the_graph(monkeypatch: pytest.MonkeyPatch):
+    # 대표 사진·긴급도는 답변에 쓰이지 않아 그래프 끝(finish)에서 붙인다. 민원 턴은 답변까지만 만든다.
+    monkeypatch.setattr(
+        node_module,
+        "_interpret_turn",
+        lambda _, **__: _TurnInterpretation(
+            ComplaintDraft(location="주방", symptom="주방에서 가스 누출 냄새가 나요")
+        ),
+    )
+    monkeypatch.setattr(node_module, "assess_urgency", lambda *_a, **_kw: pytest.fail("urgency belongs to finish"))
+    request = _make_request("주방에서 가스 누출 냄새가 나요")
+
+    draft = handle_complaint(request)["result"].complaint_draft
+
+    assert draft.urgency_score is None
+    monkeypatch.setattr(
+        node_module,
+        "assess_urgency",
+        lambda *_a, **_kw: node_module.UrgencyResult(score=58, is_urgent=True, urgency_version="v"),
+    )
+    finished = node_module.finish_card(request, draft, None)
+    assert (finished.urgency_score, finished.is_urgent, finished.location) == (58, True, "주방")
+
+
+@pytest.mark.parametrize(
+    ("draft", "fields", "question"),
+    [
+        (None, ["location", "symptom"], "어디에서 생긴 문제인가요?"),
+        (ComplaintDraft(symptom="물이 새요"), ["location"], "어디에서 생긴 문제인가요?"),
+        (ComplaintDraft(location="욕실"), ["symptom"], node_module._MISSING_FIELD_REPLY["symptom"]),
+        (ComplaintDraft(location="욕실", symptom="물이 새요"), [], None),
+    ],
+)
+def test_public_missing_field_helpers(draft, fields, question):
+    # 그래프는 민원 모듈 내부 구조 대신 이 공개 함수로 빈 항목과 다음 질문만 받는다.
+    assert node_module.missing_fields(draft) == fields
+    assert node_module.missing_field_question(draft) == question

@@ -21,32 +21,27 @@ from zipsai.orchestration.state import AgentState, ToolName
 logger = logging.getLogger(__name__)
 
 
+class _Step(BaseModel):
+    tool: ToolName
+    # 검색 도구가 그대로 실행할 질문 문장. 민원 도구는 서버 문맥으로 실행하므로 null이다.
+    question: str | None
+
+
 class _ToolPlan(BaseModel):
-    planned_tools: list[ToolName]
+    # 단계를 먼저 쓰게 한다. 보강문을 앞에 두면 8B 모델이 그 칸에 추론을 늘어놓는다.
+    steps: list[_Step]
     route: Route
     contextualized_message: str | None
 
 
 def classify_intent(state: AgentState) -> dict[str, object]:
     request = state["request"]
-    draft = request.complaint_draft
-    missing_complaint_fields = [
-        field for field in ("location", "symptom") if not draft or not getattr(draft, field)
-    ]
+    # 민원 상태·초안 힌트는 주지 않는다. 진행 중 민원이 있다는 사실만으로 질문까지 민원 도구로 끌려갔다.
+    # 민원 진행 여부는 대화 이력의 직전 assistant 질문으로 판단하고, 초안은 민원 노드가 받는다.
     messages = INTENT_PROMPT.format_messages(
         message_text=(request.message.text or "").strip() or "없음",
         image_present="있음" if request.message.images else "없음",
         conversation_history=format_intent_history(request.conversation_history),
-        current_route=request.current_route.value if request.current_route else "없음",
-        current_complaint_state=(
-            request.current_complaint_state.value if request.current_complaint_state else "없음"
-        ),
-        complaint_draft=draft.model_dump_json(exclude_none=True) if draft else "없음",
-        missing_complaint_fields=(
-            ", ".join(missing_complaint_fields)
-            if request.current_complaint_state or draft
-            else "없음"
-        ),
     )
     with stage(
         "intent",
@@ -55,6 +50,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     ) as step:
         contextualized_message: str | None = None
         planned_tools: list[ToolName] = []
+        planned_queries: dict[str, str] = {}
         image_analysis = None
         image_failed = False
         if request.message.images:
@@ -97,7 +93,11 @@ def classify_intent(state: AgentState) -> dict[str, object]:
             if decision is None:
                 raise IntentClassificationError("LLM did not return a usable tool plan")
             route = decision.route
-            planned_tools = list(dict.fromkeys(decision.planned_tools))
+            planned_tools = list(dict.fromkeys(item.tool for item in decision.steps))
+            for item in decision.steps:
+                # ponytail: 도구당 한 번 실행한다. 같은 도구의 질문이 여럿이면 Plan이 한 문장으로 합쳐야 한다.
+                if (item.question or "").strip() and item.tool not in planned_queries:
+                    planned_queries[item.tool] = item.question.strip()
             contextualized_message = decision.contextualized_message
         step["intent_route"] = route.value
         step["planned_tools"] = planned_tools
@@ -110,6 +110,7 @@ def classify_intent(state: AgentState) -> dict[str, object]:
     result: dict[str, object] = {
         "route": route,
         "planned_tools": planned_tools,
+        "planned_queries": planned_queries,
         "image_analysis": image_analysis,
         "contextualized_message": contextualized_message,
     }

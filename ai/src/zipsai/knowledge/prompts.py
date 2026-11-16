@@ -33,7 +33,8 @@ _KNOWLEDGE_SYSTEM_PROMPT = (
     "Examples:\n"
     "질문=세탁실은 몇 시까지이고 요금은 얼마인가요 / 근거=세탁실은 22시까지입니다 → "
     "22시까지 이용할 수 있습니다. 요금은 건물 문서에 없습니다.\n"
-    f"질문=관리비는 언제 내나요 / 근거=세탁실은 22시까지입니다 → {NO_EVIDENCE}\n\n"
+    f"질문=관리비는 언제 내나요 / 근거=세탁실은 22시까지입니다 → {NO_EVIDENCE}\n"
+    f"질문=세탁실 요금은 얼마인가요 / 근거=세탁실은 22시까지입니다 → {NO_EVIDENCE}\n\n"
     f'Output contract: either a Korean answer, or the single token "{NO_EVIDENCE}" in lowercase '
     "with no punctuation, quotes, or explanation. Never output both."
 )

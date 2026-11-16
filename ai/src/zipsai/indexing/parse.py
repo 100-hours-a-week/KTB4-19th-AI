@@ -195,6 +195,18 @@ def _read_with(
         raise PdfParseError(f"Could not parse document: {path}") from exc
 
 
+def ocr_scan_page(path: Path, page_no: int) -> tuple[str, float]:
+    """VLM이 실패한 한 쪽만 기존 EasyOCR 설정으로 읽는다."""
+
+    try:
+        started = perf_counter()
+        converted = _scan_converter().convert(path, page_range=(page_no, page_no))
+        text = converted.document.export_to_text(page_no=page_no)
+        return text, perf_counter() - started
+    except Exception as exc:
+        raise PdfParseError(f"Could not parse document: {path}") from exc
+
+
 def _from_pdfplumber(path: Path, report: PdfInspection, text_layer: str) -> ParsedPages:
     pages = [
         {"page": index, "text": text}
@@ -259,6 +271,12 @@ def parse_document(source: str | Path) -> ParsedPages:
         raise PdfParseError(f"Could not parse document: {path}") from exc
 
     kind, reason, layer = _docling_route(report)
+    if kind == "scan" and layer == "none":
+        from zipsai.indexing.image_read import read_scan_pages
+
+        scanned = read_scan_pages(path, reason=reason, layer=layer)
+        if scanned is not None:
+            return scanned
     if kind == "scan":
         parsed, convert_s = _read_with(
             path,

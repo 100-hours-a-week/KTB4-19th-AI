@@ -54,7 +54,11 @@ _UNKNOWN_LOCATION = "모름"
 
 
 class _InterpretationOutput(BaseModel):
-    complaint_switch: ComplaintSwitch
+    # 전환 여부는 모델이 사실만 적고 _switch_from이 정한다. 한 번에 판정시키면 정정과
+    # 다른 고장을 구분하지 못했다.
+    takes_back_existing: bool
+    reports_other_problem: bool
+    agrees_to_switch: bool
     issue_type: IssueType | None
     location: str | None
     symptom: str | None
@@ -74,6 +78,14 @@ class _TurnSymptomOutput(BaseModel):
 class _TurnInterpretation:
     fields: ComplaintDraft = field(default_factory=ComplaintDraft)
     switch: ComplaintSwitch = ComplaintSwitch.SAME
+
+
+def _switch_from(parsed: _InterpretationOutput) -> ComplaintSwitch:
+    if parsed.agrees_to_switch:
+        return ComplaintSwitch.ACCEPT
+    if parsed.reports_other_problem and not parsed.takes_back_existing:
+        return ComplaintSwitch.ASK
+    return ComplaintSwitch.SAME
 
 
 def _log_interpretation_retry(attempt: int, error: Exception) -> None:
@@ -120,11 +132,10 @@ def _interpret_turn(
             retry_reason=None if attempt == 1 else "empty_output",
         )
         if parsed is not None:
+            switch = _switch_from(parsed)
             if usage_sink is not None:
                 issue = parsed.issue_type
-                usage_sink["complaint_switch"] = getattr(
-                    parsed.complaint_switch, "value", parsed.complaint_switch
-                )
+                usage_sink["complaint_switch"] = switch.value
                 usage_sink["issue_type"] = (
                     getattr(issue, "value", issue) if issue else None
                 )
@@ -142,7 +153,7 @@ def _interpret_turn(
                     symptom=parsed.symptom,
                     occurred_at=parsed.occurred_at,
                 ),
-                switch=parsed.complaint_switch,
+                switch=switch,
             )
         last_error = ComplaintExtractionError("LLM did not return an interpretation")
         _log_interpretation_retry(attempt, last_error)
@@ -209,6 +220,17 @@ def _missing_fields(draft: ComplaintDraft) -> list[str]:
     return [field for field in _REQUIRED_FIELDS if not getattr(draft, field)]
 
 
+def missing_fields(draft: ComplaintDraft | None) -> list[str]:
+    """민원 밖(그래프 결과 조립)에서 쓰는 공개 이름. 초안이 없으면 전부 비었다."""
+    return _missing_fields(draft or ComplaintDraft())
+
+
+def missing_field_question(draft: ComplaintDraft | None) -> str | None:
+    """빈 항목이 있으면 다음에 물을 고정 질문 하나. 무엇을 어떤 순서로 묻는지는 민원 모듈만 안다."""
+    fields = missing_fields(draft)
+    return _MISSING_FIELD_REPLY[fields[0]] if fields else None
+
+
 def _can_switch_away_from(current: ComplaintDraft | None) -> bool:
     return bool(current and current.symptom)
 
@@ -242,6 +264,19 @@ def _switch_question(current_symptom: str, new_symptom: str) -> str:
     return f"{current_symptom} 건은 접어두고 「{new_symptom}」으로 전환할까요?"
 
 
+_COMPLETE_REPLY = "민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요."
+# 시점은 필수가 아니라 따로 묻지 않는다. 다음 턴에 답하면 기존 추출 경로로 초안에 합쳐진다.
+_ONSET_INVITE = " 언제부터 그랬는지 알려주시면 함께 적어둘게요."
+
+def _should_invite_onset(request: ConverseRequest, draft: ComplaintDraft) -> bool:
+    # 대화당 한 번만 권한다. 날짜 없는 답은 시점이 비어 남아 매 턴 같은 권유가 반복된다.
+    invite = _ONSET_INVITE.strip()
+    return not draft.occurred_at and not any(
+        turn.role == "assistant" and invite in (turn.text or "")
+        for turn in request.conversation_history
+    )
+
+
 _MISSING_FIELD_REPLY = {
     "location": "어디에서 생긴 문제인가요?",
     "symptom": "어떤 문제가 있는지 조금 더 자세히 알려주시겠어요?",
@@ -259,7 +294,6 @@ class _ComplaintTurn:
     complaint_state: ComplaintState | None
     asked: str | None
     reply_source: str
-    urgency_level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -369,26 +403,46 @@ def _ready_for_card(
     # issue_type은 필수 항목이 아니지만, 분류 없는 카드는 관리자가 담당을 나눌 수 없다.
     if draft.issue_type is None:
         draft = draft.model_copy(update={"issue_type": "other"})
-    representative_id = _representative_attachment_id(request, draft, image_analysis)
-    urgency = _assess_urgency_with_stage(draft, image_analysis)
-    response_draft = CompletedComplaintDraft(
-        **draft.model_dump(),
-        representative_attachment_id=representative_id,
-        urgency_score=urgency.score,
-        is_urgent=urgency.is_urgent,
-        urgency_version=urgency.urgency_version,
-    )
+    # 대표 사진·긴급도는 답변에 쓰이지 않는다. 답변을 먼저 보낼 수 있게 그래프 끝에서 finish_card가 붙인다.
     return _ComplaintTurn(
         result=RouteResult(
-            complaint_draft=response_draft,
+            complaint_draft=CompletedComplaintDraft(**draft.model_dump()),
             missing_fields=[],
             image_analysis=image_analysis,
         ),
-        reply="민원 정보를 확인했습니다. 접수할 내용을 확인해 주세요.",
+        reply=_COMPLETE_REPLY + (_ONSET_INVITE if _should_invite_onset(request, draft) else ""),
         complaint_state=None,
         asked=None,
         reply_source="complete",
-        urgency_level=getattr(urgency, "level", None),
+    )
+
+
+def finish_card(
+    request: ConverseRequest,
+    draft: CompletedComplaintDraft,
+    image_analysis: ImageAnalysis | None,
+) -> CompletedComplaintDraft:
+    """완료 카드에 대표 사진과 긴급도를 붙인다. 긴급도 실패는 null로 남는다."""
+    representative_id = _representative_attachment_id(request, draft, image_analysis)
+    urgency = _assess_urgency_with_stage(draft, image_analysis)
+    logger.info(
+        "complaint_card_finished",
+        extra={
+            "conversation_id": request.conversation_id,
+            "urgency_level": getattr(urgency, "level", None),
+            "urgency_score": urgency.score,
+            "is_urgent": urgency.is_urgent,
+            "urgency_version": urgency.urgency_version,
+            "representative_attachment_id": representative_id,
+        },
+    )
+    return draft.model_copy(
+        update={
+            "representative_attachment_id": representative_id,
+            "urgency_score": urgency.score,
+            "is_urgent": urgency.is_urgent,
+            "urgency_version": urgency.urgency_version,
+        }
     )
 
 
@@ -809,7 +863,6 @@ def _log_complaint_turn(
             "location_unknown": draft.location == _UNKNOWN_LOCATION,
             "reply_source": turn.reply_source,
             "text_len": len((request.message.text or "").strip()),
-            "urgency_level": turn.urgency_level,
             "image_count": len(evidence.images),
             "images_analyzed": len(observations),
             "summary_chars": sum(len(image.summary or "") for image in observations),

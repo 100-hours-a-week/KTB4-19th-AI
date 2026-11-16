@@ -60,22 +60,22 @@ def _build_state(
 
 
 def _decision(route: Route, contextualized_message: str | None = None):
-    return SimpleNamespace(
-        planned_tools=[],
-        route=route,
-        contextualized_message=contextualized_message,
-    )
+    return _plan_decision([], route, contextualized_message)
 
 
 def _plan_decision(
     planned_tools: list[str],
     route: Route,
     contextualized_message: str | None = None,
+    questions: dict[str, str] | None = None,
 ):
     return SimpleNamespace(
-        planned_tools=planned_tools,
-        route=route,
         contextualized_message=contextualized_message,
+        steps=[
+            SimpleNamespace(tool=tool, question=(questions or {}).get(tool))
+            for tool in planned_tools
+        ],
+        route=route,
     )
 
 
@@ -105,9 +105,26 @@ def test_plan_returns_distinct_tools_and_response_route_fallback(
 
     assert result["planned_tools"] == list(dict.fromkeys(planned_tools))
     assert result["route"] is route
-    assert "planned_tools" in schemas[0].model_fields
-    assert "route" in schemas[0].model_fields
-    assert "arguments" not in schemas[0].model_fields
+    assert list(schemas[0].model_fields) == ["steps", "route", "contextualized_message"]
+
+
+def test_plan_steps_carry_one_question_sentence_per_search_tool(monkeypatch):
+    # 실행기가 그대로 쓰는 검색 입력. 같은 도구는 한 번만 실행하므로 첫 질문 문장을 쓴다.
+    decision = SimpleNamespace(
+        contextualized_message="거실 천장에서 물이 새요. 헬스장은 몇 시에 여나요?",
+        steps=[
+            SimpleNamespace(tool="process_complaint_turn", question=None),
+            SimpleNamespace(tool="search_building_docs", question=" 헬스장은 몇 시에 여나요? "),
+            SimpleNamespace(tool="search_building_docs", question="주차 등록은 어떻게 하나요?"),
+        ],
+        route=Route.COMPLAINT,
+    )
+    monkeypatch.setattr(intent_module, "generate_structured", lambda *_a, **_kw: decision)
+
+    result = classify_intent(_build_state("거실이요. 헬스장 몇 시에 열어요?"))
+
+    assert result["planned_tools"] == ["process_complaint_turn", "search_building_docs"]
+    assert result["planned_queries"] == {"search_building_docs": "헬스장은 몇 시에 여나요?"}
 
 
 def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
@@ -135,12 +152,14 @@ def test_plan_uses_active_complaint_as_soft_context_for_follow_up(monkeypatch):
 
     assert result["planned_tools"] == ["process_complaint_turn"]
     system, user = prompt_inputs[0]
-    assert "only show whether this turn continues a complaint" in system
-    assert "An active complaint alone does not require process_complaint_turn" in system
-    assert "현재 민원 상태 힌트: collecting" in user
-    assert '"symptom":"물이 새요"' in user
-    assert "미수집 민원 항목 힌트: location" in user
+    # 민원 상태 힌트는 질문까지 민원으로 끌어당겼다. 민원 진행 여부는 이력의 직전 질문으로만 본다.
+    for hint in ("route 힌트", "민원 상태 힌트", "초안 힌트", "미수집 민원 항목"):
+        assert hint not in user
+    assert '"symptom":"물이 새요"' not in user
     assert "assistant: 어디에서 생겼나요?" in user
+    assert "current_route" not in system
+    assert "conversation history only shows whether this turn answers" in system
+    assert "An active complaint alone does not require process_complaint_turn" in system
 
 
 def test_clear_new_question_does_not_inherit_complaint_tool_plan(monkeypatch):
@@ -214,7 +233,7 @@ def test_intent_prompt_keeps_observation_and_context_rules(monkeypatch):
     assert "현재 이미지 관찰" in user
 
 
-def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkeypatch):
+def test_intent_prompt_plans_executable_steps_and_core_route(monkeypatch):
     prompts = []
 
     def classify(system, user, *_args, **_kwargs):
@@ -226,10 +245,15 @@ def test_intent_prompt_plans_tools_and_does_not_assign_order_or_arguments(monkey
     classify_intent(_build_state("누수 처리 기한을 알려주고 욕실 누수 민원도 작성해줘"))
 
     system, _ = prompts[0]
-    assert "planned_tools = the distinct union" in system
-    assert "Do not answer the resident or choose tool order or arguments" in system
+    # 실행기는 계획을 그대로 실행하므로 Plan이 도구와 그 입력까지 정한다.
+    assert "steps = one step per distinct tool" in system
+    assert "choose tool order or arguments" not in system
+    assert "question: one self-contained Korean question sentence" in system
+    assert "null for process_complaint_turn" in system
+    # route는 실행한 도구 목록이 아니라 카드 한 장의 기준이다.
     assert "route = the core intent this turn must resolve" in system
-    assert "required_capabilities" not in system
+    assert "if only one card could follow this turn" in system
+    assert "In this service, 민원 means a facility complaint filed in this chat" in system
 
 
 def test_intent_prompt_uses_tool_contract_descriptions_and_prefers_building_docs(
@@ -250,6 +274,8 @@ def test_intent_prompt_uses_tool_contract_descriptions_and_prefers_building_docs
     system = prompts[0]
     for contract in TOOL_CONTRACTS:
         assert f"- {contract.name}: {contract.description}" in system
+    # 검색 질문 문장 규칙은 도구 계약의 query 설명을 그대로 공유한다.
+    assert "키워드가 아니라 입주민이 관리인에게 묻듯 쓴" in system
     assert "choose search_building_docs when the answer could differ by building" in system
     # 고장 신고가 질문 문장 안에 있어도 민원이다.
     assert "is a facility report even when phrased as a question" in system
@@ -277,6 +303,7 @@ def test_text_only_classifies_without_vlm(monkeypatch):
     assert result == {
         "route": Route.KNOWLEDGE,
         "planned_tools": [],
+        "planned_queries": {},
         "image_analysis": None,
         "contextualized_message": "쓰레기 배출일이 언제예요?",
     }
@@ -466,6 +493,12 @@ def test_intent_prompt_routes_small_talk_usage_and_out_of_scope_to_clarify(monke
     assert "questions about using this assistant" in system
     assert "requests unrelated to the building or complaints" in system
     assert "Asking how to file or check a complaint through this assistant needs no tool" in system
+    # 사용법 예시는 입주민 문장으로 준다. 'file a complaint'는 전입신고 같은 행정 신고와 섞였다.
+    assert "how to file a complaint here" not in system
+    assert "여기서 민원은 어떻게 넣어요?" in system
+    # 사용법 규칙이 특정 행정 신고를 직접 말하면 8B 모델이 그 단어를 사용법으로 엮었다(전입신고 0/3).
+    assert "government or administrative procedures are public information" in system
+    assert "how to do 전입신고" not in system
     assert "use route clarify" in system
 
 

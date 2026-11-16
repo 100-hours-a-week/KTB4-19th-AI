@@ -167,3 +167,25 @@ def test_search_building_docs_gives_the_model_400_chars_and_the_screen_200(monke
     assert len(result.evidence[0].text) == 400
     assert len(result.citations[0].snippet) == 200
     assert "citations" not in result.model_dump(mode="json")
+
+
+def test_search_building_docs_retries_with_resident_text_when_query_has_no_hits(monkeypatch):
+    # v2 knowledge 노드처럼 0건이면 다른 표현으로 한 번 더 찾는다.
+    calls = _stub_encoder(monkeypatch)
+    hits = iter([[], [_chunk({"doc_id": "parking-guide", "title": "주차 안내", "text": "방문 차량은 관리실에 등록합니다."})]])
+    monkeypatch.setattr(tool_module, "search_chunks", lambda *_args, **_kwargs: next(hits))
+
+    result = tool_module.search_building_docs(BuildingDocsArgs(query="방문 차량 등록 방법"), _request())
+
+    assert [query for query, *_ in calls] == ["방문 차량 등록 방법", "주차는 어떻게 하나요?"]
+    assert result.status == "ok"
+
+
+def test_search_building_docs_does_not_repeat_the_same_query(monkeypatch):
+    calls = _stub_encoder(monkeypatch)
+    monkeypatch.setattr(tool_module, "search_chunks", lambda *_args, **_kwargs: [])
+
+    result = tool_module.search_building_docs(BuildingDocsArgs(query="주차는 어떻게 하나요?"), _request())
+
+    assert [query for query, *_ in calls] == ["주차는 어떻게 하나요?"]
+    assert result.status == "no_results"

@@ -202,7 +202,7 @@ def observe_tool_rejection(reason: str) -> None:
 
 def observe_tool_decision(route: str, outcome: str) -> None:
     route_label = route if route in {"complaint", "knowledge", "clarify"} else "unknown"
-    outcome_label = outcome if outcome in {"tool_selected", "no_tool", "protocol_failure"} else "unknown"
+    outcome_label = outcome if outcome in {"planned", "no_tool", "protocol_failure"} else "unknown"
     TOOL_DECISIONS.labels(route=route_label, outcome=outcome_label).inc()
 
 
