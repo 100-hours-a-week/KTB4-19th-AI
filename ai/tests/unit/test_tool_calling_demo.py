@@ -18,7 +18,7 @@ def test_demo_shows_no_results_and_complaint_result_together(capsys):
     assert "시나리오 검증: PASS" in output
     assert "4. 답변 형식 오류: 도구 흉내 text → retry → 안전한 종료" in output
     assert "tool_call_protocol_failure reason=tool_call_as_text" in output
-    assert "시나리오 검증: PASS (도구 실행 없이 실패 닫힘)" in output
+    assert "시나리오 검증: PASS (찾아본 검색 0건 뒤 실패 닫힘)" in output
     assert "요청한 작업을 처리하지 못했습니다. 다시 말씀해 주세요." in output
     assert "이 문자열을 로그에 남기지 마세요" not in output
 

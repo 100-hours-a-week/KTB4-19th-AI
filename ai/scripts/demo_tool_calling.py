@@ -264,6 +264,12 @@ def _patched_protocol_retry_flow() -> Iterator[None]:
             "classify_intent",
             lambda _state: {"route": Route.CLARIFY, "planned_tools": []},
         ),
+        # 빈 Plan은 원문으로 건물 문서를 한 번 찾아본다. 0건이면 검색하지 않은 턴처럼 이어간다.
+        patch.object(
+            graph_module,
+            "search_building_docs",
+            lambda _args, _request: BuildingDocsResult(status="no_results"),
+        ),
         patch.object(
             graph_module,
             "generate_tool_decision",
@@ -348,9 +354,9 @@ def main(*, live: bool = False) -> int:
             "4. 답변 형식 오류: 도구 흉내 text → retry → 안전한 종료",
             _request("주차는 어디에 하나요?"),
         )
-    assert protocol_result["tool_call_count"] == 0
+    assert protocol_result["tool_call_count"] == 1
     assert protocol_result["reply"] == "요청한 작업을 처리하지 못했습니다. 다시 말씀해 주세요."
-    print("  시나리오 검증: PASS (도구 실행 없이 실패 닫힘)")
+    print("  시나리오 검증: PASS (찾아본 검색 0건 뒤 실패 닫힘)")
     return 0
 
 
