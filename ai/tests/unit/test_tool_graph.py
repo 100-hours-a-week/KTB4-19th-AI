@@ -355,9 +355,10 @@ def test_graph_runs_planned_tools_sequentially_after_independent_failure(
 
     result = graph_module.build_graph().invoke(_state())
 
-    # 실행기가 계획 순서대로 실행하고, 실패 안내만 Composer가 쓴다.
-    assert offered == [[]]
-    assert purposes == ["composer"]
+    # 실행기가 계획 순서대로 실행한다. 검색 근거가 없으니 Composer 없이 고정 안내 뒤에 민원 답변을 붙인다.
+    assert offered == []
+    assert purposes == []
+    assert result["reply"] == f"{graph_module.SEARCH_NOT_FOUND_REPLY}\n\n장소를 알려주세요."
     assert result["attempted_tools"] == ("search_building_docs", "process_complaint_turn")
     assert result["tool_call_count"] == 2
 
@@ -1609,6 +1610,7 @@ def test_graph_ends_safely_after_repeated_tool_call_mimic_text(
         "generate_tool_decision",
         lambda *_args, **_kwargs: next(decisions),
     )
+    monkeypatch.setattr(graph_module, "search_building_docs", lambda *_args: _building_ok())
 
     result = graph_module.build_graph().invoke(_state())
 
@@ -1932,3 +1934,163 @@ def test_reply_model_does_not_see_history_while_the_app_asks_the_next_complaint_
     context = graph_module._initial_messages({**_state(), "request": request})[-1]["content"]
 
     assert ("어디에서 생긴 문제인가요?" in context) is history_shown
+
+
+_SEARCH_DOWN = ToolFailure(code="unavailable", message="검색할 수 없습니다.")
+
+
+@pytest.mark.parametrize(
+    ("order", "building", "web", "expected"),
+    [
+        (("search_building_docs", "search_public_web"), _SEARCH_DOWN, _SEARCH_DOWN, "not_found"),
+        (("search_building_docs",), _SEARCH_DOWN, None, "not_found"),
+        (("search_public_web",), None, WebSearchResult(status="no_results"), "not_found"),
+        (("search_public_web",), None, _SEARCH_DOWN, "not_found"),
+        (
+            ("search_building_docs", "search_public_web"),
+            BuildingDocsResult(status="no_results"),
+            _SEARCH_DOWN,
+            "qa_card",
+        ),
+    ],
+)
+def test_no_search_evidence_replies_without_composer(
+    monkeypatch: pytest.MonkeyPatch, order, building, web, expected
+):
+    # 근거가 하나도 없으면 Composer가 없는 답을 지어낸다(라이브: 둘 다 실패에 "각 층의 쓰레기실에…").
+    composer_messages: list[list[object]] = []
+
+    result = _composite_graph(
+        monkeypatch, order, {"building": building, "web": web}, composer_messages
+    )
+
+    assert composer_messages == []
+    if expected == "qa_card":
+        assert result["reply"] == NO_EVIDENCE_REPLY
+        assert result["result"].qa_card_draft.question == "방문 차량 등록 방법"
+    else:
+        assert result["reply"] == graph_module.SEARCH_NOT_FOUND_REPLY
+        assert result["result"].qa_card_draft is None
+
+
+def test_no_search_evidence_keeps_complaint_reply(monkeypatch: pytest.MonkeyPatch):
+    composer_messages: list[list[object]] = []
+
+    result = _composite_graph(
+        monkeypatch,
+        ("process_complaint_turn", "search_building_docs"),
+        {"building": _SEARCH_DOWN, "web": None},
+        composer_messages,
+    )
+
+    assert composer_messages == []
+    assert result["reply"] == f"{graph_module.SEARCH_NOT_FOUND_REPLY}\n\n어디에서 생긴 문제인가요?"
+
+
+_CLARIFY_TEXT = "시설 문제 신고인가요, 건물에 대한 질문인가요?"
+
+
+def _probe_graph(monkeypatch, search_result, composer_replies, *, text="단수 언제 되나요", images=()):
+    """Plan이 도구를 하나도 고르지 않은 턴. 검색어와 Composer 호출을 기록해 돌려준다."""
+    queries: list[str] = []
+    composed: list[str] = []
+    replies = iter(composer_replies)
+
+    def search(args, _request):
+        queries.append(args.query)
+        return search_result
+
+    def decide(messages, _tools, *, purpose):
+        composed.append(str(messages[0]["content"]))
+        return _decision(content=next(replies))
+
+    monkeypatch.setattr(graph_module, "classify_intent", lambda _state: _plan(Route.CLARIFY))
+    monkeypatch.setattr(graph_module, "search_building_docs", search)
+    monkeypatch.setattr(graph_module, "generate_tool_decision", decide)
+    state = _state()
+    payload = state["request"].model_dump()
+    payload["message"]["text"] = text
+    payload["message"]["images"] = list(images)
+    state["request"] = ConverseRequest.model_validate(payload)
+    return graph_module.build_graph().invoke(state), queries, composed
+
+
+def test_empty_plan_probes_building_docs_with_original_text_and_answers_from_them(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Plan 모델이 '단수'를 몰라 도구를 비워도 문서에 답이 있으면 답한다.
+    result, queries, composed = _probe_graph(monkeypatch, _building_ok(), ["9월 20일 9시부터 단수됩니다."])
+
+    assert queries == ["단수 언제 되나요"]
+    assert composed == [_KNOWLEDGE_SYSTEM]
+    assert result["route"] is Route.KNOWLEDGE
+    assert result["reply"] == "9월 20일 9시부터 단수됩니다."
+    assert result["result"].citations
+
+
+def test_empty_plan_probe_without_hits_stays_clarify_without_qa_card(monkeypatch: pytest.MonkeyPatch):
+    result, queries, composed = _probe_graph(
+        monkeypatch, BuildingDocsResult(status="no_results"), [_CLARIFY_TEXT]
+    )
+
+    assert queries == ["단수 언제 되나요"]
+    assert composed == [graph_module._AGENT_SYSTEM]
+    assert result["route"] is Route.CLARIFY
+    assert result["reply"] == _CLARIFY_TEXT
+    assert result["result"].qa_card_draft is None
+    assert result["result"].citations == []
+
+
+def test_empty_plan_probe_declined_by_composer_falls_back_to_clarify(monkeypatch: pytest.MonkeyPatch):
+    # 걸린 문서에 답이 없으면 QA 카드가 아니라 원래 되묻기로 돌아간다(질문인지조차 모른 턴이다).
+    result, _queries, composed = _probe_graph(monkeypatch, _building_ok(), ["no_evidence", _CLARIFY_TEXT])
+
+    assert composed == [_KNOWLEDGE_SYSTEM, graph_module._AGENT_SYSTEM]
+    assert result["route"] is Route.CLARIFY
+    assert result["reply"] == _CLARIFY_TEXT
+    assert result["result"].qa_card_draft is None
+    assert result["result"].citations == []
+
+
+def test_empty_plan_probe_failure_stays_clarify(monkeypatch: pytest.MonkeyPatch):
+    result, _queries, composed = _probe_graph(monkeypatch, _SEARCH_DOWN, [_CLARIFY_TEXT])
+
+    assert composed == [graph_module._AGENT_SYSTEM]
+    assert result["route"] is Route.CLARIFY
+    assert result["reply"] == _CLARIFY_TEXT
+
+
+def test_empty_plan_image_only_turn_does_not_probe(monkeypatch: pytest.MonkeyPatch):
+    _result, queries, _composed = _probe_graph(
+        monkeypatch,
+        _building_ok(),
+        [_CLARIFY_TEXT],
+        text="",
+        images=[{"attachment_id": 1, "url": "https://example.com/a.jpg"}],
+    )
+
+    assert queries == []
+
+
+def test_streaming_probe_declined_still_streams_the_clarify_reply(monkeypatch: pytest.MonkeyPatch):
+    replies = iter([_decision(content="no_evidence"), _decision(content=_CLARIFY_TEXT)])
+    monkeypatch.setattr(graph_module, "classify_intent", lambda _state: _plan(Route.CLARIFY))
+    monkeypatch.setattr(graph_module, "search_building_docs", lambda *_a: _building_ok())
+    monkeypatch.setattr(graph_module, "generate_tool_decision", lambda *_a, **_kw: next(replies))
+    state = _state()
+
+    async def run():
+        deltas, final = [], None
+        async for mode, event in graph_module.build_graph(streaming=True).astream(
+            state, stream_mode=["custom", "values"]
+        ):
+            if mode == "custom" and event.get("type") == "delta":
+                deltas.append(event["text"])
+            elif mode == "values":
+                final = event
+        return deltas, final
+
+    deltas, final = asyncio.run(run())
+
+    assert "".join(deltas) == final["reply"] == _CLARIFY_TEXT
+    assert final["route"] is Route.CLARIFY
